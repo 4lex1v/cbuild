@@ -54,3 +54,7 @@ bool setup_project (const Arguments *args, Project *project) {
   return true;
 }
 ```
+
+## Building
+
+Regardless of the OS, the project uses `clang++` to compile sources. Having that installed, running `./build` powershell script should build everything into the `out` directory. 
