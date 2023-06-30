@@ -29,6 +29,7 @@ desire was to build projects using another program written in C, which led to th
 x64 CPU with AVX2 support.
 
 ## Getting Started
+While CBuild tries to find the toolchain on the host machine, it can't setup the environment for MSVC at this point. In order to build a project for Windows, it's required to either setup the current environment manually, use `vcvarsall.bat` (could be found in a folder like `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build`) or use the terminal that comes with Visual Studio, i.e `x64 Native Tools Command Prompt for VS 2022`.  
 
 - Download the binary
 - Create a folder for the project and run `cbuild init`
