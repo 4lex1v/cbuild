@@ -14,7 +14,7 @@
 
 #ifdef CBUILD_PROJECT_CONFIGURATION
 
-unsigned int cbuild_api_version = 0xCBUILD_API_VERSION;
+unsigned int cbuild_api_version = CBUILD_API_VERSION;
 
 #endif // CBUILD_PROJECT_CONFIGURATION
 

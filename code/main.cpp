@@ -16,35 +16,9 @@
 #include "result.hpp"
 #include "runtime.hpp"
 
-#ifndef VERSION
-  #error "VERSION is not defined"
+#if !defined(TOOL_VERSION) || !defined(API_VERSION)
+  #error "TOOL_VERSION and API_VERSION values must be defined at compile time"
 #endif
-
-consteval u32 convert_hex (char hexChar) {
-  if      (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
-  else if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
-  else if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
-  return 0;
-};
-
-consteval u32 get_major_version () {
-  const char version[] = stringify(VERSION);
-  return convert_hex(version[0]) + convert_hex(version[1]);
-}
-
-consteval u32 get_minor_version () {
-  const char version[] = stringify(VERSION);
-  return convert_hex(version[2]) + convert_hex(version[3]) + convert_hex(version[4]);
-}
-
-consteval u32 get_patch_version () {
-  const char version[] = stringify(VERSION);
-  return convert_hex(version[5]) + convert_hex(version[6]) + convert_hex(version[7]);
-}
-
-constinit u32 tool_version  = get_major_version();
-constinit u32 api_version   = get_minor_version();
-constinit u32 patch_version = get_patch_version();
 
 File_Path working_directory_path;
 File_Path cache_directory_path;
@@ -264,9 +238,9 @@ int main (int argc, char **argv) {
   };
 
 #ifdef DEV_BUILD
-  print(&arena, "CBuild ver: %.%.%-SNAPSHOT\n", tool_version, api_version, patch_version);
+  print(&arena, "CBuild r% DEV\n", TOOL_VERSION);
 #else
-  print(&arena, "CBuild ver: %.%.%\n", tool_version, api_version, patch_version);
+  print(&arena, "CBuild r%\n", TOOL_VERSION);
 #endif
 
   auto cli_command = parse_command(argc, argv);

@@ -12,8 +12,11 @@
 #include "runtime.hpp"
 #include "toolchain.hpp"
 
-extern u32 tool_version;
-extern u32 api_version;
+#ifndef API_VERSION
+  #error "API version must be defined at compile time"
+#endif
+
+static const u32 api_version = (API_VERSION);
 
 extern File_Path working_directory_path;
 extern File_Path cache_directory_path;
@@ -136,29 +139,21 @@ static Status_Code load_project_from_library (const Arguments *args, Project *pr
   Shared_Library *library = nullptr;
   check_status(load_shared_library(&library, project_library_file_path));
 
-  auto version_value = *reinterpret_cast<unsigned int *>(load_symbol_from_library(library, "cbuild_api_version"));
-  auto project_tool_version  = (version_value >> 24) & 0xFF;
-  auto project_api_version   = (version_value >> 12) & 0xFFF;
-  auto project_patch_version = (version_value >>  0) & 0xFFF;
+  auto config_api_version_value = *reinterpret_cast<unsigned int *>(load_symbol_from_library(library, "cbuild_api_version"));
 
-  if (tool_version != project_tool_version) {
-    auto error = format_string(&project->arena, "There's a mismatch between cbuild and project's build major versions. Please update your configuration\n");
-    return { Load_Error, error };
-  }
-
-  if (api_version > project_api_version) {
+  if (api_version > config_api_version_value) {
     print(&project->arena,
-          "It looks like your cbuild configuration uses older cbuild API.\n"
-          "API version could be updated with a `cbuild update` command.\n");
+          "It looks like your project configuration uses an older API.\n"
+          "You may update API version using `cbuild update` command.\n");
   }
 
-  if (api_version < project_api_version) {
+  if (api_version < config_api_version_value) {
     print(&project->arena,
           "Project configuration uses a newer cbuild API (tool: %, config: %).\n"
-          "While it's not a violation of the cbuild usage, backwards compatibility is not guaranteed in this case.\n"
-          "API version could be updated with a `cbuild update` command.\n",
+          "While it's not a violation of the cbuild usage, compatibility is not guaranteed in this case.\n"
+          "Please download a newer version at https://github.com/4lex1v/cbuild/releases\n",
           api_version,
-          project_api_version);
+          config_api_version_value);
   }
 
   auto loader = reinterpret_cast<project_func *>(load_symbol_from_library(library, "setup_project"));

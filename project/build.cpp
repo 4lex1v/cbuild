@@ -16,6 +16,8 @@
 #include "cbuild.h"
 #include "cbuild_experimental.h"
 
+using u32 = uint32_t;
+
 static std::string_view config;
 static std::string_view platform;
 
@@ -27,6 +29,29 @@ static int generate_tags    (const Arguments *args);
 
 static void install_hook (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
 //  printf("Installing target: %s!\n", get_target_name(target));
+}
+
+static bool read_versions (u32 *tool, u32 *api) {
+  auto file = fopen("./versions", "rb");
+  if (file == NULL) {
+    printf("Failed to open versions file\n");
+    return false;
+  }
+
+  if (fscanf(file, "%u", tool) != 1) {
+    printf("Failed to read tool's version\n");
+    fclose(file);
+    return false;
+  }
+
+  if (fscanf(file, "%u", api) != 1) {
+    printf("Failed to read api's version\n");
+    fclose(file);
+    return false;
+  }
+
+  fclose(file);
+  return true;
 }
 
 extern "C" bool setup_project (const Arguments *args, Project *project) {
@@ -45,19 +70,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   bool is_debug = config == "debug";
 
-  std::ifstream version_file { "./version", std::ios::binary };
-  if (version_file.is_open() == false) {
-    printf("Couldn't open ./version file.\n");
-    return false;
-  }
-
-  char version_value[21] { "-DVERSION=" };
-  version_file.read(version_value + 10, 8 * sizeof(char));
+  u32 tool_version = 0, api_version = 0;
+  if (!read_versions(&tool_version, &api_version)) return false;
+  char versions[256];
+  sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
   auto configure = [&] (Target *target) {
     add_all_sources_from_directory(target, "./code", "cpp", false);
     add_compiler_options(target, "-std=c++20 -DPLATFORM_X64");
-    add_compiler_options(target, version_value);
+    add_compiler_options(target, versions);
 
     add_compiler_options(target,
                          (is_debug)                        ? "-O0 -g -DDEV_BUILD" : "-O3",
@@ -82,21 +103,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   configure(cbuild);
 
   if (config == "release") {
-    auto version_string = version_value + 10;
-
-    auto convert_hex = [] (char hexChar) {
-      if      (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
-      else if (hexChar >= 'A' && hexChar <= 'F') return hexChar - 'A' + 10;
-      else if (hexChar >= 'a' && hexChar <= 'f') return hexChar - 'a' + 10;
-      return 0;
-    };
-
-    auto major = convert_hex(version_string[0]) + convert_hex(version_string[1]);
-    auto minor = convert_hex(version_string[2]) + convert_hex(version_string[3]) + convert_hex(version_string[4]);
-    auto patch = convert_hex(version_string[5]) + convert_hex(version_string[6]) + convert_hex(version_string[7]);
-
     char release_folder[128];
-    snprintf(release_folder, 128, "releases/%i.%i.%i/%s", major, minor, patch, platform.data());
+    snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
 
     set_output_location(project, release_folder);
   }
@@ -105,21 +113,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 }
 
 static int generate_headers (const Arguments *args) {
-  auto version_file_path = "./version";
-  auto version_file_content = fopen(version_file_path, "rb");
-  if (version_file_content == false) {
-    printf("FATAL ERROR: Version file wasn't found\n");
+  u32 tool_version = 0, api_version = 0;
+  if (!read_versions(&tool_version, &api_version)) {
     return EXIT_FAILURE;
   }
 
-  enum { version_length = 8 }; // I'm not including null here
-  char version_value[version_length + 1] = {};
-  if (fgets(version_value, version_length + 1, version_file_content) == nullptr) {
-    printf("FATAL ERROR: Failed to read the version from the version file\n");
-    return EXIT_FAILURE;
-  }
+  char api_version_str[16];
+  auto api_version_str_length = sprintf(api_version_str, "%u", api_version);
 
-  printf("Generating header for version: %s\n", version_value);
+  printf("Generating header for version: %u\n", api_version);
 
   auto output_file_path = "./code/generated.h";
   auto output_file      = fopen(output_file_path, "wb+");
@@ -153,11 +155,11 @@ static int generate_headers (const Arguments *args) {
     auto placeholder = strstr(buffer, search);
     assert(placeholder);
 
-    memcpy(placeholder, version_value, version_length);
+    memcpy(placeholder, api_version_str, api_version_str_length);
 
     auto offset = placeholder - buffer;
-    memmove(placeholder + version_length, placeholder + search_length, file_size - (offset + search_length));
-    file_size -= (search_length - version_length);
+    memmove(placeholder + api_version_str_length, placeholder + search_length, file_size - (offset + search_length));
+    file_size -= (search_length - api_version_str_length);
     buffer[file_size] = '\0';
 
     auto header_start = "\nstatic const unsigned char cbuild_api_content[] = { ";
@@ -167,7 +169,7 @@ static int generate_headers (const Arguments *args) {
 
     // Iterate through the buffer and write the hexadecimal bytes
     for (long i = 0; i < file_size; i++) {
-        fprintf(output_file, "0x%02x, ", (unsigned char)buffer[i]);
+      fprintf(output_file, "0x%02x, ", (unsigned char)buffer[i]);
     }
 
     fwrite(header_end, strlen(header_end), 1, output_file);
