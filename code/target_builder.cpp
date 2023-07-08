@@ -150,7 +150,13 @@ static Status_Code load_registry (Registry *registry, Memory_Arena *arena, const
     buffer_cursor += value_size;
   };
 
-  if (auto file_size = get_file_size(&registry_file); file_size > 0) {
+  if (auto file_size = get_file_size(&registry_file);
+      /*
+        If project has been updated (compiled for the first time or user made any changes) we should force
+        a fresh build of all the files, by ignoring any chached information about previous builds.
+       */
+      file_size > 0 && (not project->rebuild_required)) {
+    
     auto mapping = map_file_into_memory(&registry_file);
     check_status(mapping);
 

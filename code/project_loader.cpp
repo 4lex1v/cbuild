@@ -324,6 +324,8 @@ Status_Code load_project (Memory_Arena *arena, const Arguments *args, Project *p
   defer { close_file(&tag_file); };
 
   check_status(write_buffer_to_file(&tag_file, reinterpret_cast<const char *>(&build_file_timestamp), sizeof(decltype(build_file_timestamp))));
+
+  project->rebuild_required = true;
   
   return load_project_from_library(args, project, &project_library_file_path);
 }

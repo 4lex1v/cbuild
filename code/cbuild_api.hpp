@@ -38,6 +38,7 @@ struct Project {
 
   Toolchain_Configuration toolchain;
 
+  bool rebuild_required;
   bool registry_disabled;
 
   List<User_Defined_Command> user_defined_commands;
