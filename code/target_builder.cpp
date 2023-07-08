@@ -1090,5 +1090,12 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, const Ar
 
   flush_registry(&registry);
 
+  for (const auto tracker: trackers) {
+    if ((tracker->compile_status.value != Target_Compile_Status::Success) ||
+        (tracker->link_status.value    != Target_Link_Status::Success)) {
+      return { Build_Error, "Couldn't build one or more targets" };
+    }
+  }
+
   return Success;
 }
