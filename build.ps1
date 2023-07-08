@@ -19,7 +19,7 @@ $compile_time = Measure-Command {
 Write-Host ("Compile: {0,10:F6} seconds" -f $compile_time.TotalSeconds)
 
 $link_time = Measure-Command {
-  & lld-link /def:..\cbuild.def *.o kernel32.lib libcmt.lib /out:cbuild.exe /debug:full /subsystem:console
+  & lld-link /def:..\cbuild.def *.o kernel32.lib libcmt.lib Advapi32.lib /out:cbuild.exe /debug:full /subsystem:console
 }
 
 Write-Host ("Link: {0,13:F6} seconds" -f $link_time.TotalSeconds)

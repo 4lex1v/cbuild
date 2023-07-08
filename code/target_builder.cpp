@@ -17,6 +17,7 @@
 #include "result.hpp"
 #include "runtime.hpp"
 #include "list.hpp"
+#include "toolchain.hpp"
 
 extern File_Path     working_directory_path;
 extern File_Path     cache_directory_path;
@@ -679,19 +680,10 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
         
         builder += make_file_path(arena, out_folder_path, format_string(arena, "%.%", lib->name, lib_extension));
       }
+
       if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
       else                                       builder += format_string(arena, "-o %",   output_file_path);
 
-      auto link_command = builder.build();
-
-      auto [_status, output] = run_system_command(arena, link_command);
-      status = _status;
-
-      if (output.length) {
-        platform_print_message(output);
-        print(arena, "\n");
-      }
-      
       break;
     };
     case Target::Type::Shared_Library: {
@@ -721,16 +713,6 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
       else                                       builder += format_string(arena, "-o %",   output_file_path);
 
-      auto link_command = builder.build();
-
-      auto [_status, output] = run_system_command(arena, link_command);
-      status = _status;
-
-      if (output.length) {
-        platform_print_message(output);
-        print(arena, "\n");
-      }
-
       break;
     };
     case Target::Type::Executable: {
@@ -757,19 +739,16 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
       else                                       builder += format_string(arena, "-o %",   output_file_path);
 
-      auto link_command = builder.build();
-
-      auto [_status, output] = run_system_command(arena, link_command);
-      status = _status;
-
-      if (output.length) {
-        platform_print_message(output);
-        print(arena, "\n");
-      }
-
       break;
     };
   };
+
+  auto link_command = build_string_with_separator(&builder, ' ');
+
+  auto [_status, output] = run_system_command(arena, link_command);
+  status = _status;
+
+  if (output.length) print(arena, "%\n", output);
 
   auto is_success = (status == Status_Code::Success);
   if (not is_success) {
@@ -838,7 +817,7 @@ static void compile_file (Memory_Arena *arena, const Build_Task *task) {
     if (toolchain->type == Toolchain_Type_MSVC_X64) builder += format_string(arena, "/c % /Fo:%", file.path, object_file_path);
     else                                            builder += format_string(arena, "-c % -o %",  file.path, object_file_path);
 
-    auto compilation_command = builder.build();
+    auto compilation_command = build_string_with_separator(&builder, ' ');
 
     auto [status, output] = run_system_command(arena, compilation_command);
 
@@ -1024,7 +1003,10 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, const Ar
 
     target->tracker = tracker;
   }
-  
+
+  auto previous_env = setup_system_sdk(arena, project->toolchain.type);
+  defer { reset_environment(&previous_env); };
+
   for (auto tracker: trackers) {
     auto target = tracker->target;
     

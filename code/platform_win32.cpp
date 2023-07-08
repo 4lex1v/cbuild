@@ -1,7 +1,5 @@
 
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include "common_win32.hpp"
 
 #include <cstdio>
 
@@ -12,17 +10,6 @@
 #include "runtime.hpp"
 
 File_Path::File_Path (const String &path): value { path.value }, length { path.length } {}
-
-static Status_Code get_system_error () {
-  auto error_code = GetLastError();
-
-  LPSTR message = nullptr;
-  FormatMessageA(
-    FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-    0, error_code, MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT), message, 0, 0);
-
-  return Status_Code { Status_Code::System_Error, message, error_code };
-}
 
 Result<File_Path> get_working_directory_path (Memory_Arena *arena) {
   use(Status_Code);
@@ -72,7 +59,7 @@ static Status_Code create_directory_recursive_inner (char *path) {
     if (not status) return status;
   }
 
-  if (!CreateDirectory(path, NULL)) {
+  if (!CreateDirectory(path, nullptr)) {
     if (GetLastError() == ERROR_ALREADY_EXISTS) return Status_Code::Success;
     return get_system_error();
   }
@@ -153,7 +140,7 @@ Status_Code load_shared_library (Shared_Library **library, const File_Path *libr
   use(Status_Code);
   
   auto handle = LoadLibrary(library_file_path->value);
-  if (handle == NULL) return get_system_error();
+  if (handle == nullptr) return get_system_error(library_file_path->value);
 
   *library = reinterpret_cast<Shared_Library *>(handle);
 
@@ -205,14 +192,14 @@ Status_Code close_file (File *file) {
 }
 
 void reset_file_cursor (File *file) {
-  SetFilePointer(file->handle, 0, NULL, FILE_BEGIN);
+  SetFilePointer(file->handle, 0, nullptr, FILE_BEGIN);
 }
 
 Status_Code write_buffer_to_file (const File *file, const char *buffer, const size_t bytes_to_write) {
   use(Status_Code);
   
   DWORD bytes_written = 0;
-  if (!WriteFile(file->handle, buffer, bytes_to_write, &bytes_written, NULL)) return get_system_error();
+  if (!WriteFile(file->handle, buffer, bytes_to_write, &bytes_written, nullptr)) return get_system_error();
   if (bytes_written != bytes_to_write)                                        return get_system_error();
 
   return Success;
@@ -220,7 +207,7 @@ Status_Code write_buffer_to_file (const File *file, const char *buffer, const si
 
 System_Command_Result run_system_command (Memory_Arena *arena, const char *command_line) {
   use(Status_Code);
-  
+
   PROCESS_INFORMATION process  {};
   SECURITY_ATTRIBUTES security { .nLength = sizeof(SECURITY_ATTRIBUTES), .bInheritHandle = TRUE };
 
@@ -293,7 +280,7 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
   if (return_value != 0) {
     result.status = {
       System_Command_Error,
-      format_string(arena, "Failed to execution command line '%', status: %\n", command_line, return_value),
+      format_string(arena, "Failed to execute command line '%', status: %\n", command_line, return_value),
       return_value
     };
   }
@@ -655,3 +642,4 @@ u32 get_logical_cpu_count () {
 
   return systemInfo.dwNumberOfProcessors;
 }
+

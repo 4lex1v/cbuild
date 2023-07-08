@@ -10,6 +10,7 @@
 #include "platform.hpp"
 #include "result.hpp"
 #include "runtime.hpp"
+#include "toolchain.hpp"
 
 extern u32 tool_version;
 extern u32 api_version;
@@ -182,6 +183,9 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
 
   auto toolchain = &project->toolchain;
 
+  auto previous_env = setup_system_sdk(_arena, toolchain->type);
+  defer { reset_environment(&previous_env); };
+
   auto project_obj_file_path = make_file_path(_arena, project_output_folder_path, format_string(_arena, "project.%", platform.is_win32() ? "obj" : "o"));
 
   {
@@ -198,13 +202,13 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
     if ((toolchain->type == Toolchain_Type_MSVC_X64) ||
         (toolchain->type == Toolchain_Type_MSVC_X86) ||
         (toolchain->type == Toolchain_Type_LLVM_CL)) {
-      builder += format_string(&local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /c % /Fo%", standard_value, build_file_path, project_obj_file_path);
+      builder += format_string(&local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file_path);
     }
     else {
       builder += format_string(&local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file_path, project_obj_file_path);
     }
 
-    auto compilation_command = builder.build();
+    auto compilation_command = build_string_with_separator(&builder, ' ');
 
     auto [status, output] = run_system_command(&local, compilation_command);
 
@@ -239,7 +243,7 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
 #endif
 
         builder += format_string(&local,
-                                 "/nologo /dll /debug:full /defaultlib:libcmt /export:cbuild_api_version /export:setup_project %\\*.obj % /out:%",
+                                 "/nologo /dll /debug:full /defaultlib:libcmt /export:cbuild_api_version /export:setup_project \"%\\*.obj\" \"%\" /out:\"%\"",
                                  project_output_folder_path, cbuild_import_path, project_library_file_path);
         break;
       }
@@ -253,7 +257,7 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
       }
     }
 
-    auto linking_command = builder.build();
+    auto linking_command = build_string_with_separator(&builder, ' ');
 
     auto [status, output] = run_system_command(&local, linking_command);
 

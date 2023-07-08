@@ -47,14 +47,6 @@ struct File_Path {
   bool is_empty () const { return value == nullptr; }
 };
 
-static String to_string (Memory_Arena *arena, const File_Path *path) {
-  return format_string(arena, "\"%\"", String(path->value, path->length));
-}
-
-static String to_string (Memory_Arena *arena, const File_Path &path) {
-  return format_string(arena, "\"%\"", String(path.value, path.length));
-}
-
 static bool check_extension (const File_Path &path, const String &extension) {
   String normalized = extension;
 
@@ -246,3 +238,4 @@ u64 get_clock_timestamp (Performance_Counter *counter);
 u64 get_ellapsed_millis (Performance_Counter *counter, u64 from, u64 to);
 
 void list_files_in_directory (Memory_Arena *arena, List<File_Path> *list, const char *directory, const char *extension, bool recursive);
+

@@ -90,7 +90,7 @@ struct Result {
 
   bool operator ! () {
     if constexpr (has_not_operator_v<T>) {
-      return (status != Status_Code::Success) ? true : !this->value;
+      return (status != Status_Code::Success) || !this->value;
     }
     else return (status != Status_Code::Success);  
   }
@@ -122,7 +122,6 @@ template <typename T> constexpr Status_Code capture_status (const T &result) {
     String      __message   = (MESSAGE);                    \
     if (!__status) raise_error_and_halt(__message);         \
   } while (0) 
-
 
 template <String_Convertible T>
 constexpr String to_string (Memory_Arena *arena, Result<T> &result) {

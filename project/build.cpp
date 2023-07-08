@@ -60,41 +60,28 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_compiler_options(target, version_value);
 
     add_compiler_options(target,
-                         (is_debug)                        ? "-O0 -g -DDEV_BUILD=1" : "-O3",
+                         (is_debug)                        ? "-O0 -g -DDEV_BUILD" : "-O3",
                          (is_debug && platform == "win32") ? "-gcodeview"           : "",
-                         "-march=native -masm=intel -Wno-switch -fno-exceptions -fdiagnostics-absolute-paths");
+                         "-march=x86-64 -mavx2 -masm=intel -fno-exceptions -fdiagnostics-absolute-paths");
   
     if (platform == "win32") {
       add_compiler_options(target, "-DPLATFORM_WIN32");
 
+      char exports_option[256] = "/def:";
+      snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
+      add_linker_options(target, exports_option);
+
       if (config == "debug") add_linker_options(target, "/debug:full");
       add_linker_options(target, "/subsystem:console");
 
-      link_with(target, "kernel32.lib", "libcmt.lib");
+      link_with(target, "kernel32.lib", "libcmt.lib", "Advapi32.lib");
     }
   };
 
-  // auto tracy = add_static_library(project, "tracy_client");
-
-  // add_source_file(tracy, "libs/tracy/TracyClient.cpp");
-  // add_include_search_path(tracy, "libs/public");
-  // add_compiler_options(tracy,
-  //                      "-DTRACY_ENABLE",
-  //                      //"-DTRACY_NO_CALLSTACK",
-  //                      "-DTRACY_MANUAL_LIFETIME",
-  //                      "-DTRACY_ON_DEMAND",
-  //                      //"-DTRACY_NO_FRAME_IMAGE",
-  //                      "-DTRACY_DELAYED_INIT",
-  //                      "-Wno-format");
-  
   auto cbuild = add_executable(project, "cbuild");
   configure(cbuild);
 
   if (config == "release") {
-    //add_target_hook(cbuild, Hook_Type_After_Target_Linked, install_hook);
-  }
-
-  if (config == "ship") {
     auto version_string = version_value + 10;
 
     auto convert_hex = [] (char hexChar) {
@@ -113,11 +100,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
     set_output_location(project, release_folder);
   }
-
-  // auto cbuild_tracy = add_executable(project, "cbuild_tracy");
-  // configure(cbuild_tracy);
-
-  // link_with(cbuild_tracy, tracy);
   
   return true;
 }

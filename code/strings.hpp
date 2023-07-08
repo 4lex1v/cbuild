@@ -18,8 +18,8 @@ struct String {
   constexpr String (const char *_value, usize _length): length { _length }, value { _value } {}
   constexpr String (const char *c_str) {
     if (c_str == nullptr) [[unlikely]] {
-      this->value  = "(null)";
-      this->length = 6;
+      this->value  = nullptr;
+      this->length = 0;
     }
     else {
       this->value  = c_str;
@@ -251,31 +251,7 @@ struct String_Builder {
   
   template <String_Convertible S>
   void operator += (S &&value) { add(make_string(this->arena, value)); }
-
-  String build () {
-    /*
-      Sections count would accomodate for a space character after each part of the string and
-      reserves space for a 0 character at the string's end, thus no need for +1.
-     */
-    auto buffer = reserve_array(this->arena, this->length + this->sections.count);
-
-    usize offset = 0;
-    for (auto section: this->sections) {
-      assert(section.length > 0);
-      
-      for (usize idx = 0; idx < section.length; idx++) {
-        buffer[offset++] = section.value[idx];
-      }
-
-      buffer[offset++] = ' ';
-    }
-
-    // Replace the last space with a 0 character
-    buffer[offset - 1] = '\0';
-
-    // By convention string's length doesn't include the final 0 character.
-    return String(buffer, offset - 1);
-  }
 };
 
-
+String build_string (const String_Builder *builder);
+String build_string_with_separator (const String_Builder *builder, char separator = ' ');

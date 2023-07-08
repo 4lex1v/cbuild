@@ -110,4 +110,8 @@ struct Memory_Region {
   usize  size;
 };
 
-
+template <typename A, typename B>
+struct Pair {
+  A first;
+  B second;
+};

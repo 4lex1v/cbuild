@@ -374,7 +374,7 @@ int main (int argc, char **argv) {
                                               format_string(&arena, "main.%", platform.is_win32() ? "exe" : ""));
             for (int idx = 3; idx < argc; idx++) command_builder += argv[idx];
 
-            auto command = command_builder.build();
+            auto command = build_string_with_separator(&command_builder, ' ');
             auto [status, output] = run_system_command(&arena, command);
 
             if (output) print(&arena, "%\n", output);

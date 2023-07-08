@@ -23,3 +23,9 @@ template <typename T>
 static void zero_memory (T *region, usize count) {
   memset(region, 0, count * sizeof(T));
 }
+
+static bool compare_ignore_case (const char *s1, const char *s2) {
+  auto toupper = [](unsigned char c) { return (c >= 'a' && c <= 'z') ? c - 'a' + 'A' : c; };
+  while(*s1 && (toupper(*s1) == toupper(*s2))) { s1++; s2++; }
+  return (not static_cast<bool>(toupper(*s1) - toupper(*s2)));
+}
