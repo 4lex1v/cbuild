@@ -1,5 +1,6 @@
 
 #include "common_win32.hpp"
+#include <shellapi.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -109,36 +110,45 @@ static Result<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena *arena,
 
   {
     if (force_clang) {
-      auto [where1_status, _clang_path] = run_system_command(arena, "where clang.exe");
-      if (not where1_status) return { Status_Code::Resource_Missing, "Couldn't find clang.exe, please make sure it's added to the system's PATH.\n" };
-          
-      auto [where2_status, _clang_cpp_path] = run_system_command(arena, "where clang++.exe");
-      if (not where2_status) return { Status_Code::Resource_Missing, "Couldn't find clang++.exe, please make sure it's added to the system's PATH.\n" };
+      char _clang_path[MAX_PATH];
+      char _clang_cpp_path[MAX_PATH];
 
-      clang_path     = _clang_path;
-      clang_cpp_path = _clang_cpp_path;
+      auto status = reinterpret_cast<usize>(FindExecutable("clang", NULL, _clang_path));
+      if (status <= 32) return { Status_Code::Resource_Missing, "Couldn't find clang.exe, please make sure it's added to the system's PATH.\n" };
+
+      status = reinterpret_cast<usize>(FindExecutable("clang++", NULL, _clang_cpp_path));
+      if (status <= 32) return { Status_Code::Resource_Missing, "Couldn't find clang++.exe, please make sure it's added to the system's PATH.\n" };
+      
+      clang_path     = copy_string(arena, _clang_path);
+      clang_cpp_path = copy_string(arena, _clang_cpp_path);
     }
     else {
-      auto [where_status, clang_cl_path] = run_system_command(arena, "where clang-cl.exe");
-      if (not where_status) return { Status_Code::Resource_Missing, "Couldn't find clang-cl.exe, please make sure it's added to the system's PATH.\n" };
+      char _clang_cl_path[MAX_PATH];
+      
+      auto status = reinterpret_cast<usize>(FindExecutable("clang-cl", NULL, _clang_cl_path));
+      if (status <= 32) return { Status_Code::Resource_Missing, "Couldn't find clang-cl.exe, please make sure it's added to the system's PATH.\n" };
 
-      clang_path     = clang_cl_path;
-      clang_cpp_path = clang_cl_path;
+      clang_path     = copy_string(arena, _clang_cl_path);
+      clang_cpp_path = clang_path;
     }
   }
 
   {
-    auto [where_status, _lld_link_path] = run_system_command(arena, "where lld-link.exe");
-    if (not where_status) return { Status_Code::Resource_Missing, "Couldn't find lld-link.exe, please make sure it's added to the system's PATH.\n" };
+    char _lld_link_path[MAX_PATH];
+    
+    auto status = reinterpret_cast<usize>(FindExecutable("lld-link", NULL, _lld_link_path));
+    if (status <= 32) return { Status_Code::Resource_Missing, "Couldn't find lld-link.exe, please make sure it's added to the system's PATH.\n" };
 
-    lld_link_path = _lld_link_path;
+    lld_link_path = copy_string(arena, _lld_link_path);
   }
 
   {
-    auto [where_status, _llvm_lib_path] = run_system_command(arena, "where llvm-lib.exe");
-    if (not where_status) return { Status_Code::Resource_Missing, "Couldn't find llvm-lib.exe, please make sure it's added to the system's PATH.\n" };
+    char _llvm_lib_path[MAX_PATH];
+    
+    auto status = reinterpret_cast<usize>(FindExecutable("llvm-lib", NULL, _llvm_lib_path));
+    if (status <= 32) return { Status_Code::Resource_Missing, "Couldn't find llvm-lib.exe, please make sure it's added to the system's PATH.\n" };
 
-    llvm_lib_path = _llvm_lib_path;
+    llvm_lib_path = copy_string(arena, _llvm_lib_path);
   }
   
   return Toolchain_Configuration {

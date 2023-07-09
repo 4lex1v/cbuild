@@ -95,7 +95,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
       if (config == "debug") add_linker_options(target, "/debug:full");
       add_linker_options(target, "/subsystem:console");
 
-      link_with(target, "kernel32.lib", "libcmt.lib", "Advapi32.lib");
+      link_with(target, "kernel32.lib", "libcmt.lib", "Advapi32.lib", "shell32.lib");
     }
   };
 
