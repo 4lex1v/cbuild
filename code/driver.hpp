@@ -16,3 +16,7 @@ struct Platform_Info {
   bool is_unix  () const { return type == Platform_Type::Unix; }
   bool is_apple () const { return type == Platform_Type::Apple; }
 };
+
+struct Global_Flags {
+  bool silenced_mode;
+};

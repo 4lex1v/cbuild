@@ -23,17 +23,29 @@
 File_Path working_directory_path;
 File_Path cache_directory_path;
 
+Global_Flags  global_flags;
 Platform_Info platform;
 
-enum struct CLI_Command {
-  Init,
-  Build,
-  Run,
-  Clean,
-  Update,
-  Version,
-  Help,
-  Dynamic
+struct CLI_Command {
+  enum Value {
+    Init,
+    Build,
+    Run,
+    Clean,
+    Update,
+    Version,
+    Help,
+    Dynamic
+  };
+
+  Value type;
+
+  const char **arguments;
+  int          arguments_count;
+
+  bool operator == (Value _value) const {
+    return this->type == _value;
+  }
 };
 
 struct CLI_Command_Help_Info {
@@ -150,7 +162,7 @@ static CLI_Command_Help_Info help_info[] = {
   }
 };
 
-static Result<Arguments> parse_arguments (Memory_Arena *arena, int cli_args_count, char ** cli_args) {
+static Result<Arguments> parse_arguments (Memory_Arena *arena, int cli_args_count, const char **cli_args) {
   use(Status_Code);
 
   Arguments args {};
@@ -182,25 +194,26 @@ static Result<Arguments> parse_arguments (Memory_Arena *arena, int cli_args_coun
   return args;
 }
 
-static CLI_Command parse_command (int argc, char **argv) {
-  using enum CLI_Command;
-  
-  if (argc <= 1) return Help;
+struct Switch_Option {
+  const char *short_name;
+  const char *name;
+  bool       *flag;
+  const char *description;
+};
 
-  if      (strcmp(argv[1], "init")    == 0) return Init;
-  else if (strcmp(argv[1], "build")   == 0) return Build;
-  else if (strcmp(argv[1], "clean")   == 0) return Clean;
-  else if (strcmp(argv[1], "update")  == 0) return Update;
-  else if (strcmp(argv[1], "version") == 0) return Version;
-  else if (strcmp(argv[1], "help")    == 0) return Help;
-  else if (strcmp(argv[1], "run")     == 0) return Run;
-
-  return CLI_Command::Dynamic;
-}
+static Switch_Option switch_options[] {
+  { "-s", "--silence", &global_flags.silenced_mode, "Run CBuild in silenced mode, printing only the compiler/linker output." },
+};
 
 static void print_usage (Memory_Arena &arena) {
-  print(&arena, "\nUsage: cbuild <cli_command> [arguments]\n\nCommands:\n");
+  print(&arena, "\nUsage: cbuild [switches] <cli_command> [arguments]\n\n");
 
+  print(&arena, "Switches:\n");
+  for (auto &info: switch_options) {
+    print(&arena, "  %, %\n    %\n", info.short_name, info.name, info.description);
+  }
+
+  print(&arena, "\nCommands:\n");
   for (auto &info: help_info) {
     auto &command = info.command_info;
     print(&arena, "  %\n", command.name);
@@ -222,6 +235,47 @@ static void print_usage (Memory_Arena &arena) {
   }
 }
 
+static CLI_Command parse_cli (int argc, char **argv) {
+  use(CLI_Command);
+
+  int index = 1;
+  while (index < argc) {
+    auto token = argv[index];
+    if (token[0] != '-') break; // Switches all start with '-'
+
+    for (auto &option: switch_options) {
+      if ((strcmp(token, option.short_name) != 0) ||
+          (strcmp(token, option.name)       != 0)) {
+        *option.flag = true;
+        break;
+      }
+    }
+    
+    index += 1;
+  }
+
+  if (index >= argc) return { Help };
+
+  auto token = argv[index];
+
+  CLI_Command::Value cmd = Help;
+  if      (strcmp(token, "init")    == 0) cmd = Init;
+  else if (strcmp(token, "build")   == 0) cmd = Build;
+  else if (strcmp(token, "clean")   == 0) cmd = Clean;
+  else if (strcmp(token, "update")  == 0) cmd = Update;
+  else if (strcmp(token, "version") == 0) cmd = Version;
+  else if (strcmp(token, "help")    == 0) cmd = Help;
+  else if (strcmp(token, "run")     == 0) cmd = Run;
+
+  index += 1; // to skip the parsed command name and accomodate for arguments only
+  
+  return {
+    .type            = cmd,
+    .arguments       = const_cast<const char **>(argv + index),
+    .arguments_count = argc - index
+  };
+}
+
 int main (int argc, char **argv) {
   auto arena = Memory_Arena { reserve_virtual_memory(megabytes(64)) };
 
@@ -237,18 +291,20 @@ int main (int argc, char **argv) {
     }
   };
 
-#ifdef DEV_BUILD
-  print(&arena, "CBuild r% DEV\n", TOOL_VERSION);
-#else
-  print(&arena, "CBuild r%\n", TOOL_VERSION);
-#endif
+  auto cli_command = parse_cli(argc, argv);
 
-  auto cli_command = parse_command(argc, argv);
+  if (!global_flags.silenced_mode || cli_command == CLI_Command::Version) {
+#ifdef DEV_BUILD
+    print(&arena, "CBuild r% DEV\n", TOOL_VERSION);
+#else
+    print(&arena, "CBuild r%\n", TOOL_VERSION);
+#endif
+  }
 
   if (cli_command == CLI_Command::Version) { silence_report = true; return EXIT_SUCCESS; }
 
   working_directory_path = *get_working_directory_path(&arena);
-  print(&arena, "Working directory: %\n", working_directory_path);
+  if (!global_flags.silenced_mode) print(&arena, "Working directory: %\n", working_directory_path);
 
   /*
     We only set the path here, the actual creation of the folder is handled during
@@ -259,11 +315,10 @@ int main (int argc, char **argv) {
    */
   cache_directory_path = make_file_path(&arena, working_directory_path, ".cbuild");
 
-
   Status_Code exit_status = Status_Code::Success;
 #define verify_status(EXPR) do { if (exit_status = capture_status(EXPR); !exit_status) goto exit_failure; } while (0)
 
-  auto args = parse_arguments(&arena, argc - 1, argv + 1);
+  auto args = parse_arguments(&arena, cli_command.arguments_count, cli_command.arguments);
   verify_status(args);
 
   if (cli_command == CLI_Command::Init) {
