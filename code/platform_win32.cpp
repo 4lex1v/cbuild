@@ -225,6 +225,7 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
     return { .status = get_system_error() };
 
   CloseHandle(child_stdout_write);
+  WaitForSingleObject(process.hProcess, INFINITE);
 
   char *buffer = nullptr;
   usize offset = 0;
@@ -261,8 +262,6 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
       offset += 1;
     }
   }
-
-  WaitForSingleObject(process.hProcess, INFINITE);
 
   DWORD return_value = 0;
   GetExitCodeProcess(process.hProcess, &return_value);

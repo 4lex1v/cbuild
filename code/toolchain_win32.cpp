@@ -50,6 +50,15 @@ static void split_version (const char* version, int* major, int* minor, int* pat
 };
 
 static Result<String> get_msvc_installation_path (Memory_Arena *arena) {
+  /*
+    #PERF
+    Unfortunately this function takes too long because of the vswhere call and I couldn't find a faster way to ask Windows
+    where VS is installed. Using a static local is a good enough compromize to cache the value to avoid calling the external
+    program multiple times. 
+   */
+  static String discovered_path;
+  if (discovered_path) return discovered_path;
+
   auto [status, program_files_path] = get_program_files_path(arena);
   if (not status) return status;
 
@@ -99,7 +108,9 @@ static Result<String> get_msvc_installation_path (Memory_Arena *arena) {
 
   arena->offset += (path.length + 1); // length doesn't include terminating null
 
-  return path;
+  discovered_path = path;
+
+  return discovered_path;
 }
 
 static Result<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena *arena, bool force_clang = false) {
@@ -215,13 +226,13 @@ Result<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena *arena, T
 
 Result<Toolchain_Configuration> discover_toolchain (Memory_Arena *arena) {
   auto msvc_toolchain = lookup_toolchain_by_type(arena, Toolchain_Type_MSVC_X64);
-  if (msvc_toolchain.status == Status_Code::Success) return msvc_toolchain;
+  if (msvc_toolchain.status) return msvc_toolchain;
 
   auto llvm_toolchain = lookup_toolchain_by_type(arena, Toolchain_Type_LLVM);
-  if (llvm_toolchain.status == Status_Code::Success) return llvm_toolchain;
+  if (llvm_toolchain.status) return llvm_toolchain;
 
   auto gcc_toolchain = lookup_toolchain_by_type(arena, Toolchain_Type_GCC);
-  if (gcc_toolchain.status == Status_Code::Success) return gcc_toolchain;
+  if (gcc_toolchain.status) return gcc_toolchain;
 
   return Status_Code::Resource_Missing;
 }
@@ -316,7 +327,7 @@ static Result<Windows_SDK> find_windows_sdk (Memory_Arena *arena) {
   };
 }
 
-List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Toolchain_Type toolchain) {
+List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Target_Arch architecture) {
   auto local = *arena;
 
   List<Pair<String, String>> existing_environment_values;
@@ -336,10 +347,10 @@ List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Toolchain_Type
   add(&local, &existing_environment_values, { "LIB", lib_env_var });
 
   auto sdk = find_windows_sdk(&local);
-  if (not sdk) return {};
+  if (!sdk) return {};
 
   auto msvc = get_msvc_installation_path(&local);
-  if (not msvc) return {};
+  if (!msvc) return {};
 
   {
     auto sub_local = local;
@@ -357,7 +368,7 @@ List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Toolchain_Type
 
     SetEnvironmentVariable("INCLUDE", build_string_with_separator(&includes, ';'));
 
-    auto target_platform = (toolchain == Toolchain_Type_MSVC_X86) ? "x86" : "x64";
+    auto target_platform = (architecture == Target_Arch_x86) ? "x86" : "x64";
 
     auto base_libpath_folder_path = format_string(&sub_local, "%\\Lib\\%", sdk->base_path, sdk->version);
 

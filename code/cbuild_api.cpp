@@ -46,7 +46,7 @@ void set_toolchain (Project *project, Toolchain_Type type) {
     exit(EXIT_FAILURE);
   }
   
-  project->toolchain = result;
+  overwrite_toolchain(project, result);
 }
 
 void disable_registry (Project *project) {

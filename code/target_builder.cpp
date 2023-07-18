@@ -1010,9 +1010,6 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, const Ar
     target->tracker = tracker;
   }
 
-  auto previous_env = setup_system_sdk(arena, project->toolchain.type);
-  defer { reset_environment(&previous_env); };
-
   for (auto tracker: trackers) {
     auto target = tracker->target;
     

@@ -178,9 +178,6 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
 
   auto toolchain = &project->toolchain;
 
-  auto previous_env = setup_system_sdk(_arena, toolchain->type);
-  defer { reset_environment(&previous_env); };
-
   auto project_obj_file_path = make_file_path(_arena, project_output_folder_path, format_string(_arena, "project.%", platform.is_win32() ? "obj" : "o"));
 
   {

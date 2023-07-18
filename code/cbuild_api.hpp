@@ -12,6 +12,11 @@
 
 struct Target_Tracker;
 
+enum Target_Arch {
+  Target_Arch_x86,
+  Target_Arch_x64
+};
+
 struct Arguments {
   struct Argument {
     enum struct Type { Flag, Key_Value };
@@ -45,6 +50,8 @@ struct Project {
 
   String    output_location; // It's the value that the user can override from the configuration
   File_Path output_location_path;
+
+  Target_Arch target_architecture = Target_Arch_x64;
 
   List<Target *> targets;
   u32            total_files_count;

@@ -293,6 +293,8 @@ int main (int argc, char **argv) {
       return EXIT_FAILURE;
     }
 
+    auto previous_env = setup_system_sdk(&arena, Target_Arch_x64);
+
     Project project {
       .arena     = Memory_Arena { reserve_memory_unsafe(&arena, megabytes(2)), megabytes(2) },
       .toolchain = default_toolchain,
@@ -321,6 +323,19 @@ int main (int argc, char **argv) {
 
     if (exit_status) {
       if (cli_command == CLI_Command::Build) {
+        /*
+          Previous setup_system_sdk call configures env to build the the project's configuration for the host machine,
+          while this call should setup CBuild to build the project for the specific target, where, at least in the case of
+          Windows, different dll libs should be used.
+
+          CBuild itself targets x64 machine only, while it allows the user to build for x86. Since the default toolchain must
+          be x64, current env must already be configured for that and there's no need to do this again.
+         */
+        if (project.target_architecture == Target_Arch_x86) {
+          reset_environment(&previous_env);
+          setup_system_sdk(&arena, project.target_architecture);
+        }
+
         verify_status(build_project(&arena, &project, &args));
       }
       else if (cli_command == CLI_Command::Run) {

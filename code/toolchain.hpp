@@ -13,5 +13,5 @@ Result<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena *arena, T
 
 Result<Toolchain_Configuration> discover_toolchain (Memory_Arena *arena);
 
-List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Toolchain_Type toolchain);
+List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Target_Arch architecture);
 void reset_environment (const List<Pair<String, String>> *env);
