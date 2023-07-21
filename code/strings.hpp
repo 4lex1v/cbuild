@@ -67,7 +67,13 @@ concept String_Convertible = std::convertible_to<T, String> || Has_To_String_Def
 
 template <std::integral I>
 constexpr String to_string (Memory_Arena *arena, I value) {
-  if constexpr (std::is_same_v<I, bool>) return (value) ? String("true", 4) : String("false", 5);
+  if      constexpr (std::is_same_v<I, bool>) return (value) ? String("true", 4) : String("false", 5);
+  else if constexpr (std::is_same_v<I, char>) {
+    auto memory = reserve_memory(arena, 1, 1);
+    *memory = value;
+
+    return String(memory, 1);
+  }
   else {
     if (value == 0) return String("0", 1);
       

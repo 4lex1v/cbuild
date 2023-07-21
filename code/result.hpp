@@ -36,8 +36,6 @@ struct Status_Code {
   operator bool () const { return value == Success; }
 };
 
-#define use(NAME) using enum NAME::Value
-
 static String to_string (Memory_Arena *arena, const Status_Code &status) {
   const char * table[] = {
     "Success",
@@ -108,11 +106,11 @@ template <typename T> constexpr Status_Code capture_status (const T &result) {
   }
 } 
 
-#define check_status(STATUS)                        \
-  do {                                              \
-    auto &&expr_result = (STATUS);                  \
-    auto status      = capture_status(expr_result); \
-    if (!status) return status;                     \
+#define check_status(STATUS)                          \
+  do {                                                \
+    auto &&expr_result = (STATUS);                    \
+    auto captured      = capture_status(expr_result); \
+    if (!captured) return captured;                   \
   } while (0)
 
 #define ensure_success(STATUS, MESSAGE)                     \

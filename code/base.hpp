@@ -32,6 +32,8 @@ using psize = usize;
 
 #define todo() assert(false && "Unimplemented");
 
+#define use(NAME) using enum NAME::Value
+
 #if defined(__GNUC__) || defined(__clang__)
   #define cb_forceinline __attribute__((always_inline))
 #elif defined(_MSC_VER)

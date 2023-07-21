@@ -2,6 +2,7 @@
 #include "generated.h"
 
 #include "base.hpp"
+#include "command_line.hpp"
 #include "driver.hpp"
 #include "arena.hpp"
 #include "core.hpp"
@@ -21,7 +22,7 @@ static const u32 api_version = (API_VERSION);
 extern File_Path working_directory_path;
 extern File_Path cache_directory_path;
 extern Platform_Info platform;
-extern Global_Flags  global_flags;
+extern CLI_Flags  global_flags;
 
 typedef bool project_func (const Arguments &args, Project &project);
 
@@ -286,7 +287,7 @@ Status_Code load_project (Memory_Arena *arena, const Arguments *args, Project *p
 
   create_directory(&cache_directory_path);
 
-  if (!global_flags.silenced_mode) print(&project->arena, "Build file: %\n", build_file_path);
+  if (!global_flags.silenced) print(&project->arena, "Build file: %\n", build_file_path);
 
   if (!create_directory(&cache_directory_path)) {
     print(&project->arena, "Failed to create a cache directory at: %. This is a fatal error, terminating the program.\n", cache_directory_path);

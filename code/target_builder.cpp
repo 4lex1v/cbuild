@@ -921,8 +921,6 @@ static u32 build_queue_processor (void *param) {
 
     atomic_fetch_add(&queue->tasks_completed, 1);
   }
-  
-  return 0;
 }
 
 static void wait_for_all_tasks_to_complete (Build_Queue *queue) {
@@ -934,49 +932,24 @@ static void wait_for_all_tasks_to_complete (Build_Queue *queue) {
   } while (true);
 }
 
-static Result<u32> number_of_extra_builders_to_spawn (Memory_Arena *arena, const Arguments *args) {
+static Result<u32> number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_builders_count) {
   use(Status_Code);
 
-  /*
-    From a user's perspective the builders count is the number of threads that will be used to build the project.
-    Logically, we should have at least 1 builder, which is the main thread. Internally, The build queue creates a
-    pool of additional builders. Thus, from the user's perspective builders count is in [1, LOGICAL CPUs], but how
-    many threads are in the pool is that number - 1, because we have to respect the main thread to avoid oversubscription.
-  */
-  auto requested_builders_count = get_argument_or_default(args, "builders", nullptr);
-
   // This number excludes main thread, which always exists
-  auto cpu_count            = get_logical_cpu_count();
-  auto extra_builders_limit = cpu_count - 1;
-
-  if (requested_builders_count == nullptr) return extra_builders_limit;
-
-  if (requested_builders_count[0] == '-') {
-    print(arena, "WARNING: 'builders' value cannot be a negative number. Valid value should be in the range of [1, %]. Defaulting to 1, i.e a single-threaded execution mode\n", cpu_count);
-    return 0;
-  }
-
-  if (requested_builders_count[0] == '0') {
-    print(arena, "WARNING: 'builders' value cannot be 0. Valid value should be in the range of [1, %]. Defaulting to 1, i.e a single-threaded execution mode\n", cpu_count);
-    return 0;
-  }
-
-  u32 count = 0;
-  while (*requested_builders_count != '\0') {
-    count = (count * 10) + (*requested_builders_count - '0');
-    requested_builders_count++;
-  }
+  auto cpu_count = get_logical_cpu_count();
+  u32 count = request_builders_count;
 
   if (count > cpu_count) {
-    print(arena, "WARNING: 'builders' value is bigger than the number of CPU core (i.e requested - %, core count - %). Defaulting to %\n", count, cpu_count, cpu_count);
+    print(arena, "WARNING: 'builders' value is bigger than the number of CPU cores (i.e requested - %, core count - %). Defaulting to %\n", count, cpu_count, cpu_count);
   }
 
   count = clamp(count, 1, cpu_count);
 
+  // This number specifies only the count of extra threads in addition to the main thread
   return count - 1;
 }
 
-Status_Code build_project (Memory_Arena *arena, const Project *project, const Arguments *args) {  
+Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requested_builders_count) {
   using enum Open_File_Flags;
   use(Status_Code);
 
@@ -998,7 +971,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, const Ar
   check_status(load_registry(&registry, arena, &registry_file_path, project));
 
   Build_Queue build_queue {};
-  auto builders_count = number_of_extra_builders_to_spawn(arena, args);
+  auto builders_count = number_of_extra_builders_to_spawn(arena, requested_builders_count);
   check_status(init_build_queue(&build_queue, arena, builders_count));
   defer { destroy_build_queue(&build_queue); };
 
@@ -1012,38 +985,9 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, const Ar
 
   for (auto tracker: trackers) {
     auto target = tracker->target;
-    
-    usize files_submitted = 0;
 
-    /*
-      I would like to support cases when there's a target sole purpose of which to combine multiple upstream
-      targets, for example a static library, that has no source input files, but, which composes multiple static
-      libraries into a single one. Another case would be packing static library into a dynamic library.
-     */
-    if (target->files.count == 0) [[unlikely]] {
-      if (target->depends_on.count > 0) {
-        atomic_store(&tracker->compile_status, Target_Compile_Status::Success);
-        atomic_store(&tracker->link_status,    Target_Link_Status::Waiting);
-
-        auto task = push_struct<Build_Task>(arena);
-        task->type    = Build_Task::Link;
-        task->tracker = tracker;
-
-        submit_build_command(&build_queue, task);
-        continue;
-      }
-
-      atomic_store(&tracker->compile_status, Target_Compile_Status::Success);
-      /*
-        I have some uncertainties about this setting the failed status, it's rather cancelled than failed?
-       */
-      atomic_store<Memory_Order::Release>(&tracker->link_status, Target_Link_Status::Failed);
-
-      print(arena,
-            "Target '%' doesn't have any input files and no upstream dependencies registered. "
-            "This target will be skipped. If this is intentional, please report your case\n",
-            target->name);
-
+    if (target->files.count == 0) {
+      print(arena, "Target '%' doesn't have any input files and will be skipped\n", target->name);
       continue;
     }
 

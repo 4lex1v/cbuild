@@ -9,5 +9,5 @@ struct Memory_Arena;
 struct Status_Code;
 struct Arguments;
 
-Status_Code build_project (Memory_Arena *arena, const Project *project, const Arguments *args);
+Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requested_builders_count);
 
