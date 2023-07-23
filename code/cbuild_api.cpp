@@ -149,6 +149,33 @@ void add_source_file (Target *target, const char *_file_path) {
   target->project->total_files_count += 1;
 }
 
+void exclude_source_file (Target *target, const char *_file_path) {
+  auto arena = &target->project->arena;
+
+  if (is_empty_list(&target->files)) return;
+
+  auto [status, file_path] = get_absolute_path(arena, _file_path);
+  if (!status) {
+    print(arena, "File '%' not found, please check the correctness of the specified path", _file_path);
+    exit(EXIT_FAILURE);
+  }
+
+  auto [found, position] =
+    find_position(&target->files, [&] (const File_Path *node) {
+      return compare_strings(*node, file_path);
+    });
+
+  if (!found) {
+    print(arena, "File '%' not included for the target %", _file_path, target->name);
+    return;
+  }
+
+  if (!remove_at(&target->files, position)) {
+    print(arena, "Couldn't remove file '%' from the target due to an internal error, please report this case.", _file_path);
+    return;
+  }
+}
+
 void add_include_search_path (Target *target, const char *include_path) {
   auto arena = &target->project->arena;
 

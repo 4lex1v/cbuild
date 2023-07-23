@@ -40,3 +40,8 @@ using psize = usize;
   #define cb_forceinline __forceinline
 #endif
 
+template <typename A, typename B>
+struct Pair {
+  A first;
+  B second;
+};

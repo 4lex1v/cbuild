@@ -19,3 +19,4 @@ EXPORTS
 
     ; Experimental API declarations
     add_target_hook
+    exclude_source_file

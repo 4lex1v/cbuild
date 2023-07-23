@@ -64,6 +64,35 @@ static void add (Memory_Arena *arena, List<T> *list, List_Value<T> value) {
   list->count += 1;
 }
 
+template <typename T, typename P>
+static Pair<bool, usize> find_position (const List<T> *list, P predicate) {
+  auto node = list->first;
+  for (usize idx = 0; idx < list->count; ++idx) {
+    if (predicate(&(node->value))) return { true, idx };
+    node = node->next;
+  }
+
+  return { false, 0 };
+}
+
+template <typename T>
+static bool remove_at (List<T> *list, usize position) {
+  if (list->count == 0 || position >= list->count) return false;
+
+  auto node = list->first;
+  for (usize i = 0; i < position; ++i) node = node->next;
+
+  if (node->previous != nullptr) node->previous->next = node->next;
+  else                           list->first = node->next;
+
+  if (node->next != nullptr) node->next->previous = node->previous;
+  else                       list->last = node->previous;
+
+  list->count--;
+
+  return true;
+}
+
 template <typename T>
 static bool is_empty_list (const List<T> *list) {
   return list->first == nullptr;

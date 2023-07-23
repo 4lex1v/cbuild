@@ -76,7 +76,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
   auto configure = [&] (Target *target) {
-    add_all_sources_from_directory(target, "./code", "cpp", false);
+    add_all_sources_from_directory(target, "code", "cpp", false);
     add_compiler_options(target, "-std=c++20 -DPLATFORM_X64");
     add_compiler_options(target, versions);
 
@@ -101,6 +101,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   auto cbuild = add_executable(project, "cbuild");
   configure(cbuild);
+  exclude_source_file(cbuild, "code/tests_main.cpp");
 
   if (config == "release") {
     char release_folder[128];
