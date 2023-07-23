@@ -12,7 +12,9 @@ if (!(Test-Path -Path ".\out")) {
 Push-Location .\out
 
 $compile_time = Measure-Command {
-  Get-ChildItem -Path "..\code" -Filter "*.cpp" -Recurse | ForEach-Object {
+  Get-ChildItem -Path "..\code" -Filter "*.cpp" -Recurse `
+  | Where-Object { $_.Name -ne "tests_main.cpp" } `
+  | ForEach-Object {
       & clang++ $CXX_FLAGS -c $_.FullName
   }
 }

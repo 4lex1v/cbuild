@@ -185,7 +185,7 @@ static Result<Toolchain_Configuration> load_msvc_x86_toolchain (Memory_Arena *ar
   auto lib_path  = format_string(arena, "%\\bin\\Hostx64\\x86\\lib.exe", msvc_path);
 
   return Toolchain_Configuration {
-    .type              = Toolchain_Type_MSVC_X64,
+    .type              = Toolchain_Type_MSVC_X86,
     .c_compiler_path   = cl_path,
     .cpp_compiler_path = cl_path,
     .linker_path       = link_path,
