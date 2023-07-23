@@ -36,6 +36,17 @@ bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Co
 }
 
 void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) {
+  /*
+    #REWORK:
+      This is a temporary solution for 2 reasons:
+        1) Support for setting the target architecture is not yet surfaced to the tool's API
+        2) In case of x86 toolchain, we must change system's sdk anyway. Perhaps later it's worth
+           checking which target architecture is set and which toolchain is used on Windows.
+   */
+  if (toolchain.type == Toolchain_Type_MSVC_X86) {
+    project->target_architecture = Target_Arch_x86;
+  }
+
   project->toolchain = toolchain;
 }
 

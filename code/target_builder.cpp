@@ -627,6 +627,16 @@ static File_Path get_output_file_path_for_target (Memory_Arena *arena, const Tar
   }
 }
 
+static bool is_msvc (Toolchain_Type type) {
+  return ((type == Toolchain_Type_MSVC_X86) ||
+          (type == Toolchain_Type_MSVC_X64) ||
+          (type == Toolchain_Type_LLVM_CL));
+}
+
+static bool is_msvc (const Toolchain_Configuration *config) {
+  return is_msvc(config->type);
+}
+
 static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
   auto link_status = atomic_load<Memory_Order::Acquire>(&tracker->link_status);
   if (link_status != Target_Link_Status::Waiting) return;
@@ -820,8 +830,12 @@ static void compile_file (Memory_Arena *arena, const Build_Task *task) {
     builder += is_cpp_file ? project->toolchain.cpp_compiler_path : project->toolchain.c_compiler_path;
     builder += target->options.compiler;
 
-    if (toolchain->type == Toolchain_Type_MSVC_X64) builder += format_string(arena, "/c % /Fo:%", file.path, object_file_path);
-    else                                            builder += format_string(arena, "-c % -o %",  file.path, object_file_path);
+    for (auto &path: target->include_paths) {
+      builder += is_msvc(toolchain) ? format_string(arena, "/I\"%\"", path) : format_string(arena, "-I \"%\"", path);
+    }
+
+    if (is_msvc(toolchain)) builder += format_string(arena, "/c \"%\" /Fo\"%\"", file.path, object_file_path);
+    else                    builder += format_string(arena, "-c \"%\" -o \"%\"",  file.path, object_file_path);
 
     auto compilation_command = build_string_with_separator(&builder, ' ');
 

@@ -187,8 +187,6 @@ Result<CLI_Input> parse_command_line (Memory_Arena *arena, int argc, char **_arg
   auto arguments_left = argc - index;
   argv += index;
 
-  if (!arguments_left) return input;
-
   auto &command = input.command;
   if (compare_strings(command_name_arg, "init")) {
     command.type = Init;
