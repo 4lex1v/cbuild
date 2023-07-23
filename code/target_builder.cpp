@@ -951,7 +951,7 @@ static Result<u32> number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 r
 
   // This number excludes main thread, which always exists
   auto cpu_count = get_logical_cpu_count();
-  u32 count = request_builders_count;
+  u32 count = request_builders_count ? request_builders_count : cpu_count;
 
   if (count > cpu_count) {
     print(arena, "WARNING: 'builders' value is bigger than the number of CPU cores (i.e requested - %, core count - %). Defaulting to %\n", count, cpu_count, cpu_count);
