@@ -95,7 +95,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   {
     apply_common_target_settings(cbuild);
     add_all_sources_from_directory(cbuild, "code", "cpp", false);
-    exclude_source_file(cbuild, "code/tests_main.cpp");
     add_compiler_options(cbuild, "-fno-exceptions");
 
     char exports_option[256] = "/def:";
@@ -103,11 +102,11 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_linker_options(cbuild, exports_option);
   }
 
-  auto verify = add_executable(project, "verify");
+  auto tests = add_executable(project, "test");
   {
-    apply_common_target_settings(verify);
-    add_all_sources_from_directory(verify, "verify", "cpp", false);
-    add_source_file(verify, "code/platform_win32.cpp");
+    apply_common_target_settings(tests);
+    add_all_sources_from_directory(tests, "tests", "cpp", false);
+    add_source_file(tests, "code/platform_win32.cpp");
   }
 
   if (config == "release") {

@@ -2,7 +2,8 @@
 #include "code/base.hpp"
 #include "code/platform.hpp"
 #include "code/runtime.hpp"
-#include "code/test_suite.hpp"
+
+#include "test_suite.hpp"
 
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
