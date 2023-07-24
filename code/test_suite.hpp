@@ -79,62 +79,27 @@ struct Test_Case {
 
   String name;
   Case_Definition case_code;
+  Case_Definition before;
+  Case_Definition after;
 
   void operator () (Memory_Arena *arena) const {
     print(arena, " - %\n", name);
 
-    try {
-      case_code(arena);
-    }
-    catch (const Test_Failed_Exception &error) {
-      switch (error.tag) {
-        case Test_Failed_Exception::General: {
-          print(arena,
-                "   Status:\tFailed\n"
-                "   Position:\t[%:%]\n"
-                "   Expression:\t%\n",
-                error.filename, error.line, error.expr);
-
-          break;
-        }
-        case Test_Failed_Exception::Equality: {
-          print(arena,
-                "   Status:\tFailed\n"
-                "   Position:\t[%:%]\n"
-                "   Expression:\t%,\n"
-                "\t\twhere\n"
-                "\t\t    % = '%'\n"
-                "\t\t    % = '%'\n",
-                error.filename, error.line, error.expr,
-                error.expr_lhs, error.expr_lhs_value,
-                error.expr_rhs, error.expr_rhs_value);
-
-          break;
-        }
-        case Test_Failed_Exception::Execution: {
-          print(arena,
-                "   Status:\tFailed\n"
-                "   Position:\t[%:%]\n"
-                "   Details:\t%\n",
-                error.filename, error.line,
-                error.details);
-
-          break;
-        }
-      }
-      return;
-    }
-
-    print(arena, "   Status: Success\n");
+    if (before) before(arena);
+    case_code(arena);
+    if (after) after(arena);
   }
 };
 
 #define define_test_case(TEST_CASE) \
   Test_Case { .name = #TEST_CASE, .case_code = (TEST_CASE) }
 
+#define define_test_case_ex(TEST_CASE, BEFORE, AFTER) \
+  Test_Case { .name = #TEST_CASE, .case_code = (TEST_CASE), .before = (BEFORE), .after = (AFTER) }
+
 #define define_test_suite(NAME, CASES) \
   void tokenpaste(NAME, _test_suite)(const Test_Suite_Runner &runner) { \
-    runner.run_suite(#NAME, CASES);                                     \
+    runner.run(#NAME, CASES);                                     \
   }
 
 struct Test_Suite {
@@ -155,14 +120,54 @@ struct Test_Suite_Runner {
   String case_filter;
 
   template <const usize N>
-  void run_suite (const String &suite_name, const Test_Case (&cases)[N]) const {
+  void run (const String &suite_name, const Test_Case (&cases)[N]) const {
     if (suite_filter.is_empty() || compare_strings(suite_filter, suite_name)) {
       print(&this->arena, "Suite: %\n", suite_name);
 
       for (auto &test_case: cases) {
         if (case_filter.is_empty() || compare_strings(case_filter, test_case.name)) {
-          test_case(&arena);
-          reset_arena(&arena);
+          auto offset = arena.offset;
+
+          try { test_case(&arena); }
+          catch (const Test_Failed_Exception &error) {
+            switch (error.tag) {
+              case Test_Failed_Exception::General: {
+                print(&arena,
+                      "   Status:\tFailed\n"
+                      "   Position:\t[%:%]\n"
+                      "   Expression:\t%\n",
+                      error.filename, error.line, error.expr);
+
+                break;
+              }
+              case Test_Failed_Exception::Equality: {
+                print(&arena,
+                      "   Status:\tFailed\n"
+                      "   Position:\t[%:%]\n"
+                      "   Expression:\t%,\n"
+                      "\t\twhere\n"
+                      "\t\t    % = '%'\n"
+                      "\t\t    % = '%'\n",
+                      error.filename, error.line, error.expr,
+                      error.expr_lhs, error.expr_lhs_value,
+                      error.expr_rhs, error.expr_rhs_value);
+
+                break;
+              }
+              case Test_Failed_Exception::Execution: {
+                print(&arena,
+                      "   Status:\tFailed\n"
+                      "   Position:\t[%:%]\n"
+                      "   Details:\t%\n",
+                      error.filename, error.line,
+                      error.details);
+
+                break;
+              }
+            }
+          }
+
+          arena.offset = offset;
         }
       }
     }

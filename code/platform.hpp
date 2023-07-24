@@ -117,6 +117,7 @@ struct File {
 using File_Handle = File::Handle; // deprecated
 
 Result<File_Path> get_working_directory_path (Memory_Arena *arena);
+void set_working_directory (const File_Path &path);
 
 Result<bool> check_file_exists (const File_Path *path);
 

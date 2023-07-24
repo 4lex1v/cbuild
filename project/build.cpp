@@ -64,7 +64,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   set_toolchain(project, Toolchain_Type_LLVM);
 
-  disable_registry(project);
+  //disable_registry(project);
   register_action(project, "generate", generate_headers);
   register_action(project, "tags",     generate_tags);
 
@@ -75,38 +75,44 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   char versions[256];
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
-  auto configure = [&] (Target *target) {
-    add_all_sources_from_directory(target, "code", "cpp", false);
-    add_compiler_options(target, "-std=c++20 -DPLATFORM_X64");
-    add_compiler_options(target, versions);
+  auto apply_common_target_settings = [&] (Target *target) {
+    add_include_search_path(target, ".");
 
     add_compiler_options(target,
+                         "-std=c++20 -DPLATFORM_X64 -DPLATFORM_WIN32",
+                         versions,
                          (is_debug)                        ? "-O0 -g -DDEV_BUILD" : "-O3",
                          (is_debug && platform == "win32") ? "-gcodeview"           : "",
-                         "-march=x86-64 -mavx2 -masm=intel -fno-exceptions -fdiagnostics-absolute-paths");
-  
-    if (platform == "win32") {
-      add_compiler_options(target, "-DPLATFORM_WIN32");
+                         "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths");
 
-      char exports_option[256] = "/def:";
-      snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
-      add_linker_options(target, exports_option);
+    if (config == "debug") add_linker_options(target, "/debug:full");
+    add_linker_options(target, "/subsystem:console");
 
-      if (config == "debug") add_linker_options(target, "/debug:full");
-      add_linker_options(target, "/subsystem:console");
-
-      link_with(target, "kernel32.lib", "libcmt.lib", "Advapi32.lib", "shell32.lib");
-    }
+    link_with(target, "kernel32.lib", "libcmt.lib", "Advapi32.lib", "shell32.lib");
   };
 
   auto cbuild = add_executable(project, "cbuild");
-  configure(cbuild);
-  exclude_source_file(cbuild, "code/tests_main.cpp");
+  {
+    apply_common_target_settings(cbuild);
+    add_all_sources_from_directory(cbuild, "code", "cpp", false);
+    exclude_source_file(cbuild, "code/tests_main.cpp");
+    add_compiler_options(cbuild, "-fno-exceptions");
+
+    char exports_option[256] = "/def:";
+    snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
+    add_linker_options(cbuild, exports_option);
+  }
+
+  auto verify = add_executable(project, "verify");
+  {
+    apply_common_target_settings(verify);
+    add_all_sources_from_directory(verify, "verify", "cpp", false);
+    add_source_file(verify, "code/platform_win32.cpp");
+  }
 
   if (config == "release") {
     char release_folder[128];
     snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
-
     set_output_location(project, release_folder);
   }
   

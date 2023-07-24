@@ -25,6 +25,10 @@ Result<File_Path> get_working_directory_path (Memory_Arena *arena) {
   return File_Path(buffer, path_length);
 }
 
+void set_working_directory (const File_Path &path) {
+  SetCurrentDirectoryA(path.value);
+}
+
 Result<bool> check_file_exists (const File_Path *path) {
   auto allocation_size = GetFullPathName(path->value, 0, nullptr, nullptr);
   auto buffer          = reinterpret_cast<LPSTR>(_alloca(allocation_size));
@@ -225,7 +229,6 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
     return { .status = get_system_error() };
 
   CloseHandle(child_stdout_write);
-  WaitForSingleObject(process.hProcess, INFINITE);
 
   char *buffer = nullptr;
   usize offset = 0;
@@ -266,6 +269,12 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
   DWORD return_value = 0;
   GetExitCodeProcess(process.hProcess, &return_value);
 
+  /*
+    For some reason when WaitForSingleObject comes before reading from a pipe it may hang indefinitely,
+    I'm not sure why this happens at this point. I'd like it to close the process first, before reading
+    from the pipe, otherwise profiler shows that reading takes a lot of time. I'll investigate this later.
+   */
+  WaitForSingleObject(process.hProcess, INFINITE);
   CloseHandle(child_stdout_read);
 
   CloseHandle(process.hProcess);

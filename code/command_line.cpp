@@ -126,7 +126,15 @@ static Result<String> find_argument_value (Memory_Arena *arena, const String &ke
 
     if (!strncmp(option, key.value, key.length)) {
       // User can define the option that starts with expected key, but the rest of it is different
-      if (option[key.length] != '=') continue;
+      if (auto value = option[key.length]; value != '=') {
+        if (value == '\0' || value == ' ')
+          return {
+            Invalid_Value,
+            format_string(arena, "Invalid option value for the key '%', expected format: <key>=<value>", key)
+          };
+
+        continue;
+      }
 
       auto value        = option + key.length + 1;
       auto value_length = strlen(value);
@@ -134,7 +142,7 @@ static Result<String> find_argument_value (Memory_Arena *arena, const String &ke
       if (value_length == 0)
         return {
           Invalid_Value,
-          format_string(arena, "Invalid option value for the key %, expected format: <key>=<value>", key)
+          format_string(arena, "Invalid option value for the key '%', expected format: <key>=<value>", key)
         };
 
       return String(value, value_length);
@@ -197,7 +205,8 @@ Result<CLI_Input> parse_command_line (Memory_Arena *arena, int argc, char **_arg
 
       if      (compare_strings(type_value, "cpp")) command.init.type = CLI_Command::Init::Cpp;
       else if (compare_strings(type_value, "c"))   command.init.type = CLI_Command::Init::C;
-      else return { Invalid_Value, format_string(arena, "Unrecognized argument value for the 'type' option: %", type_value) };
+      else if (type_value->length != 0)
+        return { Invalid_Value, format_string(arena, "Unrecognized argument value for the 'type' option: %", type_value) };
     }
 
     return input;
