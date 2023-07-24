@@ -5,6 +5,8 @@
 #include "core.hpp"
 #include "dependency_iterator.hpp"
 #include "platform.hpp"
+#include "runtime.hpp"
+#include "result.hpp"
 
 Dependency_Iterator::Dependency_Iterator (const File_Mapping *_mapping)
   : mapping { _mapping },
@@ -37,7 +39,9 @@ static const char* find_substring (const char *memory, size_t memory_size, const
   return nullptr;
 }
 
-bool get_next_include_value (Dependency_Iterator *iterator, String *include) {
+Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *include) {
+  use(Status_Code);
+  
   auto cursor = iterator->cursor;
   auto end    = iterator->mapping->memory + iterator->mapping->size;
   
@@ -82,14 +86,21 @@ bool get_next_include_value (Dependency_Iterator *iterator, String *include) {
       auto end_of_safe_word = reinterpret_cast<const char *>(memchr(safe_word, '(', end - safe_word));
       if (end_of_safe_word == nullptr) return false;
 
-      auto safe_word_length        = end_of_safe_word - safe_word;
-      auto raw_string_end_position = find_substring(end_of_safe_word, end - end_of_safe_word, safe_word, safe_word_length);
-      assert(*(raw_string_end_position - 1) == ')');
+      auto safe_word_length = end_of_safe_word - safe_word;
+      char raw_string_closing_path[64] = { ')' };
+      copy_memory(raw_string_closing_path + 1, safe_word, safe_word_length);
 
-      auto position = raw_string_end_position + safe_word_length;
-      assert(*position == '"');
+      auto raw_string_closing_path_length = safe_word_length + 1;
+      auto raw_string_end_position = find_substring(end_of_safe_word, end - end_of_safe_word,
+                                                    raw_string_closing_path, raw_string_closing_path_length);
+      if ((raw_string_end_position == nullptr) ||
+          (raw_string_end_position[raw_string_closing_path_length] != '"')) {
+        return Invalid_Value; // Unclosed string literal, TODO: report a proper error message
+      }
 
-      cursor = position + 1;
+      auto position = raw_string_end_position + safe_word_length + 1;
+
+      cursor = position + 1; // closing " for a string literal
 
       continue;
     }

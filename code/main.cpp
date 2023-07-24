@@ -148,8 +148,8 @@ int main (int argc, char **argv) {
     print_usage(&arena);
   }
   else {
-    auto default_toolchain = discover_toolchain(&arena);
-    if (not default_toolchain) {
+    auto [status, default_toolchain] = discover_toolchain(&arena);
+    if (!status) {
       print(&arena, "Couldn't find any suitable C/C++ toolchain installed on the system.");
       return EXIT_FAILURE;
     }

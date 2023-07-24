@@ -27,10 +27,10 @@ const char * get_argument_or_default (const Arguments *args, const char *key, co
 }
 
 bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Configuration *out_configuration) {
-  auto result = lookup_toolchain_by_type(&project->arena, type);
-  if (not result) return false;
+  auto [status, result] = lookup_toolchain_by_type(&project->arena, type);
+  check_status(status);
 
-  *out_configuration = *result;
+  *out_configuration = result;
 
   return true;
 }
@@ -51,8 +51,8 @@ void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) {
 }
 
 void set_toolchain (Project *project, Toolchain_Type type) {
-  auto result = lookup_toolchain_by_type(&project->arena, type);
-  if (not result) {
+  auto [status, result] = lookup_toolchain_by_type(&project->arena, type);
+  if (!status) {
     print(&project->arena, "FATAL ERROR: Requested toolchain wasn't found on the system.\n");
     exit(EXIT_FAILURE);
   }

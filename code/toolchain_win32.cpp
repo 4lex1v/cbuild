@@ -347,10 +347,10 @@ List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Target_Arch ar
   add(&local, &existing_environment_values, { "LIB", lib_env_var });
 
   auto sdk = find_windows_sdk(&local);
-  if (!sdk) return {};
+  if (!sdk.status) return {};
 
   auto msvc = get_msvc_installation_path(&local);
-  if (!msvc) return {};
+  if (!msvc.status) return {};
 
   {
     auto sub_local = local;

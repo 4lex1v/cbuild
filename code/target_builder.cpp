@@ -458,7 +458,13 @@ static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *s
   };
 
   bool chain_has_updates = false;
-  while (get_next_include_value(&iterator, &include_value)) {
+  while (true) {
+    {
+      auto [status, has_more] = get_next_include_value(&iterator, &include_value);  
+      check_status(status);
+      if (!has_more) break;
+    }
+
     File_Path resolved_path;
     for (auto prefix: include_directories) {
       auto full_path = make_file_path(arena, prefix, include_value);
@@ -539,7 +545,13 @@ static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_f
   };
 
   bool chain_has_updates = false;
-  while (get_next_include_value(&iterator, &include_value)) {
+  while (true) {
+    {
+      auto [status, has_more] = get_next_include_value(&iterator, &include_value);
+      check_status(status);
+      if (!has_more) break;
+    }
+
     auto inner_local = local;
     
     File_Path resolved_path;

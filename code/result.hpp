@@ -85,13 +85,6 @@ struct Result {
   bool operator == (Status_Code::Value code) {
     return status.value == code;
   }
-
-  bool operator ! () {
-    if constexpr (has_not_operator_v<T>) {
-      return (status != Status_Code::Success) || !this->value;
-    }
-    else return (status != Status_Code::Success);  
-  }
 };
 
 template <typename T> struct Is_Result:            std::false_type {};
