@@ -9,17 +9,17 @@ File_Path working_directory; // Path to the root directory where the 'verify' pr
 File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 File_Path binary_path;       // Executable under test
 
-static int find_arg(const char * arg, const int argc, const char * const * const argv) {
-  for (int i = 0; i < argc; ++i) {
-    if (!_stricmp(arg, argv[i])) return i;
+static int find_arg (const char * arg, const int argc, const char * const * const argv) {
+  for (auto idx = 0; idx < argc; idx++) {
+    if (!_stricmp(arg, argv[idx])) return idx;
   }
 
   return -1;
 }
 
-String find_arg_value(const char * arg, const int argc, const char * const * const argv) {
-  const int i = find_arg(arg, argc, argv);
-  if ((i != -1) && ((i + 1) < argc)) return String(argv[i + 1]);
+static String find_arg_value (const char * arg, const int argc, const char * const * const argv) {
+  auto idx = find_arg(arg, argc, argv);
+  if ((idx != -1) && ((idx + 1) < argc)) return String(argv[idx + 1]);
 
   return {};
 }

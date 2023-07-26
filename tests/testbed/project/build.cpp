@@ -1,38 +1,44 @@
 
+#include <string_view>
+
 #include "cbuild.h"
 
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
+#include <cstring>
 
-#ifdef __cplusplus
-extern "C"
-#endif
-bool setup_project (const Arguments *args, Project *project) {
-  const char *toolchain = get_argument_or_default(args, "toolchain", "msvc");
-  const char *config    = get_argument_or_default(args, "config",    "debug");
+static void setup_toolchain (Project *project, const std::string_view toolchain) {
+  if      (toolchain == "msvc_x86") set_toolchain(project, Toolchain_Type_MSVC_X86);
+  else if (toolchain == "msvc_x64") set_toolchain(project, Toolchain_Type_MSVC_X64);
+  else if (toolchain == "llvm")     set_toolchain(project, Toolchain_Type_LLVM);
+  else if (toolchain == "llvm_cl")  set_toolchain(project, Toolchain_Type_LLVM_CL);
+  else {
+    printf("Unrecognized toolchain value: '%s'", toolchain.data());
+    exit(EXIT_FAILURE);
+  }
+}
 
-  /*
-    This is a simple template file that could be used to bootstrap project configuration.
+extern "C" bool setup_project (const Arguments *args, Project *project) {
+  auto toolchain = get_argument_or_default(args, "toolchain", "msvc_x64");
+  auto config    = get_argument_or_default(args, "config",    "debug");
+  auto cache     = get_argument_or_default(args, "cache",     "on");
 
-    Please see cbuild.h for additional documentation and the available API.
+  // NOTE: Test checks these printf to ensure that values are passed correctly. DON'T REMOVE
+  printf("Selected toolchain - %s\n", toolchain);
+  printf("Selected configuration - %s\n", config);
 
-    For more information please visit project's Github page.
-   */
-  Target *target = add_executable(project, "main");
+  setup_toolchain(project, toolchain);
+
+  if (strcmp(cache, "off") == 0) disable_registry(project);
+
+  auto target = add_executable(project, "main");
   add_source_file(target, "code/main.cpp");
 
-  if (!strcmp(toolchain, "msvc")) {
+  if (strstr(toolchain, "msvc")) {
     add_compiler_option(target, "/nologo");
-
-    if (!strcmp(config, "release")) {
-      add_compiler_option(target, "/O2");
-    }
-
     add_linker_option(target, "/nologo");
-    if (!strcmp(config, "release")) {
-      add_linker_option(target, "/debug:full");
-    }
   }
+
+  if (strncmp(toolchain, "llvm", 4) == 0) link_with(target, "kernel32.lib", "libcmt.lib");
 
   return true;
 }

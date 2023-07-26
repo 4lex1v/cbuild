@@ -119,6 +119,8 @@ using File_Handle = File::Handle; // deprecated
 Result<File_Path> get_working_directory_path (Memory_Arena *arena);
 void set_working_directory (const File_Path &path);
 
+void copy_directory_content (Memory_Arena *arena, const File_Path &from, const File_Path &to);
+
 Result<bool> check_file_exists (const File_Path *path);
 
 enum struct Open_File_Flags: u32 {

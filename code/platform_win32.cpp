@@ -581,6 +581,34 @@ struct Performance_Counter {
   u64 frequency;
 };
 
+void copy_directory_content (Memory_Arena *arena, const File_Path &from, const File_Path &to) {
+  WIN32_FIND_DATA find_file_data;
+
+  auto local = *arena;
+
+  auto search_query = format_string(arena, "%\\*", from);
+
+  auto search_handle = FindFirstFile(search_query.value, &find_file_data);
+  if (search_handle == INVALID_HANDLE_VALUE) return;
+  defer { FindClose(search_handle); };
+
+  do {
+    auto scoped = local;
+
+    auto file_to_move = format_string(&scoped, "%\\%", from, find_file_data.cFileName);
+    auto destination  = format_string(&scoped, "%\\%", to,   find_file_data.cFileName);
+
+    if (find_file_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      if (lstrcmp(find_file_data.cFileName, ".") != 0 && lstrcmp(find_file_data.cFileName, "..") != 0) {
+        CreateDirectory(destination.value, nullptr);
+        copy_directory_content(&scoped, file_to_move, destination);
+      }
+    } else {
+      CopyFile(file_to_move.value, destination.value, FALSE);
+    }
+  } while (FindNextFile(search_handle, &find_file_data) != 0);
+}
+
 Performance_Counter * create_performance_counter (Memory_Arena *arena) {
   LARGE_INTEGER frequency;
   QueryPerformanceFrequency(&frequency);

@@ -15,6 +15,14 @@ static void setup_workspace (Memory_Arena *arena) {
   set_working_directory(workspace);
 }
 
+static void setup_testbed (Memory_Arena *arena) {
+  setup_workspace(arena);
+
+  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
+
+  copy_directory_content(arena, testbed_path, workspace);
+}
+
 static void cleanup_workspace (Memory_Arena *arena) {
   set_working_directory(working_directory);
   delete_directory(workspace);
@@ -44,8 +52,116 @@ static void build_init_project (Memory_Arena *arena) {
   require(strstr(result.output, "Thank you for trying cbuild!"));
 }
 
+static void build_testbed (Memory_Arena *arena) {
+  const char *toolchains [] { "msvc_x86", "msvc_x64", "llvm", "llvm_cl" };
+  const char *configs    [] { "debug", "release" };
+
+  auto cbuild_output_folder = make_file_path(arena, workspace, ".cbuild");
+
+  for (auto toolchain: toolchains) {
+    for (auto config: configs) {
+      auto local = *arena;
+
+      auto command = format_string(&local, "% build toolchain=% config=%", binary_path, toolchain, config);
+      auto result = run_system_command(&local, command);
+
+      char check_phrase[64];
+
+      {
+        auto toolchain_length = strlen(toolchain);
+        char phrase[] = "Selected toolchain - ";
+        auto phrase_length = array_count_elements(phrase) - 1;
+
+        copy_memory(check_phrase, phrase, phrase_length);
+        copy_memory(check_phrase + phrase_length, toolchain, toolchain_length);
+        check_phrase[phrase_length + toolchain_length] = '\0';
+
+        require(strstr(result.output, check_phrase));
+      }
+
+      {
+        auto config_length = strlen(config);
+        char phrase[] = "Selected configuration - ";
+        auto phrase_length = array_count_elements(phrase) - 1;
+
+        copy_memory(check_phrase, phrase, phrase_length);
+        copy_memory(check_phrase + phrase_length, config, config_length);
+        check_phrase[phrase_length + config_length] = '\0';
+
+        require(strstr(result.output, check_phrase));
+      }
+
+      if (!result.status) print(&local, "%\n", result.output);
+      require(result.status == Status_Code::Success);
+
+      require(check_directory_exists(&cbuild_output_folder).value);
+
+      delete_directory(cbuild_output_folder);
+    }
+  }
+}
+
+static void build_registry_on_test (Memory_Arena *arena) {
+  auto executable_path = make_file_path(arena, workspace, ".cbuild", "build", "out", "main.exe");
+    
+  auto command = format_string(arena, "% build", binary_path);
+
+  {
+    auto result  = run_system_command(arena, command);
+
+    if (!result.status) print(arena, "%\n", result.output);
+    require(result.status);
+    require(strstr(result.output.value, "Building file"));
+  }
+
+  {
+    require(check_file_exists(&executable_path).value);
+
+    auto [status, output] = run_system_command(arena, executable_path.value.value);
+    require(status);
+    require(strstr(output.value, "Thank you for trying cbuild!"));
+  }
+
+  {
+    auto result = run_system_command(arena, command);
+    require(result.status);
+    require(strstr(result.output.value, "Building file") == nullptr);
+  }
+}
+
+static void build_registry_off_test (Memory_Arena *arena) {
+  auto executable_path = make_file_path(arena, workspace, ".cbuild", "build", "out", "main.exe");
+    
+  auto command = format_string(arena, "% build cache=off", binary_path);
+
+  {
+    auto result  = run_system_command(arena, command);
+
+    if (!result.status) print(arena, "%\n", result.output);
+    require(result.status);
+    require(strstr(result.output.value, "Building file"));
+  }
+
+  {
+    require(check_file_exists(&executable_path).value);
+
+    auto [status, output] = run_system_command(arena, executable_path.value.value);
+    require(status);
+    require(strstr(output.value, "Thank you for trying cbuild!"));
+  }
+
+  {
+    auto result = run_system_command(arena, command);
+    require(result.status);
+    require(strstr(result.output.value, "Building file"));
+  }
+}
+
 static Test_Case build_command_tests [] {
   define_test_case_ex(build_init_project, setup_workspace, cleanup_workspace),
+  define_test_case_ex(build_testbed, setup_testbed, cleanup_workspace),
+  define_test_case_ex(build_registry_on_test, setup_testbed, cleanup_workspace),
+  define_test_case_ex(build_registry_off_test, setup_testbed, cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)
