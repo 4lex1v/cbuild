@@ -42,10 +42,12 @@ int main (int argc, char **argv) {
   print(&suite_runner.arena, "Verifying: %\n", binary_path);
 
 #define run_suite(SUITE_NAME)                                           \
-  void tokenpaste(SUITE_NAME, _test_suite)(const Test_Suite_Runner &);  \
+  void tokenpaste(SUITE_NAME, _test_suite)(Test_Suite_Runner &);  \
   tokenpaste(SUITE_NAME, _test_suite)(suite_runner)
 
   run_suite(init_command);
   run_suite(build_command);
   run_suite(clean_command);
+
+  return suite_runner.report();
 }

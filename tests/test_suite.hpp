@@ -75,20 +75,13 @@ struct Test_Failed_Exception {
   }
 
 struct Test_Case {
-  typedef void (*Case_Definition)(Memory_Arena *arena);
+  typedef void (*Case_Step)(Memory_Arena *arena);
 
   String name;
-  Case_Definition case_code;
-  Case_Definition before;
-  Case_Definition after;
 
-  void operator () (Memory_Arena *arena) const {
-    print(arena, " - %\n", name);
-
-    if (before) before(arena);
-    case_code(arena);
-    if (after) after(arena);
-  }
+  Case_Step case_code;
+  Case_Step before;
+  Case_Step after;
 };
 
 #define define_test_case(TEST_CASE) \
@@ -98,20 +91,9 @@ struct Test_Case {
   Test_Case { .name = #TEST_CASE, .case_code = (TEST_CASE), .before = (BEFORE), .after = (AFTER) }
 
 #define define_test_suite(NAME, CASES) \
-  void tokenpaste(NAME, _test_suite)(const Test_Suite_Runner &runner) { \
+  void tokenpaste(NAME, _test_suite)(Test_Suite_Runner &runner) { \
     runner.run(#NAME, CASES);                                     \
   }
-
-struct Test_Suite {
-  Test_Case *cases;
-  usize      cases_count;
-};
-
-template <const usize N>
-Test_Suite create_suite (const char *suite_name, const Test_Case (&cases)[N]) {
-  return Test_Suite {
-  };
-}
 
 struct Test_Suite_Runner {
   mutable Memory_Arena arena;
@@ -119,57 +101,103 @@ struct Test_Suite_Runner {
   String suite_filter;
   String case_filter;
 
+  List<String> failed_suites;
+
   template <const usize N>
-  void run (const String &suite_name, const Test_Case (&cases)[N]) const {
+  void run (const String &suite_name, const Test_Case (&cases)[N]) {
     if (suite_filter.is_empty() || compare_strings(suite_filter, suite_name)) {
       print(&this->arena, "Suite: %\n", suite_name);
 
       for (auto &test_case: cases) {
         if (case_filter.is_empty() || compare_strings(case_filter, test_case.name)) {
-          auto offset = arena.offset;
+          enum struct Status {
+            Success,
+            Setup_Failed,
+            Case_Failed,
+            Cleanup_Failed,
+          };
 
-          try { test_case(&arena); }
-          catch (const Test_Failed_Exception &error) {
-            switch (error.tag) {
-              case Test_Failed_Exception::General: {
-                print(&arena,
-                      "   Status:\tFailed\n"
-                      "   Position:\t[%:%]\n"
-                      "   Expression:\t%\n",
-                      error.filename, error.line, error.expr);
+          Status status = Status::Success;
 
-                break;
+          {
+            auto offset = arena.offset;
+            defer { arena.offset = offset; };
+
+            print(&arena, "  - %\n", test_case.name);
+
+            if (test_case.before) {
+              try { test_case.before(&arena); }
+              catch (const Test_Failed_Exception &error) {
+                print(&arena, "    CASE SETUP FAILED\n");
+                status = Status::Setup_Failed;
               }
-              case Test_Failed_Exception::Equality: {
-                print(&arena,
-                      "   Status:\tFailed\n"
-                      "   Position:\t[%:%]\n"
-                      "   Expression:\t%,\n"
-                      "\t\twhere\n"
-                      "\t\t    % = '%'\n"
-                      "\t\t    % = '%'\n",
-                      error.filename, error.line, error.expr,
-                      error.expr_lhs, error.expr_lhs_value,
-                      error.expr_rhs, error.expr_rhs_value);
+            }
 
-                break;
+            if (status != Status::Setup_Failed) {
+              try { test_case.case_code(&arena); }
+              catch (const Test_Failed_Exception &error) {
+                status = Status::Case_Failed;
+                switch (error.tag) {
+                  case Test_Failed_Exception::General: {
+                    print(&arena,
+                          "   Status:\tFailed\n"
+                          "   Position:\t[%:%]\n"
+                          "   Expression:\t%\n",
+                          error.filename, error.line, error.expr);
+
+                    break;
+                  }
+                  case Test_Failed_Exception::Equality: {
+                    print(&arena,
+                          "   Status:\tFailed\n"
+                          "   Position:\t[%:%]\n"
+                          "   Expression:\t%,\n"
+                          "\t\twhere\n"
+                          "\t\t    % = '%'\n"
+                          "\t\t    % = '%'\n",
+                          error.filename, error.line, error.expr,
+                          error.expr_lhs, error.expr_lhs_value,
+                          error.expr_rhs, error.expr_rhs_value);
+
+                    break;
+                  }
+                  case Test_Failed_Exception::Execution: {
+                    print(&arena,
+                          "   Status:\tFailed\n"
+                          "   Position:\t[%:%]\n"
+                          "   Details:\t%\n",
+                          error.filename, error.line,
+                          error.details);
+
+                    break;
+                  }
+                }
               }
-              case Test_Failed_Exception::Execution: {
-                print(&arena,
-                      "   Status:\tFailed\n"
-                      "   Position:\t[%:%]\n"
-                      "   Details:\t%\n",
-                      error.filename, error.line,
-                      error.details);
+            }
 
-                break;
+            if (status != Status::Setup_Failed && test_case.after) {
+              try { test_case.after(&arena); }
+              catch (const Test_Failed_Exception &error) {
+                print(&arena, "    CASE CLEANUP FAILED\n");
+                status = Status::Cleanup_Failed;
               }
             }
           }
 
-          arena.offset = offset;
+          if (status != Status::Success)
+            add(&arena, &failed_suites, copy_string(&arena, test_case.name));
         }
       }
     }
+  }
+
+  int report () const {
+    if (failed_suites.count == 0) return 0;
+
+    print(&arena, "Failed: ");
+    for (auto &name: failed_suites) print(&arena, "%, ", name);
+    print(&arena, "\n");
+
+    return 1;
   }
 };
