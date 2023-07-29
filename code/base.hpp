@@ -34,14 +34,12 @@ using psize = usize;
 
 #define use(NAME) using enum NAME::Value
 
-#if defined(__GNUC__) || defined(__clang__)
-  #define cb_forceinline __attribute__((always_inline))
-#elif defined(_MSC_VER)
-  #define cb_forceinline __forceinline
-#endif
+#define cb_forceinline __attribute__((always_inline))
+#define alloc_array(TYPE, COUNT) reinterpret_cast<TYPE *>(_alloca((COUNT) * sizeof(TYPE)))
 
 template <typename A, typename B>
 struct Pair {
   A first;
   B second;
 };
+

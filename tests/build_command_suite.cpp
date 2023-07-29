@@ -157,11 +157,65 @@ static void build_registry_off_test (Memory_Arena *arena) {
   }
 }
 
+static void build_replaced_file (Memory_Arena *arena) {
+  auto produced_binary_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
+
+  {
+    auto build_command = format_string(arena, "% build", binary_path);
+    auto [status, output] = run_system_command(arena, build_command);
+    if (!status) print(arena, "%\n", output);
+    require(status == Status_Code::Success);
+
+    require(check_file_exists(&produced_binary_path));
+
+    auto run_command = format_string(arena, "%", produced_binary_path);
+    auto result = run_system_command(arena, run_command);
+    if (!result.status) print(arena, "%\n", result.output);
+    require(result.status == Status_Code::Success);
+    require(strstr(result.output, "Thank you for trying cbuild!"));
+  }
+
+  auto new_lib_impl = R"lib(
+#include "library.hpp"
+
+const char* control_phrase () {
+  return "testbed";
+}
+)lib";
+
+  auto old_library_path = make_file_path(arena, "code", "library", "library.cpp");
+  auto new_library_path = make_file_path(arena, "code", "library", "new_library.cpp");
+
+  delete_file(old_library_path);
+
+  auto new_lib = open_file(&new_library_path, Open_File_Flags::Request_Write_Access | Open_File_Flags::Create_File_If_Not_Exists);
+  require(write_buffer_to_file(&new_lib, new_lib_impl, strlen(new_lib_impl)));
+  close_file(&new_lib);
+
+  {
+    auto build_command = format_string(arena, "% build", binary_path);
+    auto [status, output] = run_system_command(arena, build_command);
+    if (!status) print(arena, "%\n", output);
+    require(status == Status_Code::Success);
+    
+    require(check_file_exists(&produced_binary_path));
+    require(strstr(output, "Building file"));
+
+    auto run_command = format_string(arena, "%", produced_binary_path);
+    auto result = run_system_command(arena, run_command);
+    if (!result.status) print(arena, "%\n", result.output);
+    require(result.status == Status_Code::Success);
+    require(strstr(result.output, "Thank you for trying testbed!"));
+  }
+
+}
+
 static Test_Case build_command_tests [] {
   define_test_case_ex(build_init_project, setup_workspace, cleanup_workspace),
   define_test_case_ex(build_testbed, setup_testbed, cleanup_workspace),
   define_test_case_ex(build_registry_on_test, setup_testbed, cleanup_workspace),
   define_test_case_ex(build_registry_off_test, setup_testbed, cleanup_workspace),
+  define_test_case_ex(build_replaced_file, setup_testbed, cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)

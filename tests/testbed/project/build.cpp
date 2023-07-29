@@ -30,15 +30,23 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
-  auto target = add_executable(project, "main");
-  add_source_file(target, "code/main.cpp");
+  auto lib = add_static_library(project, "library");
+  add_all_sources_from_directory(lib, "code/library", "cpp", false);
+  add_include_search_path(lib, "code");
 
-  if (strstr(toolchain, "msvc")) {
-    add_compiler_option(target, "/nologo");
-    add_linker_option(target, "/nologo");
+  auto dyn = add_shared_library(project, "dynamic");
+  add_all_sources_from_directory(dyn, "code/dyn", "cpp", false);
+  link_with(dyn, lib);
+  add_include_search_path(dyn, "code");
+
+  auto main = add_executable(project, "main");
+  add_source_file(main, "code/main.cpp");
+  link_with(main, dyn);
+
+  if (strncmp(toolchain, "llvm", 4) == 0) {
+    link_with(dyn, "kernel32.lib", "libcmt.lib");
+    link_with(main, "kernel32.lib", "libcmt.lib");
   }
-
-  if (strncmp(toolchain, "llvm", 4) == 0) link_with(target, "kernel32.lib", "libcmt.lib");
 
   return true;
 }

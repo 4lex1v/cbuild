@@ -29,7 +29,7 @@ void set_working_directory (const File_Path &path) {
   SetCurrentDirectoryA(path.value);
 }
 
-Result<bool> check_file_exists (const File_Path *path) {
+bool check_file_exists (const File_Path *path) {
   auto allocation_size = GetFullPathName(path->value, 0, nullptr, nullptr);
   auto buffer          = reinterpret_cast<LPSTR>(_alloca(allocation_size));
   GetFullPathName(path->value, allocation_size, buffer, nullptr);
@@ -40,7 +40,7 @@ Result<bool> check_file_exists (const File_Path *path) {
   return !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-Result<bool> check_directory_exists (const File_Path *path) {
+bool check_directory_exists (const File_Path *path) {
   auto attributes = GetFileAttributes(path->value);
   if (attributes == INVALID_FILE_ATTRIBUTES) return false;
 

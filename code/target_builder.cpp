@@ -101,21 +101,45 @@ struct Registry {
 };
 
 enum struct Target_Compile_Status: u32 { Compiling, Failed, Success };
-enum struct Target_Link_Status: u32    { Pending, Waiting, Linking, Failed, Success };
+enum struct Target_Link_Status: u32    { Waiting, Linking, Failed, Success };
+
+struct Build_Tracker {
+  au32 targets_counter;
+
+  Build_Tracker (const Project *project)
+    : targets_counter { static_cast<u32>(project->targets.count) }
+  {}
+};
 
 struct Target_Tracker {
   const Target *target;
 
-  Atomic<Target_Compile_Status> compile_status { Target_Compile_Status::Compiling };
-  Atomic<Target_Link_Status>    link_status    { Target_Link_Status::Pending };
+  Build_Tracker *build_tracker;
+
+  Atomic<Target_Compile_Status> compile_status;
+  Atomic<Target_Link_Status>    link_status;
 
   Spin_Lock link_lock;
+
+  /*
+    Special flag that could be set by the compilation phase to "false", signaling
+    that current target has no updates (no files were recompiled) and the existing
+    artifact is legit. It's up to the linker to relink the target if upstream dependencies
+    were updated.
+   */
+  bool needs_linking;
 
   as32 files_pending   { 0 };
   au32 skipped_counter { 0 };
 
-  Target_Tracker (Target *_target)
-    : target { _target }
+  as32 waiting_on_counter { static_cast<s32>(target->depends_on.count) };
+
+  Target_Tracker (Target *_target, Build_Tracker *_build_tracker)
+    : target         { _target },
+      build_tracker  { _build_tracker },
+      compile_status { Target_Compile_Status::Compiling },
+      link_status    { Target_Link_Status::Waiting },
+      needs_linking  { true }
   {
     atomic_store(&this->files_pending, _target->files.count);
   }
@@ -155,7 +179,7 @@ static Status_Code load_registry (Registry *registry, Memory_Arena *arena, const
         If project has been updated (compiled for the first time or user made any changes) we should force
         a fresh build of all the files, by ignoring any chached information about previous builds.
        */
-      file_size > 0 && (not project->rebuild_required)) {
+      file_size > 0 && (!project->rebuild_required)) {
     
     auto mapping = map_file_into_memory(&registry_file);
     check_status(mapping);
@@ -331,35 +355,74 @@ static cb_forceinline bool find_offset (usize *result, const u64 *array, usize c
 
 struct Target_Tracker;
 
-struct Build_Queue;
 struct Build_Task {
   enum struct Type: u32 { Compile, Link };
   using enum Type;
 
-  bool dependencies_updated;
-
   Type            type;
   Target_Tracker *tracker;
-
-  u64 record_index;
 
   File file;
 
   Build_Task *next;
+  Build_Task *previous;
 };
 
 struct Build_Queue {
-  Atomic<Build_Task *> tasks;
+  Build_Task *first;
+  Build_Task *last;
+
+  Spin_Lock tasks_lock;
 
   Thread    *builders;
   usize      builders_count;
   Semaphore  tasks_available;
+  abool      terminating;
 
-  abool terminating;
-
-  au32 tasks_submitted;
-  au32 tasks_completed;
+  u32 tasks_submitted;
+  u32 tasks_completed;
 };
+
+static void submit_build_task (Build_Queue *queue, Build_Task *task) {
+  queue->tasks_lock.lock();
+  {
+    if (queue->first == nullptr) {
+      queue->first = task;
+      queue->last  = task;
+    }
+    else {
+      task->previous = queue->last;
+
+      queue->last->next = task;
+      queue->last       = task;
+    }
+
+    queue->tasks_submitted += 1;
+  }
+  queue->tasks_lock.unlock();
+
+  increment_semaphore(&queue->tasks_available);
+}
+
+static Build_Task * pull_command_for_execution (Build_Queue *queue) {
+  Build_Task *task = nullptr;
+
+  queue->tasks_lock.lock();
+  {
+    if (task != nullptr) {
+      queue->first = task->next;
+      if (queue->first != nullptr) {
+        queue->first->previous = nullptr;
+      }
+      else {
+        queue->last = nullptr;
+      }
+    }
+  }
+  queue->tasks_lock.unlock();
+
+  return task;
+}
 
 static Status_Code init_build_queue (Build_Queue *queue, Memory_Arena *arena, usize builders_count) {
   use(Status_Code);
@@ -396,28 +459,6 @@ static void destroy_build_queue (Build_Queue *queue) {
   }
 
   destroy_semaphore(&queue->tasks_available);
-}
-
-static void submit_build_command (Build_Queue *queue, Build_Task *task) {
-  while (true) {
-    task->next = atomic_load(&queue->tasks);
-    if (atomic_compare_and_set(&queue->tasks, task->next, task)) {
-      atomic_fetch_add(&queue->tasks_submitted, 1);
-      increment_semaphore(&queue->tasks_available);
-      return;
-    }
-  }
-}
-
-static Build_Task * pull_command_for_execution (Build_Queue *queue) {
-  using enum Memory_Order;
-  
-  while (true) {
-    auto task = atomic_load(&queue->tasks);
-    if (task == nullptr) return nullptr;
-
-    if (atomic_compare_and_set<Acquire_Release, Acquire>(&queue->tasks, task, task->next)) return task;
-  }
 }
 
 static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *source_file, const List<File_Path> &extra_include_paths) {
@@ -468,13 +509,13 @@ static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *s
     File_Path resolved_path;
     for (auto prefix: include_directories) {
       auto full_path = make_file_path(arena, prefix, include_value);
-      if (not check_file_exists(&full_path)) continue;
+      if (!check_file_exists(&full_path)) continue;
 
       resolved_path = full_path;
       break;
     }
 
-    if (not resolved_path) {
+    if (!resolved_path) {
       print(arena, "Couldn't resolve the include file: %, source: %, the following paths were checked: \n", include_value, source_file->path);
       for (auto path: include_directories) print(arena, "  - %\n", path);
 
@@ -557,13 +598,13 @@ static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_f
     File_Path resolved_path;
     for (auto prefix: include_directories) {
       auto full_path = make_file_path(&inner_local, prefix, include_value);
-      if (not check_file_exists(&full_path)) continue;
+      if (!check_file_exists(&full_path)) continue;
 
       resolved_path = full_path;
       break;
     }
 
-    if (not resolved_path) {
+    if (!resolved_path) {
       print(&inner_local, "Couldn't resolve the include file: %, source: %, the following paths were checked: \n", include_value, source_file->path);
       for (auto path: include_directories) print(&inner_local, "  - %\n", path);
 
@@ -585,36 +626,6 @@ static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_f
   }
 
   return chain_has_updates;
-}
-
-enum struct Upstream_Status: u32 { Ready, In_Progress, Failed };
-
-static Upstream_Status check_upstream_dependencies (const Target *target) {
-  if (target->depends_on.count == 0) return Upstream_Status::Ready;
-
-  bool has_in_progress = false;
-  for (auto d: target->depends_on) {
-    auto dtracker = d->tracker;
-
-    auto upstream_compile_status = atomic_load(&dtracker->compile_status);
-    auto upstream_link_status    = atomic_load(&dtracker->link_status);
-
-    if ((upstream_compile_status == Target_Compile_Status::Failed) ||
-        (upstream_link_status    == Target_Link_Status::Failed)) {
-      return Upstream_Status::Failed;
-    }
-
-    if ((upstream_compile_status == Target_Compile_Status::Compiling) ||
-        (upstream_link_status    == Target_Link_Status::Pending)      ||
-        (upstream_link_status    == Target_Link_Status::Waiting)      ||
-        (upstream_link_status    == Target_Link_Status::Linking)) {
-      has_in_progress = true; 
-    }
-  }
-
-  if (has_in_progress) return Upstream_Status::In_Progress;
-
-  return Upstream_Status::Ready;
 }
 
 static const char * get_target_extension (const Target *target) {
@@ -649,68 +660,47 @@ static bool is_msvc (const Toolchain_Configuration *config) {
   return is_msvc(config->type);
 }
 
-static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
-  auto link_status = atomic_load<Memory_Order::Acquire>(&tracker->link_status);
-  if (link_status != Target_Link_Status::Waiting) return;
+static bool is_win32 () {
+  return platform.type == Platform_Type::Win32;
+}
 
-  bool should_link = false;
-  tracker->link_lock.lock();
-  {
-    link_status = atomic_load(&tracker->link_status);
-    if (link_status == Target_Link_Status::Waiting) {
-      auto upstreams_status = check_upstream_dependencies(tracker->target);
-      if (upstreams_status == Upstream_Status::Failed) {
-        atomic_store(&tracker->link_status, Target_Link_Status::Failed);
-        print(arena, "Target '%' couldn't be linked because of an error in upstream target linkage\n", tracker->target->name);
-      }
-      else if (upstreams_status == Upstream_Status::Ready) {
-        should_link = true;
-        atomic_store(&tracker->link_status, Target_Link_Status::Linking);
-      }
-    }
-  }
-  tracker->link_lock.unlock();
-
-  if (not should_link) return;
-
+static Target_Link_Status link_target (Memory_Arena *arena, Target_Tracker *tracker) {
   auto target  = tracker->target;
   auto project = target->project;
-  auto output_file_path = get_output_file_path_for_target(arena, target);
+
+  auto link_status = atomic_load<Memory_Order::Acquire>(&tracker->link_status);
+  if (link_status != Target_Link_Status::Waiting) return link_status;
+  
+  /*
+    For targets that have upstream dependencies, we must ensure that all upstreams were processed and finalized their
+    statuses, before linking this target. If there are upstream that we must wait on, this link task must be rescheduled.
+   */
+  if (atomic_load(&tracker->waiting_on_counter) > 0) {
+    assert(target->depends_on.count > 0);
+    return Target_Link_Status::Waiting;
+  }
 
   assert(atomic_load(&tracker->compile_status) == Target_Compile_Status::Success);
-  assert(atomic_load(&tracker->link_status)    == Target_Link_Status::Linking);
 
+  print(arena, "Linking target: %\n", target->name);
+
+  auto output_file_path      = get_output_file_path_for_target(arena, target);
   auto object_file_extension = platform.type == Platform_Type::Win32 ? "obj" : "o";
 
   String_Builder builder { arena };
-
-  print(arena, "Linking target: %\n", target->name);
 
   Status_Code status = Status_Code::Success;
   switch (target->type) {
     case Target::Type::Static_Library: {
       builder += project->toolchain.archiver_path;
 
-      if (target->files.count > 0) {
-        builder += make_file_path(arena, object_folder_path, target->name, format_string(arena, "*.%", object_file_extension));  
+      for (auto &path: target->files) {
+        builder += make_file_path(arena, object_folder_path, target->name,
+                                  format_string(arena, "%.%", get_file_name(&path), object_file_extension));
       }
 
-      for (auto lib: target->depends_on) {
-        assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
-
-        if (lib->type == Target::Type::Executable) todo(); // This should be disallowed
-        
-        const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-        if (platform.type != Platform_Type::Win32) {
-          if (lib->type == Target::Type::Static_Library) lib_extension = "a";
-          else                                           lib_extension = "so";
-        }
-        
-        builder += make_file_path(arena, out_folder_path, format_string(arena, "%.%", lib->name, lib_extension));
-      }
-
-      if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
-      else                                       builder += format_string(arena, "-o %",   output_file_path);
+      if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
+      else            builder += format_string(arena, "-o %",   output_file_path);
 
       break;
     };
@@ -719,34 +709,35 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       builder += platform.type == Platform_Type::Win32 ? "/dll" : "-shared";
       builder += target->options.linker;
 
-      if (target->files.count) {
-        builder += make_file_path(arena, object_folder_path, target->name, format_string(arena, "*.%", object_file_extension));  
+      for (auto &path: target->files) {
+        builder += make_file_path(arena, object_folder_path, target->name,
+                                  format_string(arena, "%.%", get_file_name(&path), object_file_extension));
       }
       
       for (auto lib: target->depends_on) {
         assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
 
-        if (lib->type == Target::Type::Executable) todo(); // This should be disallowed
+        if (lib->type != Target::Type::Static_Library) todo(); // This should be disallowed
         
-        const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-        if (platform.type != Platform_Type::Win32) {
-          if (lib->type == Target::Type::Static_Library) lib_extension = "a";
-          else                                           lib_extension = "so";
-        }
-        
-        builder += make_file_path(arena, out_folder_path, format_string(arena, "%.%", lib->name, lib_extension));
+        builder += make_file_path(arena, out_folder_path,
+                                  format_string(arena, "%.%", lib->name, is_win32() ? "lib" : "a"));
       }
+
       builder += target->link_libraries;
 
-      if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
-      else                                       builder += format_string(arena, "-o %",   output_file_path);
+      if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
+      else            builder += format_string(arena, "-o %",   output_file_path);
 
       break;
     };
     case Target::Type::Executable: {
       builder += project->toolchain.linker_path;
       builder += target->options.linker;
-      builder += make_file_path(arena, object_folder_path, target->name, format_string(arena, "*.%", object_file_extension));
+
+      for (auto &path: target->files) {
+        builder += make_file_path(arena, object_folder_path, target->name,
+                                  format_string(arena, "%.%", get_file_name(&path), object_file_extension));
+      }
 
       for (auto lib: target->depends_on) {
         assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
@@ -754,18 +745,19 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
         if (lib->type == Target::Type::Executable) todo(); // This should be disallowed
         
         const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-        if (platform.type != Platform_Type::Win32) {
+        if (!is_win32()) {
           if (lib->type == Target::Type::Static_Library) lib_extension = "a";
           else                                           lib_extension = "so";
         }
         
-        builder += make_file_path(arena, out_folder_path, format_string(arena, "%.%", lib->name, lib_extension));
+        builder += make_file_path(arena, out_folder_path,
+                                  format_string(arena, "%.%", lib->name, lib_extension));
       }
 
       builder += target->link_libraries;
 
-      if (platform.type == Platform_Type::Win32) builder += format_string(arena, "/OUT:%", output_file_path);
-      else                                       builder += format_string(arena, "-o %",   output_file_path);
+      if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
+      else            builder += format_string(arena, "-o %",   output_file_path);
 
       break;
     };
@@ -779,8 +771,9 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
   if (output.length) print(arena, "%\n", output);
 
   auto is_success = (status == Status_Code::Success);
-  if (not is_success) {
+  if (!is_success) {
     atomic_store(&tracker->link_status, Target_Link_Status::Failed);
+    return Target_Link_Status::Failed;
   }
   else {
     atomic_store<Memory_Order::Release>(&tracker->link_status, Target_Link_Status::Success);
@@ -790,16 +783,15 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
     }
 
     for (auto downstream: target->required_by) {
-      link_target(arena, downstream->tracker);
+      auto downstream_tracker = downstream->tracker;
+      atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1);
     }
+
+    return Target_Link_Status::Success;
   }
 }
 
-static void compile_file (Memory_Arena *arena, const Build_Task *task) {
-  assert(task->type == Build_Task::Compile);
-
-  auto file      = task->file;
-  auto tracker   = task->tracker;
+static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *file) {
   auto target    = tracker->target;
   auto project   = target->project;
   auto toolchain = &project->toolchain;
@@ -807,15 +799,33 @@ static void compile_file (Memory_Arena *arena, const Build_Task *task) {
   auto target_info      = reinterpret_cast<Registry::Target_Info *>(target->info);
   auto target_last_info = reinterpret_cast<Registry::Target_Info *>(target->last_info);
 
-  auto file_id   = get_file_id(&file);
-  auto timestamp = get_last_update_timestamp(&file);
+  auto file_id   = get_file_id(file);
+  auto timestamp = get_last_update_timestamp(file);
 
   auto extension        = platform.type == Platform_Type::Win32 ? "obj" : "o";
-  auto object_file_name = format_string(arena, "%.%", get_file_name(&file.path), extension);
+  auto object_file_name = format_string(arena, "%.%", get_file_name(&file->path), extension);
   auto object_file_path = make_file_path(arena, object_folder_path, target->name, object_file_name);
 
   bool should_rebuild = true;
-  if (!task->dependencies_updated && target->last_info) {
+
+  /*
+    Dependencies should be checked regardless every time. If we don't do this, then we 
+    can end up with forced rebuild of the project because we miss some information.
+
+    So it's the question of how to make this process as fast as possible, since most dependency
+    chain would repeat.
+  */
+  auto scan_result = scan_file_dependencies(arena, file, target->include_paths);
+
+  /*
+    We DON'T build the translation unit iff:
+    - no updates in the dependency chain
+    - we have cached info and the current file didn't change
+
+    Otherwise, we call the compiler.
+  */
+  auto dependencies_updated = !scan_result.status || scan_result.value; // if scan failed, consider that as true
+  if (!dependencies_updated && target->last_info) {
     auto &records = registry.records;
 
     auto section      = records.files + target_last_info->files_offset;
@@ -828,93 +838,101 @@ static void compile_file (Memory_Arena *arena, const Build_Task *task) {
       auto record_index     = target_last_info->files_offset + index;
       auto record_timestamp = records.file_records[record_index].timestamp;
 
-      should_rebuild = (timestamp != record_timestamp) || (not check_file_exists(&object_file_path));
+      should_rebuild = (timestamp != record_timestamp) || (!check_file_exists(&object_file_path));
     }
   }
 
-  bool is_success = true;
-  if (should_rebuild) {
-    print(arena, "Building file: %\n", file.path.value);
+  enum struct File_Compile_Status { Ignore, Success, Failed };
+  auto file_compilation_status = File_Compile_Status::Ignore;
 
-    auto is_cpp_file = check_extension(file.path, "cpp");
+  if (should_rebuild) {
+    print(arena, "Building file: %\n", file->path.value);
+
+    auto is_cpp_file = check_extension(file->path, "cpp");
 
     String_Builder builder { arena };
     builder += is_cpp_file ? project->toolchain.cpp_compiler_path : project->toolchain.c_compiler_path;
     builder += target->options.compiler;
 
     for (auto &path: target->include_paths) {
-      builder += is_msvc(toolchain) ? format_string(arena, "/I\"%\"", path) : format_string(arena, "-I \"%\"", path);
+      builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
     }
 
-    if (is_msvc(toolchain)) builder += format_string(arena, "/c \"%\" /Fo\"%\"", file.path, object_file_path);
-    else                    builder += format_string(arena, "-c \"%\" -o \"%\"",  file.path, object_file_path);
+    if (is_msvc(toolchain)) builder += format_string(arena, R"(/c "%" /Fo"%")", file->path, object_file_path);
+    else                    builder += format_string(arena, R"(-c "%" -o "%")",  file->path, object_file_path);
 
     auto compilation_command = build_string_with_separator(&builder, ' ');
 
     auto [status, output] = run_system_command(arena, compilation_command);
 
-    if (output)     print(arena, "%\n", output);
-    if (not status) print(arena, "%\n", status);
+    if (output)  print(arena, "%\n", output);
+    if (!status) print(arena, "%\n", status);
 
-    is_success = (status == Status_Code::Success);
+    file_compilation_status = (status == Status_Code::Success) ? File_Compile_Status::Success : File_Compile_Status::Failed;
   }
   else {
     atomic_fetch_add(&tracker->skipped_counter, 1);
   }
-  
-  if (not is_success) {
+
+  if (!registry.disabled && file_compilation_status == File_Compile_Status::Success) {
+    // The registry must be updated only in case of successfully compiled file.
+    auto index = atomic_fetch_add(&target_info->files_count, 1);
+    assert(index < target_info->aligned_max_files_count);
+
+    auto update_set_index = target_info->files_offset + index;
+
+    assert(registry.update_set.files[update_set_index] == 0);
+    registry.update_set.files[update_set_index]        = file_id;
+    registry.update_set.file_records[update_set_index] = Registry::Record { .timestamp = timestamp };
+  }
+
+  if (file_compilation_status == File_Compile_Status::Failed) {
+    /*
+      We won't start linking the target until the compilation status is Success, which could be done by one thread
+      only that processed that last file in the target's batch. It's a guarantee that at this point, no one would
+      try to link this target, thus this thus this write is safe w.r.t linking process.
+     */
+    atomic_store(&tracker->link_status, Target_Link_Status::Failed);
+
     atomic_store(&tracker->compile_status, Target_Compile_Status::Failed);
-    atomic_fetch_sub<Memory_Order::Release>(&tracker->files_pending, 1);
   }
-  else {
-    auto last = atomic_fetch_sub<Memory_Order::Acquire>(&tracker->files_pending, 1);
 
-    if (not registry.disabled) {
-      auto index = atomic_fetch_add(&target_info->files_count, 1);
-      assert(index < target_info->aligned_max_files_count);
+  auto pending = atomic_fetch_sub<Memory_Order::Acquire_Release>(&tracker->files_pending, 1);
+  auto was_last_target_file = (pending - 1) == 0;
+  
+  if (!was_last_target_file) return;
 
-      auto update_set_index = target_info->files_offset + index;
+  /*
+    At this point it's guaranteed that no other thread would modify target's compilation status,
+    since current thread processed the last file.
+  */
 
-      assert(registry.update_set.files[update_set_index] == 0);
-      registry.update_set.files[update_set_index]        = file_id;
-      registry.update_set.file_records[update_set_index] = Registry::Record { .timestamp = timestamp };
-    }
-
-    if ((last - 1) == 0) {
-      /*
-        At this point it's guaranteed that no other thread would modify target's compilation status,
-        since current thread processed the last file.
-       */
-
-      auto compile_status = atomic_load(&tracker->compile_status);
-      if (compile_status == Target_Compile_Status::Failed) {
-        print(arena, "Target '%' couldn't be linked because of compilation errors\n", target->name);
-        return;
-      }
-
-      assert(compile_status == Target_Compile_Status::Compiling);
-      atomic_store<Memory_Order::Release>(&tracker->compile_status, Target_Compile_Status::Success);
-
-      /*
-        If no files were recompiled for the given target and the output target already exists, no need to
-        call the linker.
-       */
-      auto output_file_path = get_output_file_path_for_target(arena, target);
-      auto skipped = atomic_load(&tracker->skipped_counter);
-      if (skipped < tracker->target->files.count || (not check_file_exists(&output_file_path))) {
-        assert(atomic_load(&tracker->link_status) == Target_Link_Status::Pending);
-        atomic_store<Memory_Order::Release>(&tracker->link_status, Target_Link_Status::Waiting);
-
-        link_target(arena, tracker);
-      }
-      else {
-        atomic_store<Memory_Order::Release>(&tracker->link_status, Target_Link_Status::Success);
-        for (auto downstream: target->required_by) {
-          link_target(arena, downstream->tracker);
-        }
-      }
-    }
+  auto compile_status = atomic_load(&tracker->compile_status);
+  if (compile_status == Target_Compile_Status::Failed) {
+    print(arena, "Target '%' couldn't be linked because of compilation errors\n", target->name);
+    return;
   }
+
+  auto skipped_count = atomic_load(&tracker->skipped_counter);
+  auto needs_linking = skipped_count < target->files.count;
+  if (!needs_linking) {
+    // If no files were compiled, check that the binary exists
+    auto output_file_path = get_output_file_path_for_target(arena, target);
+    needs_linking = !check_file_exists(&output_file_path); 
+  }
+
+  tracker->needs_linking = needs_linking;
+
+  assert(compile_status == Target_Compile_Status::Compiling);
+  atomic_store<Memory_Order::Release>(&tracker->compile_status, Target_Compile_Status::Success);
+
+  /*
+    #NOTE:
+    As soon as we write compile success status, any thread that happens to be waiting for this target may start
+    linking it right away.
+  */
+
+  link_target(arena, tracker);
 }
 
 static u32 build_queue_processor (void *param) {
@@ -936,11 +954,22 @@ static u32 build_queue_processor (void *param) {
 
     switch (task->type) {
       case Build_Task::Type::Compile: {
-        compile_file(&arena, task);
+        compile_file(&arena, task->tracker, &task->file);
+
+        
+
         break;
       }
       case Build_Task::Type::Link: {
-        link_target(&arena, task->tracker);
+        auto link_status = link_target(&arena, task->tracker);
+
+        /*
+
+         */
+        if (link_status == Target_Link_Status::Waiting) {
+          submit_build_task(queue, task);
+        }
+
         break;
       }
     }
@@ -949,16 +978,16 @@ static u32 build_queue_processor (void *param) {
   }
 }
 
-static void wait_for_all_tasks_to_complete (Build_Queue *queue) {
-  do {
-    auto completed = atomic_load(&queue->tasks_completed);
-    auto submitted = atomic_load(&queue->tasks_submitted);
+// static void wait_for_all_tasks_to_complete (Build_Queue *queue) {
+//   do {
+//     auto completed = atomic_load(&queue->tasks_completed);
+//     auto submitted = atomic_load(&queue->tasks_submitted);
 
-    if (completed == submitted) return;
-  } while (true);
-}
+//     if (completed == submitted) return;
+//   } while (true);
+// }
 
-static Result<u32> number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_builders_count) {
+static u32 number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_builders_count) {
   use(Status_Code);
 
   // This number excludes main thread, which always exists
@@ -975,6 +1004,16 @@ static Result<u32> number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 r
   return count - 1;
 }
 
+static Status_Code create_output_directories (Memory_Arena &arena, const Project &project) {
+  for (auto target: project.targets) {
+    auto local = arena;
+    auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
+    check_status(create_directory(&target_object_folder_path));
+  }
+
+  return Status_Code::Success;
+}
+
 Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requested_builders_count) {
   using enum Open_File_Flags;
   use(Status_Code);
@@ -984,11 +1023,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   object_folder_path = make_file_path(arena, project->output_location_path, "obj");
   check_status(create_directory(&object_folder_path));
 
-  for (auto target: project->targets) {
-    auto local = *arena;
-    auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
-    check_status(create_directory(&target_object_folder_path));
-  }
+  check_status(create_output_directories(*arena, *project));
 
   out_folder_path = make_file_path(arena, project->output_location_path, "out");
   check_status(create_directory(&out_folder_path));
@@ -1001,16 +1036,13 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   check_status(init_build_queue(&build_queue, arena, builders_count));
   defer { destroy_build_queue(&build_queue); };
 
-  List<Target_Tracker *> trackers;
-  for (auto *target: project->targets) {
-    auto tracker = push_struct<Target_Tracker>(arena, target);
-    add(arena, &trackers, tracker);
+  auto build_tracker = Build_Tracker(project);
+  auto trackers = alloc_array(Target_Tracker, project->targets.count);
+  for (int idx = 0; auto target: project->targets) trackers[idx++] = Target_Tracker(target, &build_tracker);
 
-    target->tracker = tracker;
-  }
-
-  for (auto tracker: trackers) {
-    auto target = tracker->target;
+  for (u32 idx = 0; idx < project->targets.count; idx++) {
+    auto tracker = trackers + idx;
+    auto target  = tracker->target;
 
     if (target->files.count == 0) {
       print(arena, "Target '%' doesn't have any input files and will be skipped\n", target->name);
@@ -1021,43 +1053,33 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
       auto file = open_file(&file_path);
       check_status(file);
 
-      /*
-        Dependencies should be checked regardless every time. If we don't do this, then we 
-        can end up with forced rebuild of the project because we miss some information.
-
-        So it's the question of how to make this process as fast as possible, since most dependency
-        chain would repeat.
-      */
-      auto scan_result = scan_file_dependencies(arena, &file, target->include_paths);
-      check_status(scan_result);
-
       auto task     = push_struct<Build_Task>(arena);
       task->type    = Build_Task::Compile;
       task->file    = file;
       task->tracker = tracker;
-      task->dependencies_updated = scan_result;
 
-      submit_build_command(&build_queue, task);
+      submit_build_task(&build_queue, task);
     }
   }
 
-  while (true) {
-    auto task = pull_command_for_execution(&build_queue);
-    if (not task) break;
+  while (has_tasks_available(&build_queue)) {
+    auto task = pull_task_for_execution(&build_queue);
+    if (!task) break;
 
     switch (task->type) {
-      case Build_Task::Compile: { compile_file(arena, task);         break; }
+      case Build_Task::Compile: { compile_file(arena, task->tracker, &task->file); break; }
       case Build_Task::Link:    { link_target(arena, task->tracker); break; }
     }
 
-    atomic_fetch_add(&build_queue.tasks_completed, 1);
+    //atomic_fetch_add(&build_queue.tasks_completed, 1);
   }
-
-  if (builders_count) wait_for_all_tasks_to_complete(&build_queue);
 
   flush_registry(&registry);
 
   for (const auto tracker: trackers) {
+    assert(tracker->compile_status.value != Target_Compile_Status::Compiling);
+    assert(tracker->link_status.value    != Target_Link_Status::Waiting);
+
     if ((tracker->compile_status.value != Target_Compile_Status::Success) ||
         (tracker->link_status.value    != Target_Link_Status::Success)) {
       return { Build_Error, "Couldn't build one or more targets" };

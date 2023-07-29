@@ -1,7 +1,10 @@
 
 #include <cstdio>
 
+#include "dyn/dynamic.hpp"
+
 int main () {
-  printf("Thank you for trying cbuild!\n");
+  test_phrase();
+
   return 0;
 }

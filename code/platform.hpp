@@ -121,7 +121,7 @@ void set_working_directory (const File_Path &path);
 
 void copy_directory_content (Memory_Arena *arena, const File_Path &from, const File_Path &to);
 
-Result<bool> check_file_exists (const File_Path *path);
+bool check_file_exists (const File_Path *path);
 
 enum struct Open_File_Flags: u32 {
   Request_Write_Access      = flag(0),
@@ -143,7 +143,7 @@ void reset_file_cursor (File *file);
 
 Status_Code write_buffer_to_file (const File *file, const char *buffer, const size_t bytes_to_write);
 
-Result<bool> check_directory_exists (const File_Path *path);
+bool check_directory_exists (const File_Path *path);
 
 Status_Code create_directory (const File_Path *path);
 
