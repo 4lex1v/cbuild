@@ -389,7 +389,9 @@ static Build_Task * pull_task_for_execution (Build_Queue *queue) {
     else index = atomic_load(&queue->read_index);
   }
 
-  auto task = node->task;
+  auto task  = node->task;
+  node->task = nullptr;
+
   atomic_store<Release>(&node->sequence_number, index + tasks_count);
 
   return task;
@@ -856,14 +858,35 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
 
   assert(compile_status == Target_Compile_Status::Compiling);
   atomic_store<Memory_Order::Release>(&tracker->compile_status, Target_Compile_Status::Success);
+}
 
-  /*
-    #NOTE:
-    As soon as we write compile success status, any thread that happens to be waiting for this target may start
-    linking it right away.
-  */
+static void process_build_task (Memory_Arena *arena, Build_Queue *queue) {
+  auto task = pull_task_for_execution(queue);  
+  if (task == nullptr) return;
 
-  link_target(arena, tracker);
+  switch (task->type) {
+    case Build_Task::Type::Compile: {
+      compile_file(arena, task->tracker, &task->file);
+
+      auto status = atomic_load(&task->tracker->compile_status);
+      if (status == Target_Compile_Status::Success) {
+        task->type = Build_Task::Link;
+        submit_build_task(queue, task);
+      }
+
+      break;
+    }
+    case Build_Task::Type::Link: {
+      auto link_status = link_target(arena, task->tracker);
+      if (link_status == Target_Link_Status::Waiting) {
+        submit_build_task(queue, task);
+      }
+
+      break;
+    }
+  }
+
+  atomic_fetch_add(&queue->tasks_completed, 1);
 }
 
 static u32 builder_thread_proc (void *param) {
@@ -878,42 +901,10 @@ static u32 builder_thread_proc (void *param) {
 
     if (atomic_load<Memory_Order::Acquire>(&queue->terminating)) return 0;
 
-    auto task = pull_task_for_execution(queue);  
-    if (task == nullptr) continue;
-
     reset_arena(&arena);
-
-    switch (task->type) {
-      case Build_Task::Type::Compile: {
-        compile_file(&arena, task->tracker, &task->file);
-        break;
-      }
-      case Build_Task::Type::Link: {
-        auto link_status = link_target(&arena, task->tracker);
-
-        /*
-
-         */
-        if (link_status == Target_Link_Status::Waiting) {
-          submit_build_task(queue, task);
-        }
-
-        break;
-      }
-    }
-
-    atomic_fetch_add(&queue->tasks_completed, 1);
+    process_build_task(&arena, queue);
   }
 }
-
-// static void wait_for_all_tasks_to_complete (Build_Queue *queue) {
-//   do {
-//     auto completed = atomic_load(&queue->tasks_completed);
-//     auto submitted = atomic_load(&queue->tasks_submitted);
-
-//     if (completed == submitted) return;
-//   } while (true);
-// }
 
 static u32 number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_builders_count) {
   use(Status_Code);
@@ -1003,17 +994,8 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
     }
   }
 
-  while (has_unfinished_tasks(&build_queue)) {
-    auto task = pull_task_for_execution(&build_queue);
-    if (!task) continue;
-    
-    switch (task->type) {
-      case Build_Task::Compile: { compile_file(arena, task->tracker, &task->file); break; }
-      case Build_Task::Link:    { link_target(arena, task->tracker); break; }
-    }
-
-    atomic_fetch_add(&build_queue.tasks_completed, 1);
-  }
+  while (has_unfinished_tasks(&build_queue))
+    process_build_task(arena, &build_queue);
 
   if (!registry_disabled) check_status(flush_registry(&registry, &update_set));
 

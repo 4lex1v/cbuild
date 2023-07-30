@@ -35,8 +35,14 @@ int main (int argc, char **argv) {
     .case_filter  = find_arg_value("--case", argc, argv),
   };
 
+  auto bin_path_arg = find_arg_value("--bin", argc, argv);
+  if (!bin_path_arg) {
+    print(&suite_runner.arena, "ERROR: --bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
+    return 1;
+  }
+
   working_directory = *get_working_directory_path(&suite_runner.arena);
-  binary_path       = get_absolute_path(&suite_runner.arena, argv[1]);
+  binary_path       = get_absolute_path(&suite_runner.arena, bin_path_arg);
   workspace         = make_file_path(&suite_runner.arena, working_directory, "out", "verification");
 
   print(&suite_runner.arena, "Verifying: %\n", binary_path);
