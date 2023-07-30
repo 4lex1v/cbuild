@@ -50,6 +50,14 @@ constexpr bool is_aligned_by (const T value, const usize by) {
   return value == align_forward(value, by);
 }
 
+template <typename T>
+constexpr T align_forward_to_pow_2 (const T value) {
+  if (value == 0) return 1;
+
+  const auto lead_zero_count = __builtin_clz(value);
+  return 1 << ((sizeof(T) * 8) - lead_zero_count);
+}
+
 template <bool B, typename T = void> struct check_condition          { };
 template <typename T>                struct check_condition<true, T> { using type = T; };
 

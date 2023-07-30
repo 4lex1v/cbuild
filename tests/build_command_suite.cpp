@@ -94,7 +94,7 @@ static void build_testbed (Memory_Arena *arena) {
       if (!result.status) print(&local, "%\n", result.output);
       require(result.status == Status_Code::Success);
 
-      require(check_directory_exists(&cbuild_output_folder).value);
+      require(check_directory_exists(&cbuild_output_folder));
 
       delete_directory(cbuild_output_folder);
     }
@@ -115,7 +115,7 @@ static void build_registry_on_test (Memory_Arena *arena) {
   }
 
   {
-    require(check_file_exists(&executable_path).value);
+    require(check_file_exists(&executable_path));
 
     auto [status, output] = run_system_command(arena, executable_path.value.value);
     require(status);
@@ -143,7 +143,7 @@ static void build_registry_off_test (Memory_Arena *arena) {
   }
 
   {
-    require(check_file_exists(&executable_path).value);
+    require(check_file_exists(&executable_path));
 
     auto [status, output] = run_system_command(arena, executable_path.value.value);
     require(status);

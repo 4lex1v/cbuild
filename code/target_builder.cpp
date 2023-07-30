@@ -1,6 +1,4 @@
 
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <immintrin.h>
 
 #include "base.hpp"
@@ -103,23 +101,11 @@ struct Registry {
 enum struct Target_Compile_Status: u32 { Compiling, Failed, Success };
 enum struct Target_Link_Status: u32    { Waiting, Linking, Failed, Success };
 
-struct Build_Tracker {
-  au32 targets_counter;
-
-  Build_Tracker (const Project *project)
-    : targets_counter { static_cast<u32>(project->targets.count) }
-  {}
-};
-
 struct Target_Tracker {
   const Target *target;
 
-  Build_Tracker *build_tracker;
-
   Atomic<Target_Compile_Status> compile_status;
   Atomic<Target_Link_Status>    link_status;
-
-  Spin_Lock link_lock;
 
   /*
     Special flag that could be set by the compilation phase to "false", signaling
@@ -129,14 +115,12 @@ struct Target_Tracker {
    */
   bool needs_linking;
 
-  as32 files_pending   { 0 };
-  au32 skipped_counter { 0 };
-
+  au32 skipped_counter    { 0 };
+  as32 files_pending      { static_cast<s32>(target->files.count) };
   as32 waiting_on_counter { static_cast<s32>(target->depends_on.count) };
 
-  Target_Tracker (Target *_target, Build_Tracker *_build_tracker)
+  Target_Tracker (Target *_target)
     : target         { _target },
-      build_tracker  { _build_tracker },
       compile_status { Target_Compile_Status::Compiling },
       link_status    { Target_Link_Status::Waiting },
       needs_linking  { true }
@@ -363,86 +347,57 @@ struct Build_Task {
   Target_Tracker *tracker;
 
   File file;
-
-  Build_Task *next;
-  Build_Task *previous;
 };
 
 struct Build_Queue {
-  Build_Task *first;
-  Build_Task *last;
+  struct Node {
+    Build_Task *task;
+    as32 sequence_number;
+  };
 
-  Spin_Lock tasks_lock;
+  Node *tasks;
+  u32 tasks_count;
+
+  cas64 write_index;
+  cas64 read_index;
 
   Thread    *builders;
   usize      builders_count;
   Semaphore  tasks_available;
   abool      terminating;
 
-  u32 tasks_submitted;
-  u32 tasks_completed;
+  au32 tasks_submitted;
+  au32 tasks_completed;
 };
 
-static void submit_build_task (Build_Queue *queue, Build_Task *task) {
-  queue->tasks_lock.lock();
-  {
-    if (queue->first == nullptr) {
-      queue->first = task;
-      queue->last  = task;
-    }
-    else {
-      task->previous = queue->last;
-
-      queue->last->next = task;
-      queue->last       = task;
-    }
-
-    queue->tasks_submitted += 1;
-  }
-  queue->tasks_lock.unlock();
-
-  increment_semaphore(&queue->tasks_available);
-}
-
-static Build_Task * pull_command_for_execution (Build_Queue *queue) {
-  Build_Task *task = nullptr;
-
-  queue->tasks_lock.lock();
-  {
-    if (task != nullptr) {
-      queue->first = task->next;
-      if (queue->first != nullptr) {
-        queue->first->previous = nullptr;
-      }
-      else {
-        queue->last = nullptr;
-      }
-    }
-  }
-  queue->tasks_lock.unlock();
-
-  return task;
-}
-
-static Status_Code init_build_queue (Build_Queue *queue, Memory_Arena *arena, usize builders_count) {
+static Status_Code init_build_queue (Build_Queue *queue, Memory_Arena *arena, usize queue_size, usize builders_count, Thread_Proc *builders_proc) {
   use(Status_Code);
-  
+
+  const auto aligned_size = align_forward_to_pow_2(queue_size);
+  queue->tasks       = reserve_array<Build_Queue::Node>(arena, aligned_size);
+  queue->tasks_count = aligned_size;
+
+  for (usize idx = 0; idx < aligned_size; idx++) {
+    auto node = queue->tasks + idx;
+
+    node->task            = nullptr;
+    node->sequence_number = idx;
+  }
+
   auto semaphore = create_semaphore();
   check_status(semaphore);
   queue->tasks_available = semaphore;
   queue->builders_count  = builders_count;
 
-  if (queue->builders_count) {
-    queue->builders = reserve_array<Thread>(arena, queue->builders_count);
+  if (!queue->builders_count) return Success;
 
-    for (usize idx = 0; idx < queue->builders_count; idx++) {
-      u32 build_queue_processor (void *);
+  queue->builders = reserve_array<Thread>(arena, queue->builders_count);
 
-      auto builder_thread = spawn_thread(build_queue_processor, queue);
-      check_status(builder_thread);
+  for (usize idx = 0; idx < queue->builders_count; idx++) {
+    auto builder_thread = spawn_thread(builders_proc, queue);
+    check_status(builder_thread);
 
-      queue->builders[idx] = builder_thread;
-    }
+    queue->builders[idx] = builder_thread;
   }
 
   return Success;
@@ -459,6 +414,73 @@ static void destroy_build_queue (Build_Queue *queue) {
   }
 
   destroy_semaphore(&queue->tasks_available);
+}
+
+static bool submit_build_task (Build_Queue *queue, Build_Task *task) {
+  using enum Memory_Order;
+  
+  auto index = atomic_load(&queue->write_index);
+
+  const auto tasks_count = queue->tasks_count;
+  const auto mask        = tasks_count - 1;
+
+  Build_Queue::Node *node = nullptr;
+  while (true) {
+    node = &queue->tasks[index & mask];
+
+    auto sequence = atomic_load<Acquire>(&node->sequence_number);
+    auto diff     = sequence - index;
+    
+    if (diff == 0) {
+      if (atomic_compare_and_set<Whatever, Whatever>(&queue->write_index, index, index + 1)) break;
+    }
+    else if (diff < 0) return false;
+    else index = atomic_load(&queue->write_index);
+  }
+
+  atomic_fetch_add(&queue->tasks_submitted, 1);
+
+  node->task = task;
+  atomic_store<Release>(&node->sequence_number, index + 1);
+
+  increment_semaphore(&queue->tasks_available);
+
+  return true;
+}
+
+static Build_Task * pull_task_for_execution (Build_Queue *queue) {
+  using enum Memory_Order;
+  
+  auto index = atomic_load(&queue->read_index);
+
+  const auto tasks_count = queue->tasks_count;
+  const auto mask        = tasks_count - 1;
+
+  Build_Queue::Node *node = nullptr;
+  while (true) {
+    node = &queue->tasks[index & mask];
+
+    auto sequence = atomic_load<Acquire>(&node->sequence_number);
+    auto diff     = sequence - (index + 1);
+
+    if (diff == 0) {
+      if (atomic_compare_and_set<Whatever, Whatever>(&queue->read_index, index, index + 1)) break;
+    }
+    else if (diff < 0) return nullptr;
+    else index = atomic_load(&queue->read_index);
+  }
+
+  auto task = node->task;
+  atomic_store<Release>(&node->sequence_number, index + tasks_count);
+
+  return task;
+}
+
+static bool has_unfinished_tasks (const Build_Queue *queue) {
+  auto submitted = atomic_load(&queue->tasks_submitted);
+  auto completed = atomic_load(&queue->tasks_completed);
+
+  return (submitted != completed);
 }
 
 static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *source_file, const List<File_Path> &extra_include_paths) {
@@ -935,7 +957,7 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
   link_target(arena, tracker);
 }
 
-static u32 build_queue_processor (void *param) {
+static u32 builder_thread_proc (void *param) {
   auto queue = reinterpret_cast<Build_Queue *>(param);
 
   auto virtual_memory = reserve_virtual_memory(megabytes(1));
@@ -947,7 +969,7 @@ static u32 build_queue_processor (void *param) {
 
     if (atomic_load<Memory_Order::Acquire>(&queue->terminating)) return 0;
 
-    auto task = pull_command_for_execution(queue);  
+    auto task = pull_task_for_execution(queue);  
     if (task == nullptr) continue;
 
     reset_arena(&arena);
@@ -955,9 +977,6 @@ static u32 build_queue_processor (void *param) {
     switch (task->type) {
       case Build_Task::Type::Compile: {
         compile_file(&arena, task->tracker, &task->file);
-
-        
-
         break;
       }
       case Build_Task::Type::Link: {
@@ -1033,12 +1052,13 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
 
   Build_Queue build_queue {};
   auto builders_count = number_of_extra_builders_to_spawn(arena, requested_builders_count);
-  check_status(init_build_queue(&build_queue, arena, builders_count));
+  auto queue_size = project->targets.count + project->total_files_count;
+  check_status(init_build_queue(&build_queue, arena, queue_size, builders_count, builder_thread_proc));
   defer { destroy_build_queue(&build_queue); };
 
-  auto build_tracker = Build_Tracker(project);
-  auto trackers = alloc_array(Target_Tracker, project->targets.count);
-  for (int idx = 0; auto target: project->targets) trackers[idx++] = Target_Tracker(target, &build_tracker);
+  auto trackers       = alloc_array(Target_Tracker, project->targets.count);
+  auto trackers_count = project->targets.count;
+  for (int idx = 0; auto target: project->targets) trackers[idx++] = Target_Tracker(target);
 
   for (u32 idx = 0; idx < project->targets.count; idx++) {
     auto tracker = trackers + idx;
@@ -1062,21 +1082,23 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
     }
   }
 
-  while (has_tasks_available(&build_queue)) {
+  while (has_unfinished_tasks(&build_queue)) {
     auto task = pull_task_for_execution(&build_queue);
-    if (!task) break;
-
+    if (!task) continue;
+    
     switch (task->type) {
       case Build_Task::Compile: { compile_file(arena, task->tracker, &task->file); break; }
       case Build_Task::Link:    { link_target(arena, task->tracker); break; }
     }
 
-    //atomic_fetch_add(&build_queue.tasks_completed, 1);
+    atomic_fetch_add(&build_queue.tasks_completed, 1);
   }
 
   flush_registry(&registry);
 
-  for (const auto tracker: trackers) {
+  for (usize idx = 0; idx < trackers_count; idx++) {
+    auto tracker = trackers + idx;
+
     assert(tracker->compile_status.value != Target_Compile_Status::Compiling);
     assert(tracker->link_status.value    != Target_Link_Status::Waiting);
 
