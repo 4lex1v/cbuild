@@ -5,6 +5,7 @@
 #include "driver.hpp"
 #include "seq.hpp"
 #include "atomics.hpp"
+#include "registry.hpp"
 #include "core.hpp"
 #include "concurrent.hpp"
 #include "dependency_iterator.hpp"
@@ -36,70 +37,25 @@ enum struct Chain_Status: u32 {
   Checked_No_Updates,
 };
 
-struct Registry {
-  constexpr static usize Version = 1;
-
-  struct Header {
-    u16  version;
-    u16  targets_count;
-    u32  aligned_total_files_count;
-    u32 dependencies_count;
-
-    u32 _reserved[61];
-  };
-
-  static_assert(sizeof(Header) == sizeof(u64) * 32);
-
-  struct Record {
-    u64 timestamp;
-    u64 hash;
-  };
-
-  struct Target_Info {
-    char name[Target::Max_Name_Limit];
-
-    u64  files_offset;
-    au64 files_count;
-    u32  aligned_max_files_count;
-  };
-
-  File registry_file;
-  bool disabled;
-
-  struct {
-    File_Mapping registry_file_mapping;
-
-    Header header;
-
-    Target_Info *targets;
-
-    u64    *files;
-    Record *file_records;
-
-    u64    *dependencies;
-    Record *dependency_records;
-  } records;
-
-  struct {
-    u8    *buffer;
-
-    Header *header;
-
-    Spin_Lock   *target_files_locks;
-    Target_Info *targets;
-
-    u64    *files;
-    Record *file_records;
-
-    u64    *dependencies;
-    Record *dependency_records;
-
-    Chain_Status *chain_status;
-  } update_set;
-};
-
 enum struct Target_Compile_Status: u32 { Compiling, Failed, Success };
 enum struct Target_Link_Status: u32    { Waiting, Linking, Failed, Success };
+
+struct Update_Set {
+  u8 *buffer;
+
+  Registry::Header *header;
+
+  Registry::Target_Info *targets;
+  Spin_Lock *target_files_locks;
+
+  u64 *files;
+  Registry::Record *file_records;
+
+  u64 *dependencies;
+  Registry::Record *dependency_records;
+
+  Chain_Status *chain_status;
+};
 
 struct Target_Tracker {
   const Target *target;
@@ -129,165 +85,128 @@ struct Target_Tracker {
   }
 };
 
-static File_Path object_folder_path;
-static File_Path out_folder_path;
-static Registry  registry;
+static File_Path  object_folder_path;
+static File_Path  out_folder_path;
+static Update_Set update_set;
+static Registry   registry;
+static bool       registry_disabled; // must be written only once before building, read by multiple threads
 
-static Status_Code load_registry (Registry *registry, Memory_Arena *arena, const File_Path *registry_file_path, const Project *project) {
-  using enum Open_File_Flags;
-  use(Status_Code);
+static Status_Code init_update_set (Update_Set *update_set, Memory_Arena *arena, const Registry *registry, const Project *project) {
+  auto &records = registry->records;
+  
+  auto aligned_files_count = records.header.aligned_total_files_count;
+  {
+    u16 new_aligned_total = 0;
 
-  if (project->registry_disabled) {
-    registry->disabled = true;
-    return Success;
+    /*
+      It's aligned by 4 to put the size of the allocated buffer on a 32-byte boundary, each file record is 8 bytes.
+    */
+    for (auto target: project->targets) new_aligned_total += align_forward(target->files.count, 4);
+
+    /*
+      If the number of files in the project reduced, copying old info for the new allocation will cause memory
+      corruption (for trying to copy more data than we have allocated memory for), thus we need to allocate enough
+      space to hold everything, we'll write the correct number of files into the file anyway.
+    */
+    if (new_aligned_total > aligned_files_count) aligned_files_count = new_aligned_total;
   }
 
-  auto registry_file = open_file(registry_file_path, Request_Write_Access | Create_File_If_Not_Exists);
-  check_status(registry_file);
+  assert(is_aligned_by(aligned_files_count, 4));
 
-  registry->registry_file = registry_file;
+  if (aligned_files_count > max_supported_files_count) {
+    return { Status_Code::Invalid_Value, "At the moment cbuild is limited to support 250k files." };
+  }
+  auto dependencies_limit = max_supported_files_count - aligned_files_count;
 
-  auto &records    = registry->records;
-  auto &update_set = registry->update_set;
+  auto update_set_buffer = get_memory_at_current_offset<u8>(arena, 32);
+  auto buffer_cursor     = update_set_buffer;
 
-  u8 *buffer_cursor = nullptr;
   auto set_field = [&buffer_cursor] <typename T> (T *field, usize count, usize align = 0) {
     if (align > 0) buffer_cursor = align_forward(buffer_cursor, align);
+
     auto value_size = sizeof(remove_ptr_t<T>) * count;
-    *field = reinterpret_cast<T>(buffer_cursor);
+
+    *field         = reinterpret_cast<T>(buffer_cursor);
     buffer_cursor += value_size;
   };
 
-  if (auto file_size = get_file_size(&registry_file);
-      /*
-        If project has been updated (compiled for the first time or user made any changes) we should force
-        a fresh build of all the files, by ignoring any chached information about previous builds.
-       */
-      file_size > 0 && (!project->rebuild_required)) {
-    
-    auto mapping = map_file_into_memory(&registry_file);
-    check_status(mapping);
+  set_field(&update_set->header,             1);
+  set_field(&update_set->targets,            project->targets.count);
+  set_field(&update_set->files,              aligned_files_count, 32);
+  set_field(&update_set->file_records,       aligned_files_count);
+  set_field(&update_set->dependencies,       dependencies_limit, 32);
+  set_field(&update_set->dependency_records, dependencies_limit);
 
-    auto buffer = reinterpret_cast<u8 *>(mapping->memory);
-    buffer_cursor = buffer;
+  /*
+    The following fields should be allocated strictly after the above fields.
+    This is done for a faster, easier flush operation, where I can take a linear
+    chunk of memory and dump to a file.
+  */
 
-    records.registry_file_mapping = mapping;
+  set_field(&update_set->chain_status,       dependencies_limit);
+  set_field(&update_set->target_files_locks, project->targets.count, 8);
 
-    auto set_header_field = [&buffer_cursor] <typename T> (T *field) {
-      *field         = *reinterpret_cast<T *>(buffer_cursor);
-      buffer_cursor += sizeof(T);
-    };
-
-    set_header_field(&records.header.version);
-    set_header_field(&records.header.targets_count);
-    set_header_field(&records.header.aligned_total_files_count);
-    set_header_field(&records.header.dependencies_count);
-    // if (records.header.version >= 2) { read_header_value(&field); }
-
-    buffer_cursor += sizeof(records.header._reserved);
-
-    set_field(&records.targets,            records.header.targets_count);
-    set_field(&records.files,              records.header.aligned_total_files_count, 32);
-    set_field(&records.file_records,       records.header.aligned_total_files_count);
-    set_field(&records.dependencies,       records.header.dependencies_count, 32);
-    set_field(&records.dependency_records, records.header.dependencies_count);
-  }
-
+  auto reservation_size = buffer_cursor - update_set_buffer;
   {
-    /*
-      If the number of files in the project reduced, copying old info for the new allocation will corrupt the
-      memory, thus we need to allocate enough space to hold everything, we'll write the correct number of files
-      into the file anyway.
+    auto reservation = reserve_memory(arena, reservation_size, 32);
+    if (reservation == nullptr) return { Status_Code::Out_Of_Memory, "Not enough memory to allocate buffer for registry update set" };
 
-      It's aligned by 4 to put the size of the allocated buffer on a 32-byte boundary, each file record is 8 bytes.
-     */
-    auto files_count = records.header.aligned_total_files_count;
-    {
-      u16 new_aligned_total = 0;
-      for (auto target: project->targets)   new_aligned_total += align_forward(target->files.count, 4);
-      if  (new_aligned_total > files_count) files_count = new_aligned_total;
-    }
-
-    assert(is_aligned_by(files_count, 4));
-
-    auto dependencies_limit = max_supported_files_count - files_count;
-
-    auto update_set_buffer = get_memory_at_current_offset<u8>(arena, 32);
-    buffer_cursor          = update_set_buffer;
-
-    set_field(&update_set.header,             1);
-    set_field(&update_set.targets,            project->targets.count);
-    set_field(&update_set.files,              files_count, 32);
-    set_field(&update_set.file_records,       files_count);
-    set_field(&update_set.dependencies,       dependencies_limit, 32);
-    set_field(&update_set.dependency_records, dependencies_limit);
-
-    /*
-      The following fields should be allocated strictly after the above fields.
-      This is done for a faster, easier flush operation, where I can take a linear
-      chunk of memory and dump to a file.
-     */
-
-    set_field(&update_set.chain_status,       dependencies_limit);
-    set_field(&update_set.target_files_locks, project->targets.count, 8);
-
-    auto reservation_size = buffer_cursor - update_set_buffer;
-    if (reserve_memory(arena, reservation_size, 32) == nullptr) {
-      return { Out_Of_Memory, "Not enough memory to allocate buffer for registry update set" };
-    }
-
-    zero_memory(update_set_buffer, reservation_size);
-
-    update_set.buffer = update_set_buffer;
-
-    *update_set.header = Registry::Header {
-      .version                   = Registry::Version,
-      .targets_count             = static_cast<u16>(project->targets.count),
-      .aligned_total_files_count = files_count,
-      .dependencies_count        = 0,
-    };
-
-    for (usize target_index = 0, files_offset = 0;
-         auto target: project->targets) {
-      auto info = update_set.targets + target_index;
-
-      target->info = info;
-      copy_memory(info->name, target->name.value, target->name.length);
-
-      for (usize idx = 0; idx < registry->records.header.targets_count; idx++) {
-        auto old_info = registry->records.targets + idx;
-
-        if (strncmp(info->name, old_info->name, Target::Max_Name_Limit) == 0) {
-          target->last_info = old_info;
-          break;
-        }
-      }
-
-      // The boundary of each segment for target files should still be aligned on 32-bytes, that is 4 64-bit ids.
-      info->aligned_max_files_count = align_forward(target->files.count, 4);
-      info->files_offset            = files_offset;
-
-      target_index += 1;
-      files_offset += info->aligned_max_files_count;
-    }
+    assert((void*)reservation == (void*)update_set_buffer);
+    assert((void*)(update_set_buffer + reservation_size) == (void*)get_memory_at_current_offset(arena));
   }
 
-  return Success;
+  zero_memory(update_set_buffer, reservation_size);
+
+  update_set->buffer = update_set_buffer;
+
+  *update_set->header = Registry::Header {
+    .version                   = Registry::Version,
+    .targets_count             = static_cast<u16>(project->targets.count),
+    .aligned_total_files_count = aligned_files_count,
+    .dependencies_count        = 0,
+  };
+
+  /*
+    We needs to copy information from the old registry for the existing targets to update that information later,
+    as well as drop obsolete targets that were removed from the registry.
+   */
+  for (usize target_index = 0, files_offset = 0; auto target: project->targets) {
+    auto info = update_set->targets + target_index;
+
+    target->info = info;
+    copy_memory(info->name, target->name.value, target->name.length);
+
+    for (usize idx = 0; idx < records.header.targets_count; idx++) {
+      auto old_info = records.targets + idx;
+
+      if (strncmp(info->name, old_info->name, Target::Max_Name_Limit) == 0) {
+        target->last_info = old_info;
+        break;
+      }
+    }
+
+    // The boundary of each segment for target files should still be aligned on 32-bytes.
+    info->aligned_max_files_count = align_forward(target->files.count, 4);
+    info->files_offset            = files_offset;
+
+    target_index += 1;
+    files_offset += info->aligned_max_files_count;
+  }
+
+  return Status_Code::Success;
 }
 
-static Status_Code flush_registry (Registry *registry) {
+static Status_Code flush_registry (Registry *registry, Update_Set *update_set) {
   use(Status_Code);
-
-  if (registry->disabled) return Success;
 
   reset_file_cursor(&registry->registry_file);
 
-  auto count = registry->update_set.header->dependencies_count;
-  auto records = copy_memory(reinterpret_cast<Registry::Record *>(registry->update_set.dependencies + count), registry->update_set.dependency_records, count);
+  auto count = update_set->header->dependencies_count;
+  auto records = copy_memory(reinterpret_cast<Registry::Record *>(update_set->dependencies + count), update_set->dependency_records, count);
 
-  auto flush_buffer_size = usize(records + count) - usize(registry->update_set.buffer);
+  auto flush_buffer_size = usize(records + count) - usize(update_set->buffer);
 
-  write_buffer_to_file(&registry->registry_file, (char*)registry->update_set.buffer, flush_buffer_size);
+  write_buffer_to_file(&registry->registry_file, (char*)update_set->buffer, flush_buffer_size);
 
   close_file(&registry->registry_file);
 
@@ -487,8 +406,7 @@ static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *s
   use(Status_Code);
   using enum Chain_Status;
 
-  auto &records    = registry.records;
-  auto &update_set = registry.update_set;
+  auto &records = registry.records;
 
   auto file_id = get_file_id(source_file);
 
@@ -585,11 +503,6 @@ static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *s
 
 static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_file, const List<File_Path> &extra_include_paths) {
   use(Status_Code);
-
-  /*
-    When the registry is disabled we should treat that as if there's no prior information regarding dependencies.
-  */
-  if (registry.disabled) return true;
 
   auto local = *_arena;
 
@@ -837,16 +750,12 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
     So it's the question of how to make this process as fast as possible, since most dependency
     chain would repeat.
   */
-  auto scan_result = scan_file_dependencies(arena, file, target->include_paths);
+  auto dependencies_updated = true; // if scan failed, consider that as true
+  if (!registry_disabled) {
+    auto scan_result     = scan_file_dependencies(arena, file, target->include_paths); 
+    dependencies_updated = !scan_result.status || scan_result.value;
+  }
 
-  /*
-    We DON'T build the translation unit iff:
-    - no updates in the dependency chain
-    - we have cached info and the current file didn't change
-
-    Otherwise, we call the compiler.
-  */
-  auto dependencies_updated = !scan_result.status || scan_result.value; // if scan failed, consider that as true
   if (!dependencies_updated && target->last_info) {
     auto &records = registry.records;
 
@@ -896,16 +805,16 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
     atomic_fetch_add(&tracker->skipped_counter, 1);
   }
 
-  if (!registry.disabled && file_compilation_status == File_Compile_Status::Success) {
+  if (!registry_disabled && file_compilation_status == File_Compile_Status::Success) {
     // The registry must be updated only in case of successfully compiled file.
     auto index = atomic_fetch_add(&target_info->files_count, 1);
     assert(index < target_info->aligned_max_files_count);
 
     auto update_set_index = target_info->files_offset + index;
 
-    assert(registry.update_set.files[update_set_index] == 0);
-    registry.update_set.files[update_set_index]        = file_id;
-    registry.update_set.file_records[update_set_index] = Registry::Record { .timestamp = timestamp };
+    assert(update_set.files[update_set_index] == 0);
+    update_set.files[update_set_index]        = file_id;
+    update_set.file_records[update_set_index] = Registry::Record { .timestamp = timestamp };
   }
 
   if (file_compilation_status == File_Compile_Status::Failed) {
@@ -1023,14 +932,23 @@ static u32 number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_b
   return count - 1;
 }
 
-static Status_Code create_output_directories (Memory_Arena &arena, const Project &project) {
-  for (auto target: project.targets) {
-    auto local = arena;
+static Status_Code create_output_directories (Memory_Arena *arena, const Project *project) {
+  for (auto target: project->targets) {
+    auto local = *arena;
     auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
     check_status(create_directory(&target_object_folder_path));
   }
 
   return Status_Code::Success;
+}
+
+static void init_trackers (Target_Tracker *trackers, const Project *project) {
+  for (int idx = 0; auto target: project->targets) {
+    trackers[idx]   = Target_Tracker(target);
+    target->tracker = &trackers[idx];
+
+    idx += 1;
+  }
 }
 
 Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requested_builders_count) {
@@ -1042,13 +960,17 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   object_folder_path = make_file_path(arena, project->output_location_path, "obj");
   check_status(create_directory(&object_folder_path));
 
-  check_status(create_output_directories(*arena, *project));
+  check_status(create_output_directories(arena, project));
 
   out_folder_path = make_file_path(arena, project->output_location_path, "out");
   check_status(create_directory(&out_folder_path));
 
-  auto registry_file_path = make_file_path(arena, project->output_location_path, "__registry");
-  check_status(load_registry(&registry, arena, &registry_file_path, project));
+  registry_disabled = project->registry_disabled;
+  if (!registry_disabled) {
+    auto registry_file_path = make_file_path(arena, project->output_location_path, "__registry");
+    check_status(load_registry(&registry, arena, &registry_file_path));
+    check_status(init_update_set(&update_set, arena, &registry, project));
+  }
 
   Build_Queue build_queue {};
   auto builders_count = number_of_extra_builders_to_spawn(arena, requested_builders_count);
@@ -1056,9 +978,8 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   check_status(init_build_queue(&build_queue, arena, queue_size, builders_count, builder_thread_proc));
   defer { destroy_build_queue(&build_queue); };
 
-  auto trackers       = alloc_array(Target_Tracker, project->targets.count);
-  auto trackers_count = project->targets.count;
-  for (int idx = 0; auto target: project->targets) trackers[idx++] = Target_Tracker(target);
+  auto trackers = alloc_array(Target_Tracker, project->targets.count);
+  init_trackers(trackers, project);
 
   for (u32 idx = 0; idx < project->targets.count; idx++) {
     auto tracker = trackers + idx;
@@ -1094,9 +1015,9 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
     atomic_fetch_add(&build_queue.tasks_completed, 1);
   }
 
-  flush_registry(&registry);
+  if (!registry_disabled) check_status(flush_registry(&registry, &update_set));
 
-  for (usize idx = 0; idx < trackers_count; idx++) {
+  for (usize idx = 0; idx < project->targets.count; idx++) {
     auto tracker = trackers + idx;
 
     assert(tracker->compile_status.value != Target_Compile_Status::Compiling);

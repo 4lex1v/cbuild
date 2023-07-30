@@ -102,6 +102,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_linker_options(cbuild, exports_option);
   }
 
+  auto rdump = add_executable(project, "rdump");
+  {
+    apply_common_target_settings(rdump);
+    add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
+    add_source_file(rdump, "code/platform_win32.cpp");
+    add_source_file(rdump, "code/registry.cpp");
+    add_compiler_options(cbuild, "-fno-exceptions");
+  }
+
   auto tests = add_executable(project, "test");
   {
     apply_common_target_settings(tests);
