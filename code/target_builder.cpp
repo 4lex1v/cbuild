@@ -85,11 +85,47 @@ struct Target_Tracker {
   }
 };
 
-static File_Path  object_folder_path;
-static File_Path  out_folder_path;
-static Update_Set update_set;
-static Registry   registry;
-static bool       registry_disabled; // must be written only once before building, read by multiple threads
+struct Build_Task {
+  enum struct Type: u32 { Uninit, Compile, Link };
+  using enum Type;
+
+  Type            type;
+  Target_Tracker *tracker;
+  File            file;
+};
+
+struct Build_Queue {
+  struct Node {
+    Build_Task task;
+    as32 sequence_number;
+
+    char cache_line_pad[64 - sizeof(Build_Task) - sizeof(as32)];
+  };
+
+  static_assert(sizeof(Node) == 64);
+
+  Node *tasks;
+  u32 tasks_count;
+
+  cas64 write_index;
+  cas64 read_index;
+
+  Thread    *builders;
+  usize      builders_count;
+  Semaphore  tasks_available;
+  abool      terminating;
+
+  cau32 tasks_submitted;
+  cau32 tasks_completed;
+};
+
+static File_Path   object_folder_path;
+static File_Path   out_folder_path;
+
+static Update_Set  update_set;
+static Registry    registry;
+static bool        registry_disabled; // must be written only once before building, read by multiple threads
+static Build_Queue build_queue;
 
 static Status_Code init_update_set (Update_Set *update_set, Memory_Arena *arena, const Registry *registry, const Project *project) {
   auto &records = registry->records;
@@ -258,37 +294,6 @@ static cb_forceinline bool find_offset (usize *result, const u64 *array, usize c
 
 struct Target_Tracker;
 
-struct Build_Task {
-  enum struct Type: u32 { Compile, Link };
-  using enum Type;
-
-  Type            type;
-  Target_Tracker *tracker;
-
-  File file;
-};
-
-struct Build_Queue {
-  struct Node {
-    Build_Task *task;
-    as32 sequence_number;
-  };
-
-  Node *tasks;
-  u32 tasks_count;
-
-  cas64 write_index;
-  cas64 read_index;
-
-  Thread    *builders;
-  usize      builders_count;
-  Semaphore  tasks_available;
-  abool      terminating;
-
-  au32 tasks_submitted;
-  au32 tasks_completed;
-};
-
 static Status_Code init_build_queue (Build_Queue *queue, Memory_Arena *arena, usize queue_size, usize builders_count, Thread_Proc *builders_proc) {
   use(Status_Code);
 
@@ -299,7 +304,7 @@ static Status_Code init_build_queue (Build_Queue *queue, Memory_Arena *arena, us
   for (usize idx = 0; idx < aligned_size; idx++) {
     auto node = queue->tasks + idx;
 
-    node->task            = nullptr;
+    node->task            = Build_Task {};
     node->sequence_number = idx;
   }
 
@@ -335,7 +340,7 @@ static void destroy_build_queue (Build_Queue *queue) {
   destroy_semaphore(&queue->tasks_available);
 }
 
-static bool submit_build_task (Build_Queue *queue, Build_Task *task) {
+static bool submit_build_task (Build_Queue *queue, const Build_Task &task) {
   using enum Memory_Order;
   
   auto index = atomic_load(&queue->write_index);
@@ -367,7 +372,7 @@ static bool submit_build_task (Build_Queue *queue, Build_Task *task) {
   return true;
 }
 
-static Build_Task * pull_task_for_execution (Build_Queue *queue) {
+static bool pull_task_for_execution (Build_Queue *queue, Build_Task *result) {
   using enum Memory_Order;
   
   auto index = atomic_load(&queue->read_index);
@@ -385,16 +390,15 @@ static Build_Task * pull_task_for_execution (Build_Queue *queue) {
     if (diff == 0) {
       if (atomic_compare_and_set<Whatever, Whatever>(&queue->read_index, index, index + 1)) break;
     }
-    else if (diff < 0) return nullptr;
+    else if (diff < 0) return false;
     else index = atomic_load(&queue->read_index);
   }
 
-  auto task  = node->task;
-  node->task = nullptr;
+  *result = node->task;
 
   atomic_store<Release>(&node->sequence_number, index + tasks_count);
 
-  return task;
+  return true;
 }
 
 static bool has_unfinished_tasks (const Build_Queue *queue) {
@@ -601,21 +605,22 @@ static bool is_win32 () {
   return platform.type == Platform_Type::Win32;
 }
 
-static Target_Link_Status link_target (Memory_Arena *arena, Target_Tracker *tracker) {
+static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
+  using TLS = Target_Link_Status;
+
   auto target  = tracker->target;
   auto project = target->project;
 
-  auto link_status = atomic_load<Memory_Order::Acquire>(&tracker->link_status);
-  if (link_status != Target_Link_Status::Waiting) return link_status;
-  
   /*
     For targets that have upstream dependencies, we must ensure that all upstreams were processed and finalized their
     statuses, before linking this target. If there are upstream that we must wait on, this link task must be rescheduled.
-   */
-  if (atomic_load(&tracker->waiting_on_counter) > 0) {
-    assert(target->depends_on.count > 0);
-    return Target_Link_Status::Waiting;
-  }
+
+    `waiting_on_counter` > 0, means that when some other thread decrements this counter to zero, a linking task will be
+    sumitted to the queue by that thread.
+  */
+  if (atomic_load(&tracker->waiting_on_counter) > 0) return;
+
+  if (!atomic_compare_and_set(&tracker->link_status, TLS::Waiting, TLS::Linking)) return;
 
   assert(atomic_load(&tracker->compile_status) == Target_Compile_Status::Success);
 
@@ -710,21 +715,23 @@ static Target_Link_Status link_target (Memory_Arena *arena, Target_Tracker *trac
   auto is_success = (status == Status_Code::Success);
   if (!is_success) {
     atomic_store(&tracker->link_status, Target_Link_Status::Failed);
-    return Target_Link_Status::Failed;
+    return;
   }
-  else {
-    atomic_store<Memory_Order::Release>(&tracker->link_status, Target_Link_Status::Success);
 
-    if (target->hooks.on_linked) {
-      target->hooks.on_linked(project, target, project->args, Hook_Type_After_Target_Linked);
+  atomic_store(&tracker->link_status, Target_Link_Status::Success);
+
+  for (auto downstream: target->required_by) {
+    auto downstream_tracker = downstream->tracker;
+    if ((atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
+      submit_build_task(&build_queue, {
+        .type    = Build_Task::Type::Link,
+        .tracker = downstream_tracker
+      });
     }
+  }
 
-    for (auto downstream: target->required_by) {
-      auto downstream_tracker = downstream->tracker;
-      atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1);
-    }
-
-    return Target_Link_Status::Success;
+  if (target->hooks.on_linked) {
+    target->hooks.on_linked(project, target, project->args, Hook_Type_After_Target_Linked);
   }
 }
 
@@ -861,27 +868,26 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
 }
 
 static void process_build_task (Memory_Arena *arena, Build_Queue *queue) {
-  auto task = pull_task_for_execution(queue);  
-  if (task == nullptr) return;
+  Build_Task task;
+  if (!pull_task_for_execution(queue, &task)) return;
 
-  switch (task->type) {
+  switch (task.type) {
+    case Build_Task::Type::Uninit: {
+      return;
+    }
     case Build_Task::Type::Compile: {
-      compile_file(arena, task->tracker, &task->file);
+      compile_file(arena, task.tracker, &task.file);
 
-      auto status = atomic_load(&task->tracker->compile_status);
+      auto status = atomic_load(&task.tracker->compile_status);
       if (status == Target_Compile_Status::Success) {
-        task->type = Build_Task::Link;
+        task.type = Build_Task::Link;
         submit_build_task(queue, task);
       }
 
       break;
     }
     case Build_Task::Type::Link: {
-      auto link_status = link_target(arena, task->tracker);
-      if (link_status == Target_Link_Status::Waiting) {
-        submit_build_task(queue, task);
-      }
-
+      link_target(arena, task.tracker);
       break;
     }
   }
@@ -963,7 +969,6 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
     check_status(init_update_set(&update_set, arena, &registry, project));
   }
 
-  Build_Queue build_queue {};
   auto builders_count = number_of_extra_builders_to_spawn(arena, requested_builders_count);
   auto queue_size = project->targets.count + project->total_files_count;
   check_status(init_build_queue(&build_queue, arena, queue_size, builders_count, builder_thread_proc));
@@ -985,12 +990,11 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
       auto file = open_file(&file_path);
       check_status(file);
 
-      auto task     = push_struct<Build_Task>(arena);
-      task->type    = Build_Task::Compile;
-      task->file    = file;
-      task->tracker = tracker;
-
-      submit_build_task(&build_queue, task);
+      submit_build_task(&build_queue, {
+        .type    = Build_Task::Compile,
+        .tracker = tracker,
+        .file    = file,
+      });
     }
   }
 

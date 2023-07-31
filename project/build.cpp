@@ -111,7 +111,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_compiler_options(cbuild, "-fno-exceptions");
   }
 
-  auto tests = add_executable(project, "test");
+  auto tests = add_executable(project, "tests");
   {
     apply_common_target_settings(tests);
     add_all_sources_from_directory(tests, "tests", "cpp", false);
