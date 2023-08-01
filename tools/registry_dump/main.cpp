@@ -25,8 +25,11 @@ int main (int argc, char **argv) {
     return 1;
   }
 
+  auto registry_file = open_file(&registry_file_path);
+  check_status(registry_file);
+
   Registry registry;
-  auto load_status = load_registry(&registry, &arena, &registry_file_path);
+  auto load_status = load_registry(&registry, &arena, registry_file);
   if (!load_status) {
     printf("Couldn't load registry data from file, something fishy going on here\n");
     return 1;
