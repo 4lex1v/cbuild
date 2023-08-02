@@ -30,22 +30,72 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
-  auto lib = add_static_library(project, "library");
-  add_all_sources_from_directory(lib, "code/library", "cpp", false);
-  add_include_search_path(lib, "code");
+  auto apply_common_settings = [&] (Target *target) {
+    add_include_search_path(target, "code");
 
-  auto dyn = add_shared_library(project, "dynamic");
-  add_all_sources_from_directory(dyn, "code/dyn", "cpp", false);
-  link_with(dyn, lib);
-  add_include_search_path(dyn, "code");
+    if (strstr(toolchain, "msvc")) {
+      add_compiler_option(target, "/nologo");  
+      add_linker_option(target, "/nologo");
+    }
+  };
 
-  auto main = add_executable(project, "main");
-  add_source_file(main, "code/main.cpp");
-  link_with(main, dyn);
+  auto lib1 = add_static_library(project, "library1");
+  {
+    apply_common_settings(lib1);
+    add_all_sources_from_directory(lib1, "code/library1", "cpp", false);
+  }
 
-  if (strncmp(toolchain, "llvm", 4) == 0) {
-    link_with(dyn, "kernel32.lib", "libcmt.lib");
-    link_with(main, "kernel32.lib", "libcmt.lib");
+  auto lib2 = add_static_library(project, "library2");
+  {
+    apply_common_settings(lib2);
+    add_all_sources_from_directory(lib2, "code/library2", "cpp", false);
+    link_with(lib2, lib1);
+  }
+
+  auto lib3 = add_static_library(project, "library3");
+  {
+    apply_common_settings(lib3);
+    add_all_sources_from_directory(lib3, "code/library3", "cpp", false);
+  }
+
+  auto lib4 = add_static_library(project, "library4");
+  {
+    apply_common_settings(lib4);
+    add_all_sources_from_directory(lib4, "code/library4", "cpp", false);
+  }
+
+  auto dyn1 = add_shared_library(project, "dynamic1");
+  {
+    apply_common_settings(dyn1);
+    add_all_sources_from_directory(dyn1, "code/dynamic1", "cpp", false);
+  }
+
+  auto dyn2 = add_shared_library(project, "dynamic2");
+  {
+    apply_common_settings(dyn2);
+    add_all_sources_from_directory(dyn2, "code/dynamic2", "cpp", false);
+    link_with(dyn2, lib2, dyn1);
+  }
+
+  auto dyn3 = add_shared_library(project, "dynamic3");
+  {
+    apply_common_settings(dyn3);
+    add_all_sources_from_directory(dyn3, "code/dynamic3", "cpp", false);
+    link_with(dyn3, lib3);
+  }
+
+  auto bin1 = add_executable(project, "binary1");
+  {
+    apply_common_settings(bin1);
+    add_all_sources_from_directory(bin1, "code/binary1", "cpp", false);
+    link_with(bin1, dyn2, lib4);
+  }
+
+  auto bin2 = add_executable(project, "binary2");
+  {
+    apply_common_settings(bin2);
+    add_all_sources_from_directory(bin2, "code/binary2", "cpp", false);
+    link_with(bin2, dyn3);
   }
 
   return true;

@@ -57,6 +57,8 @@ static void build_testbed (Memory_Arena *arena) {
   const char *configs    [] { "debug", "release" };
 
   auto cbuild_output_folder = make_file_path(arena, workspace, ".cbuild");
+  auto binary1_path         = make_file_path(arena, *cbuild_output_folder, "build", "out", "binary1.exe");
+  auto binary2_path         = make_file_path(arena, *cbuild_output_folder, "build", "out", "binary2.exe");
 
   for (auto toolchain: toolchains) {
     for (auto config: configs) {
@@ -95,6 +97,19 @@ static void build_testbed (Memory_Arena *arena) {
       require(result.status == Status_Code::Success);
 
       require(check_directory_exists(&cbuild_output_folder));
+
+      {
+        auto result = run_system_command(arena, format_string(arena, "%", binary1_path));  
+        require(result.status);
+        print(arena, "%", result.output);
+        require(strstr(result.output.value, "lib1,lib2,dyn1,dyn2,bin1"));
+      }
+
+      {
+        auto result = run_system_command(arena, format_string(arena, "%", binary2_path));  
+        require(result.status);
+        require(strstr(result.output.value, "lib3,dyn3,bin2"));
+      }
 
       delete_directory(cbuild_output_folder);
     }

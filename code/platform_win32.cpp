@@ -217,6 +217,7 @@ System_Command_Result run_system_command (Memory_Arena *arena, const char *comma
 
   HANDLE child_stdout_read, child_stdout_write;
   CreatePipe(&child_stdout_read, &child_stdout_write, &security, 0);
+  SetHandleInformation(&child_stdout_read, HANDLE_FLAG_INHERIT, 0);
 
   STARTUPINFO info {
     .cb         = sizeof(STARTUPINFO),

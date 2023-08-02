@@ -392,6 +392,20 @@ static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_f
   return chain_has_updates;
 }
 
+static bool is_msvc (Toolchain_Type type) {
+  return ((type == Toolchain_Type_MSVC_X86) ||
+          (type == Toolchain_Type_MSVC_X64) ||
+          (type == Toolchain_Type_LLVM_CL));
+}
+
+static bool is_msvc (const Toolchain_Configuration *config) {
+  return is_msvc(config->type);
+}
+
+static bool is_win32 () {
+  return platform.type == Platform_Type::Win32;
+}
+
 static const char * get_target_extension (const Target *target) {
   switch (target->type) {
     case Target::Type::Static_Library: return (platform.type == Platform_Type::Win32) ? "lib" : "a";
@@ -412,20 +426,6 @@ static File_Path get_output_file_path_for_target (Memory_Arena *arena, const Tar
       return make_file_path(arena, out_folder_path, target_file_name);
     }
   }
-}
-
-static bool is_msvc (Toolchain_Type type) {
-  return ((type == Toolchain_Type_MSVC_X86) ||
-          (type == Toolchain_Type_MSVC_X64) ||
-          (type == Toolchain_Type_LLVM_CL));
-}
-
-static bool is_msvc (const Toolchain_Configuration *config) {
-  return is_msvc(config->type);
-}
-
-static bool is_win32 () {
-  return platform.type == Platform_Type::Win32;
 }
 
 static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
@@ -497,6 +497,13 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
                                     format_string(arena, "%.%", get_file_name(&path), object_file_extension));
         }
 
+        for (auto lib: target->depends_on) {
+          assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
+
+          builder += make_file_path(arena, out_folder_path,
+                                    format_string(arena, "%.%", lib->name, is_win32() ? "lib" : "a"));
+        }
+
         if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
         else            builder += format_string(arena, "-o %",   output_file_path);
 
@@ -514,8 +521,6 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       
         for (auto lib: target->depends_on) {
           assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
-
-          if (lib->type != Target::Type::Static_Library) todo(); // This should be disallowed
         
           builder += make_file_path(arena, out_folder_path,
                                     format_string(arena, "%.%", lib->name, is_win32() ? "lib" : "a"));
