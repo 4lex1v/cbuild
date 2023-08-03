@@ -56,12 +56,19 @@ struct Target_Tracker {
    */
   bool needs_linking;
 
-  Target_Tracker (Target *_target)
+  /*
+    Setting this flag to true forces the current target to build fully recompiled and re-linked with all
+    downstream dependencies.
+   */
+  bool force_build;
+
+  Target_Tracker (Target *_target, bool _force_build = false)
     : target          { _target },
       compile_status  { Target_Compile_Status::Compiling },
       link_status     { Target_Link_Status::Waiting },
       upstream_status { Upstream_Targets_Status::Ignore },
-      needs_linking   { true }
+      needs_linking   { true },
+      force_build     { _force_build }
   {
     atomic_store(&this->files_pending, _target->files.count);
   }
@@ -624,7 +631,7 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
 
   bool should_rebuild = true;
 
-  if (!dependencies_updated && target->last_info) {
+  if (!tracker->force_build && !dependencies_updated && target->last_info) {
     auto &records = registry.records;
 
     auto section      = records.files + target_last_info->files_offset;
@@ -673,7 +680,7 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
     atomic_fetch_add(&tracker->skipped_counter, 1);
   }
 
-  if (!registry_disabled) {
+  if (!registry_disabled && file_compilation_status != File_Compile_Status::Failed) {
     auto index = atomic_fetch_add(&target_info->files_count, 1);
     assert(index < target_info->aligned_max_files_count);
 
@@ -797,7 +804,7 @@ static Status_Code create_output_directories (Memory_Arena *arena, const Project
 
 static void init_trackers (Target_Tracker *trackers, const Project *project) {
   for (int idx = 0; auto target: project->targets) {
-    trackers[idx]   = Target_Tracker(target);
+    trackers[idx]   = Target_Tracker(target, project->rebuild_required);
     target->tracker = &trackers[idx];
 
     idx += 1;
@@ -854,14 +861,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
       auto file = open_file(&file_path);
       check_status(file);
 
-      /*
-        Dependencies should be checked regardless every time. If we don't do this, then we
-        can end up with forced rebuild of the project because we miss some information.
-
-        So it's the question of how to make this process as fast as possible, since most dependency
-        chain would repeat.
-      */
-      auto dependencies_updated = true; // if scan failed, consider that as true
+      auto dependencies_updated = true;
       if (!registry_disabled) {
         auto scan_result     = scan_file_dependencies(arena, &file, target->include_paths);
         dependencies_updated = !scan_result.status || scan_result.value;
@@ -871,7 +871,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
         .type    = Build_Task::Compile,
         .tracker = tracker,
         .file    = file,
-        .dependencies_updated = dependencies_updated
+        .dependencies_updated = dependencies_updated,
       });
     }
   }

@@ -37,6 +37,10 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
       add_compiler_option(target, "/nologo");  
       add_linker_option(target, "/nologo");
     }
+
+    if (strstr(toolchain, "llvm")) {
+      link_with(target, "libcmt.lib");
+    }
   };
 
   auto lib1 = add_static_library(project, "library1");
@@ -100,3 +104,4 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   return true;
 }
+    

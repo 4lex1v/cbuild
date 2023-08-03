@@ -116,6 +116,9 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     apply_common_target_settings(tests);
     add_all_sources_from_directory(tests, "tests", "cpp", false);
     add_source_file(tests, "code/platform_win32.cpp");
+    add_source_file(tests, "code/cbuild_api.cpp");
+    add_source_file(tests, "code/toolchain_win32.cpp");
+    add_source_file(tests, "code/strings.cpp");
   }
 
   if (config == "release") {

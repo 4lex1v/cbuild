@@ -12,6 +12,8 @@
 
 struct Target_Tracker;
 
+typedef void (*Config_Crash_Handler) (u32 exit_code);
+
 enum Target_Arch {
   Target_Arch_x86,
   Target_Arch_x64
@@ -48,8 +50,8 @@ struct Project {
 
   List<User_Defined_Command> user_defined_commands;
 
-  String    output_location; // It's the value that the user can override from the configuration
-  File_Path output_location_path;
+  String    output_location;      // It's the value that the user can override from the configuration
+  File_Path output_location_path; // The actual path resolved by the loader that should be used by the builder
 
   Target_Arch target_architecture = Target_Arch_x64;
 

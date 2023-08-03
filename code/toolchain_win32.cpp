@@ -12,8 +12,6 @@
 #include "result.hpp"
 #include "platform.hpp"
 
-extern Platform_Info platform;
-
 static Result<String> get_program_files_path (Memory_Arena *arena) {
   usize env_value_reservation_size = 0;
   getenv_s(&env_value_reservation_size, nullptr, 0, "ProgramFiles(x86)");
@@ -172,8 +170,7 @@ static Result<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena *arena,
 }
 
 static Result<Toolchain_Configuration> load_gcc_toolchain (Memory_Arena *arena) {
-  todo();
-  return Status_Code::Success;
+  return { Status_Code::Resource_Missing, "GCC Platform is not support on Win32 at this moment" };
 }
 
 static Result<Toolchain_Configuration> load_msvc_x86_toolchain (Memory_Arena *arena) {
@@ -212,8 +209,6 @@ static Result<Toolchain_Configuration> load_msvc_x64_toolchain (Memory_Arena *ar
 
 Result<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena *arena, Toolchain_Type type) {
   use(Status_Code);
-
-  assert(platform.type == Platform_Type::Win32); 
 
   switch (type) {
     case Toolchain_Type_MSVC_X86: return load_msvc_x86_toolchain(arena);

@@ -54,6 +54,7 @@ int main (int argc, char **argv) {
   run_suite(init_command);
   run_suite(build_command);
   run_suite(clean_command);
+  run_suite(public_api);
 
   return suite_runner.report();
 }

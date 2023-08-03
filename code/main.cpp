@@ -21,12 +21,18 @@
   #error "TOOL_VERSION and API_VERSION values must be defined at compile time"
 #endif
 
+extern Config_Crash_Handler crash_handler_hook;
+
 CLI_Flags global_flags;
 
 File_Path working_directory_path;
 File_Path cache_directory_path;
 
 Platform_Info platform;
+
+static void config_exit_failure (u32 exit_code) {
+  exit(exit_code);
+}
 
 static Result<Arguments> parse_arguments (Memory_Arena *arena, const CLI_Command *command) {
   use(Status_Code);
@@ -81,6 +87,8 @@ static Result<Arguments> parse_arguments (Memory_Arena *arena, const CLI_Command
 }
 
 int main (int argc, char **argv) {
+  crash_handler_hook = config_exit_failure;
+  
   auto arena = Memory_Arena { reserve_virtual_memory(megabytes(64)) };
 
   bool silence_report = false;

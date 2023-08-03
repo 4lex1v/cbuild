@@ -638,18 +638,38 @@ u64 get_ellapsed_millis (Performance_Counter *counter, u64 from, u64 to) {
 }
 
 void list_files_in_directory (Memory_Arena *arena, List<File_Path> *list, const char *directory, const char *extension, bool recursive) {
-  char path[MAX_PATH];
-
   auto [status, absolute_file_path] = get_absolute_path(arena, directory);
   if (absolute_file_path.value[absolute_file_path.length] == '\\') {
     absolute_file_path.length -= 1;
   }
   
-  snprintf(path, MAX_PATH, "%.*s\\*.%s", (int)absolute_file_path.length, absolute_file_path.value, extension);
+  char path[MAX_PATH];
+  snprintf(path, MAX_PATH, "%.*s\\*", (int)absolute_file_path.length, absolute_file_path.value);
 
   WIN32_FIND_DATAA data;
   HANDLE search_handle;
   defer { FindClose(search_handle); };
+
+  auto has_extension = [] (const WIN32_FIND_DATAA *data, const char *extension) -> bool {
+    auto file_name        = data->cFileName;
+    auto file_name_length = strlen(file_name);
+    auto ext_length       = strlen(extension);
+
+    if (file_name_length >= ext_length) {
+      auto file_ext = file_name + (file_name_length - ext_length);
+      return strcmp(file_ext, extension) == 0;
+    }
+
+    return false;
+  };
+
+  auto check_if_path_already_included = [] (const List<File_Path> *paths, const File_Path *path) -> bool {
+    for (auto &included_path: *paths) {
+      if (compare_strings(included_path, *path)) return true;
+    }
+
+    return false;
+  };
 
   if ((search_handle = FindFirstFileA(path, &data)) != INVALID_HANDLE_VALUE) {
     do {
@@ -660,13 +680,17 @@ void list_files_in_directory (Memory_Arena *arena, List<File_Path> *list, const 
             list_files_in_directory(arena, list, path, extension, recursive);
           }
         } else {
+          if (!has_extension(&data, extension)) continue;
+          
           // The reservation size includes the path separator and terminating null
           auto reservation_size = absolute_file_path.length + strlen(data.cFileName) + 2;
           auto file_path = reserve_array<char>(arena, reservation_size);
 
           snprintf(file_path, reservation_size, "%.*s\\%s", (int)absolute_file_path.length, absolute_file_path.value, data.cFileName);
 
-          add(arena, list, File_Path(file_path));
+          if (auto new_path = File_Path(file_path);
+              !check_if_path_already_included(list, &new_path))
+            add(arena, list, new_path);
         }
       }
     } while (FindNextFileA(search_handle, &data) != 0);
