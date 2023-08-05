@@ -62,11 +62,9 @@ static Result<String> get_msvc_installation_path (Memory_Arena *arena) {
 
   auto command = format_string(arena,  R"("%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -property installationPath)", program_files_path);
   auto [vswhere_status, vs_path] = run_system_command(arena, command);
-  if (vswhere_status != Status_Code::Success) {
+  if ((vswhere_status != Status_Code::Success) || !vs_path.length) {
     return { Status_Code::Resource_Missing, "Couldn't find Visual Studio on the system." };
   }
-
-  assert(vs_path.length > 0);
 
   auto msvc_folder_query = format_string(arena, "%\\VC\\Tools\\MSVC\\*", vs_path);
 
