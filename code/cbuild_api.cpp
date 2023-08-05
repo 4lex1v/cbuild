@@ -115,6 +115,49 @@ void set_output_location (Project *project, const char *folder_path) {
   project->output_location = copy_string(&project->arena, folder_path);
 }
 
+void add_global_compiler_option (Project *project, const char *option) {
+  require_non_null(project);
+  require_non_null(option);
+  require_non_empty(option);
+
+  auto arena = &project->arena;
+  add(arena, &project->global_options.compiler, copy_string(arena, option));
+}
+
+void add_global_archiver_option (Project *project, const char *option) {
+  require_non_null(project);
+  require_non_null(option);
+  require_non_empty(option);
+
+  auto arena = &project->arena;
+  add(arena, &project->global_options.archiver, copy_string(arena, option));
+}
+
+void add_global_linker_option (Project *project, const char *option) {
+  require_non_null(project);
+  require_non_null(option);
+  require_non_empty(option);
+
+  auto arena = &project->arena;
+  add(arena, &project->global_options.linker, copy_string(arena, option));
+}
+
+void add_global_include_search_path (Project *project, const char *path) {
+  require_non_null(project);
+  require_non_null(path);
+  require_non_empty(path);
+
+  auto arena = &project->arena;
+
+  auto [status, include_path] = get_absolute_path(arena, path);
+  if (!status) {
+    print(arena, "Couldn't resolve the provided path '%', error details: %", path, status);
+    crash_handler_hook(EXIT_FAILURE);
+  }
+
+  add(arena, &project->global_options.include_paths, include_path);
+}
+
 static Target * create_target (Project *project, const char *name) {
   require_non_null(project);
   require_non_null(name);
@@ -207,10 +250,6 @@ void exclude_source_file (Target *target, const char *file_path) {
   if (is_empty_list(&target->files)) return;
 
   auto [status, abs_file_path] = get_absolute_path(arena, file_path);
-  if (!check_file_exists(&abs_file_path)) {
-    print(arena, "File '%' not found, please check the correctness of the specified path\n", file_path);
-    crash_handler_hook(EXIT_FAILURE);
-  }
 
   auto [found, position] =
     find_position(&target->files, [&] (const File_Path *node) {
@@ -226,18 +265,24 @@ void exclude_source_file (Target *target, const char *file_path) {
     print(arena, "Couldn't remove file '%' from the target due to an internal error, please report this case.\n", file_path);
     return;
   }
+
+  target->project->total_files_count -= 1;
 }
 
-void add_include_search_path (Target *target, const char *include_path) {
+void add_include_search_path (Target *target, const char *path) {
   require_non_null(target);
-  require_non_null(include_path);
-  require_non_empty(include_path);
+  require_non_null(path);
+  require_non_empty(path);
 
   auto arena = &target->project->arena;
 
-  auto file_path = get_absolute_path(arena, include_path);
+  auto [status, include_path] = get_absolute_path(arena, path);
+  if (!status) {
+    print(arena, "Couldn't resolve the path '%', error details: %", path, status);
+    crash_handler_hook(EXIT_FAILURE);
+  }
   
-  add(arena, &target->include_paths, *file_path);
+  add(arena, &target->include_paths, include_path);
 }
 
 void add_all_sources_from_directory (Target *target, const char *directory, const char *extension, bool recurse) {
@@ -272,6 +317,15 @@ void add_compiler_option (Target *target, const char *option) {
   
   auto arena = &target->project->arena;
   add(arena, &target->options.compiler, copy_string(arena, option));
+}
+
+void add_archiver_option (Target *target, const char *option) {
+  require_non_null(target);
+  require_non_null(option);
+  require_non_empty(option);
+  
+  auto arena = &target->project->arena;
+  add(arena, &target->options.archiver, copy_string(arena, option));
 }
 
 void add_linker_option (Target *target, const char *option) {

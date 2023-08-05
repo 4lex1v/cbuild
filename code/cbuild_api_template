@@ -86,7 +86,7 @@ extern "C" {
     }
 
  */
- CBUILD_API const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
+CBUILD_API const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
 
 /*
   Sets the toolchain of a specified type for a project.
@@ -109,7 +109,7 @@ extern "C" {
     }
 
  */
- CBUILD_API void set_toolchain (Project *project, Toolchain_Type type);
+CBUILD_API void set_toolchain (Project *project, Toolchain_Type type);
 
 /*
   Disables artifact caching for the specified project. When the registry is disabled, the entire project will be rebuilt each time a build is triggered.
@@ -118,7 +118,7 @@ extern "C" {
   Note that this setting does not affect the build of the project's configuration. This means that the configuration build process will continue to use cached results if available.
 
  */
- CBUILD_API void disable_registry (Project *project);
+CBUILD_API void disable_registry (Project *project);
 
 /*
   Defines a type for user-defined actions that can be called via a command line interface.
@@ -148,7 +148,7 @@ typedef int (*Action_Type) (const Arguments *args);
   With the above setup, the action can now be called from the command line as: `cbuild hello`.
   
  */
- CBUILD_API void register_action (Project *project, const char *name, Action_Type proc);
+CBUILD_API void register_action (Project *project, const char *name, Action_Type proc);
 
 /*
   Overwrites the default output location for all produced artifacts within a project.
@@ -173,7 +173,7 @@ typedef int (*Action_Type) (const Arguments *args);
     }
 
  */
- CBUILD_API void set_output_location (Project *project, const char *folder_path);
+CBUILD_API void set_output_location (Project *project, const char *folder_path);
 
 /*
   Create a new target that will produce a static library.
@@ -189,6 +189,90 @@ CBUILD_API Target * add_shared_library (Project *project, const char *name);
   Create a new target that will produce an executable
  */
 CBUILD_API Target * add_executable (Project *project, const char *name);
+
+/*
+  Add global options that will be passed to the compiler executable as-is.
+  Provided `option` string may contain multiple compiler arguments separated by space.
+
+  These options will be applied to all targets in the project.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+      add_global_compiler_option(project, "/nologo /std:c++20");
+
+      Target *main = add_executable(project, "main");
+    }
+
+ */
+CBUILD_API void add_global_compiler_option (Project *project, const char *option);
+
+/*
+  Add global options that will be passed to the archiver executable as-is.
+  Provided `option` string may contain multiple compiler arguments separated by space.
+
+  These options will be applied to all targets in the project.
+
+  These configuration values will be applied to static library targets only.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+      add_global_compiler_option(project, "/nologo /std:c++20");
+
+      Target *main = add_executable(project, "main");
+    }
+
+ */
+CBUILD_API void add_global_archiver_option (Project *project, const char *option);
+
+/*
+  Add global options that will be passed to the linker executable as-is.
+  Provided `option` string may contain multiple compiler arguments separated by space.
+
+  These options will be applied to all targets in the project.
+
+  These configuration values will be applied to shared library and executable targets only.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      const char *config   = get_argument_or_default(args, "config", "debug");
+      const char *platform = get_argument_or_default(args, "platform", "win32");
+
+      if (!strcmp(platform, "win32")) {
+        add_global_linker_option(project, "/nologo /subsystem:console");
+        if (!strcmp(config, "debug")) add_global_linker_option(project, "/debug:full");
+      }
+
+      Target *main = add_executable(project, "main");
+    }
+
+ */
+CBUILD_API void add_global_linker_option (Project *project, const char *option);
+
+/*
+  Additional include path to the list global list that will be passed to the compiler.
+  Specified include paths must be relative to the project's root.
+
+  These paths will be included in the search paths for all targets in the project.
+
+  This path would also be used to resolved included header during dependency checking
+  step, to find if there were any changes and which parts CBuild would rebuild.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      auto tracy = add_static_library(project, "tracy_client");
+
+      add_source_file(tracy, "libs/tracy/TracyClient.cpp");
+      add_global_include_search_path(project, "libs/public");
+    }
+
+ */
+CBUILD_API void add_global_include_search_path (Project *project, const char *path);
 
 /*
   Add options that will be passed to the compiler executable as-is.
@@ -210,8 +294,31 @@ CBUILD_API Target * add_executable (Project *project, const char *name);
 CBUILD_API void add_compiler_option (Target *target, const char *option);
 
 /*
+  Add options that will be passed to the archiver executable as-is.
+  `option` string may contain multiple compiler arguments separated by space.
+
+  This option will be applied to static library targets only.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      const char *config = get_argument_or_default(args, "config", "debug");
+
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+
+      Target *main = add_executable(project, "main");
+      add_compiler_option(main, "/nologo /std:c++20");
+      if (!strcmp(config, "debug")) add_compiler_option(main, "/O0 /Zi");
+    }
+
+ */
+CBUILD_API void add_archiver_option (Target *target, const char *option);
+
+/*
   Add options that will be passed to the linker executable as-is.
   `option` string may contain multiple compiler arguments separated by space.
+
+  This option will be applied to shared library and executable target only.
 
   Example:
 
@@ -261,6 +368,23 @@ CBUILD_API void add_source_file (Target *target, const char *file_path);
 
  */
 CBUILD_API void add_all_sources_from_directory (Target *target, const char *directory, const char *extension, bool recurse);
+
+/*
+  Exclude a C/C++ source file from the target.
+
+  Provided `file_path` value must be a relative path from the project's root.
+
+  The source file will be removed from the list of files, preserving the order of remaining files during the linkage.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      Target *main = add_executable(project, "main");
+      add_source_file(main, "code/main.cpp");
+      exclude_source_file(main, "code/main.cpp"); 
+    }
+ */
+CBUILD_API void exclude_source_file (Target *target, const char *_file_path);
 
 /*
   Specify upstream 'dependency' for the given 'target' that it should be linked with.
@@ -319,12 +443,48 @@ CBUILD_API const char * get_target_name (const Target *target);
 }
 
 /*
+  C++ helper function for `add_global_compiler_option`.
+ */
+template <typename... T>
+static void add_global_compiler_options (Project *project, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) add_global_compiler_option(project, it);
+}
+
+/*
+  C++ helper function for `add_global_archiver_option`.
+ */
+template <typename... T>
+static void add_global_archiver_options (Project *project, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) add_global_archiver_option(project, it);
+}
+
+/*
+  C++ helper function for `add_global_linker_option`.
+ */
+template <typename... T>
+static void add_global_linker_options (Project *project, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) add_global_linker_option(project, it);
+}
+
+/*
   C++ helper function for `add_compiler_option`.
  */
 template <typename... T>
 static void add_compiler_options (Target *target, const char *option, T&&... more_options) {
   const char *options[] { option, more_options... };
   for (auto it: options) add_compiler_option(target, it);
+}
+
+/*
+  C++ helper function for `add_archiver_option`.
+ */
+template <typename... T>
+static void add_archiver_options (Target *target, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) add_archiver_option(target, it);
 }
 
 /*
@@ -337,13 +497,21 @@ static void add_linker_options (Target *target, const char *option, T&&... more_
 }
 
 /*
-  C++ helper function for `add_source_files`.
+  C++ helper function for `add_source_file`.
  */
 template <typename... T>
 static void add_source_files (Target *target, const char *file_path, T&&... more_paths) {
   const char *paths[] { file_path, more_paths... };
-  auto paths_count = sizeof(paths) / sizeof(const char *);
-  add_source_files(target, paths, paths_count);
+  for (auto it: paths) add_source_file(target, it);
+}
+
+/*
+  C++ helper function for `exclude_source_file`.
+ */
+template <typename... T>
+static void exclude_source_files (Target *target, const char *file_path, T&&... more_paths) {
+  const char *paths[] { file_path, more_paths... };
+  for (auto it: paths) exclude_source_file(target, it);
 }
 
 /*

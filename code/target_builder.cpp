@@ -498,6 +498,8 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
     switch (target->type) {
       case Target::Type::Static_Library: {
         builder += project->toolchain.archiver_path;
+        builder += project->global_options.archiver;
+        builder += target->options.archiver;
 
         for (auto &path: target->files) {
           builder += make_file_path(arena, object_folder_path, target->name,
@@ -518,7 +520,8 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       };
       case Target::Type::Shared_Library: {
         builder += project->toolchain.linker_path;
-        builder += platform.type == Platform_Type::Win32 ? "/dll" : "-shared";
+        builder += is_win32() ? "/dll" : "-shared";
+        builder += project->global_options.linker;
         builder += target->options.linker;
 
         for (auto &path: target->files) {
@@ -542,6 +545,7 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
       };
       case Target::Type::Executable: {
         builder += project->toolchain.linker_path;
+        builder += project->global_options.linker;
         builder += target->options.linker;
 
         for (auto &path: target->files) {
@@ -658,7 +662,12 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
 
     String_Builder builder { arena };
     builder += is_cpp_file ? project->toolchain.cpp_compiler_path : project->toolchain.c_compiler_path;
+    builder += project->global_options.compiler;
     builder += target->options.compiler;
+
+    for (auto &path: project->global_options.include_paths) {
+      builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
+    }
 
     for (auto &path: target->include_paths) {
       builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
@@ -863,7 +872,13 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
 
       auto dependencies_updated = true;
       if (!registry_disabled) {
-        auto scan_result     = scan_file_dependencies(arena, &file, target->include_paths);
+        auto local = *arena;
+
+        List<File_Path> include_paths;
+        for (auto path: project->global_options.include_paths) add(&local, &include_paths, path);
+        for (auto path: target->include_paths)                 add(&local, &include_paths, path);
+
+        auto scan_result     = scan_file_dependencies(&local, &file, include_paths);
         dependencies_updated = !scan_result.status || scan_result.value;
       }
 

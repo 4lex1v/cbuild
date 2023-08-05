@@ -192,9 +192,12 @@ struct Test_Suite_Runner {
   }
 
   int report () const {
-    if (failed_suites.count == 0) return 0;
+    if (failed_suites.count == 0) {
+      print(&arena, "\nSUCCESS");
+      return 0;
+    }
 
-    print(&arena, "Failed: ");
+    print(&arena, "\n\nFAILED (%): ", failed_suites.count);
     for (auto &name: failed_suites) print(&arena, "%, ", name);
     print(&arena, "\n");
 

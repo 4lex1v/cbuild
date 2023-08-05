@@ -58,6 +58,14 @@ struct Project {
   List<Target *> targets;
   u32            total_files_count;
 
+  struct {
+    List<File_Path> include_paths;
+
+    List<String> compiler;
+    List<String> archiver;
+    List<String> linker;
+  } global_options;
+
   const Arguments *args;
 
   struct {
@@ -96,6 +104,7 @@ struct Target {
 
   struct {
     List<String> compiler;
+    List<String> archiver;
     List<String> linker;
   } options;
 

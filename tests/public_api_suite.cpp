@@ -19,6 +19,20 @@ static void test_configuration_failure (u32 exit_code) {
   require(false);
 }
 
+template <typename E, typename... T>
+static bool ensure_list_content (const List<E> &list, T&&... _values) {
+  String values [] { _values... };
+  usize idx = 0;
+  for (auto elem: list) {
+    if (!compare_strings(values[idx], elem)) return false;
+    idx += 1;
+  }
+
+  if (idx != list.count) return false;
+
+  return true;
+}
+
 static void setup_workspace (Memory_Arena *arena) {
   crash_handler_hook = test_configuration_failure;
 
@@ -216,6 +230,27 @@ static void add_all_sources_from_directory_test (Memory_Arena *arena) {
   require_crash(add_all_sources_from_directory(target, "dir/file.cpp", "", false));
 }
 
+static void exclude_source_file_test (Memory_Arena *arena) {
+  auto project = create_project(arena);
+
+  auto target = add_static_library(&project, "library");
+  add_source_file(target, "code/library1/library1.cpp");
+  add_source_file(target, "code/library2/library2.cpp");
+
+  require(target->files.count == 2);
+  require(project.total_files_count == 2);
+
+  exclude_source_file(target, "code/library1/library1.cpp");
+  require(target->files.count == 1);
+  require(project.total_files_count == 1);
+
+  require(ensure_list_content(target->files, get_absolute_path(arena, "code/library2/library2.cpp")->value));
+
+  for (int idx = 0; idx < 5; idx++) exclude_source_file(target, "code/library2/library2.cpp");
+  require(target->files.count == 0);
+  require(project.total_files_count == 0);
+}
+
 static void link_with_target_test (Memory_Arena *arena) {
   auto project = create_project(arena);
 
@@ -268,6 +303,17 @@ static void get_target_name_test (Memory_Arena *arena) {
 static void cpp_wrappers_test (Memory_Arena *arena) {
   auto project = create_project(arena);
 
+  add_global_compiler_options(&project, "/nologo", "/std:c++20", "-O3");
+  add_global_archiver_options(&project, "/nologo");
+  add_global_linker_options(&project, "/nologo", "/debug:full", "/incremental:no");
+
+  require(ensure_list_content(project.global_options.compiler, "/nologo", "/std:c++20", "-O3"));
+  require(ensure_list_content(project.global_options.archiver, "/nologo"));
+  require(ensure_list_content(project.global_options.linker, "/nologo", "/debug:full", "/incremental:no"));
+
+  add_global_include_search_path(&project, "./includes");
+  require(project.global_options.include_paths.count == 1);
+
   auto target = add_static_library(&project, "library");
   add_compiler_options(target, "/nologo", "/O4", "/W4274");
   require(target->options.compiler.count == 3);
@@ -275,8 +321,14 @@ static void cpp_wrappers_test (Memory_Arena *arena) {
   add_linker_options(target, "/nologo", "/O4", "/W4274", "/something");
   require(target->options.linker.count == 4);
 
-  // TODO: Missing impl, should fix with the next API release
-  //add_source_files(target, "code/library1/library1.cpp", "code/library2/library2.cpp");
+  add_source_files(target, "code/library1/library1.cpp", "code/library2/library2.cpp", "code/library3/library3.cpp");
+  require(target->files.count == 3);
+  require(project.total_files_count == 3);
+
+  exclude_source_files(target, "code/library1/library1.cpp", "code/library3/library3.cpp");
+  require(target->files.count == 1);
+  require(project.total_files_count == 1);
+  require(ensure_list_content(target->files, get_absolute_path(arena, "code/library2/library2.cpp")->value));
 
   auto lib2 = add_static_library(&project, "lib2");
   link_with(lib2, "something.lib", target, "foo.lib");
@@ -284,9 +336,54 @@ static void cpp_wrappers_test (Memory_Arena *arena) {
   require(lib2->link_libraries.count == 2);
 }
 
+static void add_global_compiler_option_test (Memory_Arena *arena) {
+  auto project = create_project(arena);
+
+  require(project.global_options.compiler.count == 0);
+
+  add_global_compiler_option(&project, "/nologo");
+  add_global_compiler_option(&project, "/std:c++20");
+  
+  require(project.global_options.compiler.count == 2);
+  require(ensure_list_content(project.global_options.compiler, "/nologo", "/std:c++20"));
+}
+
+static void add_global_archiver_option_test (Memory_Arena *arena) {
+  auto project = create_project(arena);
+
+  require(project.global_options.archiver.count == 0);
+
+  add_global_archiver_option(&project, "/nologo");
+  add_global_archiver_option(&project, "/std:c++20");
+  
+  require(project.global_options.archiver.count == 2);
+  require(ensure_list_content(project.global_options.archiver, "/nologo", "/std:c++20"));
+}
+
+static void add_global_linker_option_test (Memory_Arena *arena) {
+  auto project = create_project(arena);
+
+  require(project.global_options.linker.count == 0);
+
+  add_global_linker_option(&project, "/nologo");
+  add_global_linker_option(&project, "/std:c++20");
+  
+  require(project.global_options.linker.count == 2);
+  require(ensure_list_content(project.global_options.archiver, "/nologo", "/std:c++20"));
+}
+
+static void add_global_include_search_path_test (Memory_Arena *arena) {
+  auto project = create_project(arena);
+
+  require(project.global_options.include_paths.count == 0);
+
+  add_global_include_search_path(&project, "./includes");
+  add_global_include_search_path(&project, "./libs");
+  
+  require(project.global_options.include_paths.count == 2);
+}
+
 static Test_Case public_api_tests [] {
-  //define_test_case(arguments_test),
-  //define_test_case(),
   define_test_case_ex(set_toolchain_test, setup_workspace, cleanup_workspace),
   define_test_case(disable_registry_test),
   define_test_case(register_action_test),
@@ -298,11 +395,16 @@ static Test_Case public_api_tests [] {
   define_test_case(add_linker_option_test),
   define_test_case_ex(add_source_file_test, setup_workspace, cleanup_workspace),
   define_test_case_ex(add_all_sources_from_directory_test, setup_workspace, cleanup_workspace),
+  define_test_case_ex(exclude_source_file_test, setup_workspace, cleanup_workspace),
   define_test_case(link_with_target_test),
   define_test_case(link_with_library_test),
   define_test_case_ex(add_include_search_path_test, setup_workspace, cleanup_workspace),
   define_test_case(get_target_name_test),
   define_test_case_ex(cpp_wrappers_test, setup_workspace, cleanup_workspace),
+  define_test_case(add_global_compiler_option_test),
+  define_test_case(add_global_archiver_option_test),
+  define_test_case(add_global_linker_option_test),
+  define_test_case(add_global_include_search_path_test)
 };
 
 define_test_suite(public_api, public_api_tests)

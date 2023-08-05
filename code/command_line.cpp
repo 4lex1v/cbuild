@@ -33,23 +33,23 @@ Commands:
     <others>        You can pass arbitrary arguments to the 'build' command. These arguments are accessible in your
                     project's configuration, via the tool's api defined in the generated ./project/cbuild.h.
 
-   clean
-     Removes all build artifacts (compiled objects, binary files, etc.) created by the 'build' command, restoring workspace to
-     its pre-build state.
+  clean
+    Removes all build artifacts (compiled objects, binary files, etc.) created by the 'build' command, restoring workspace to
+    its pre-build state.
 
-     all            Additionally remove artifacts associated with the project's configuration build, which are not removed by
-                    default.
-      
-   update
-     Updates the tool's API header files within your current project configuration folder (i.e ./project) to match the latest
-     version of the tool.
-     This operation affects only the API headers provided by the tool and doesn't modify your project source code.
+    all            Additionally remove artifacts associated with the project's configuration build, which are not removed by
+                   default.
+     
+  update
+    Updates the tool's API header files within your current project configuration folder (i.e ./project) to match the latest
+    version of the tool.
+    This operation affects only the API headers provided by the tool and doesn't modify your project source code.
 
-   version
-     Prints tool's version.
+  version
+    Prints tool's version.
 
-   help
-     Prints the help message.
+  help
+    Prints the help message.
 )help";
 
 void print_usage (Memory_Arena *arena) {

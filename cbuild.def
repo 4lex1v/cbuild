@@ -1,16 +1,22 @@
 LIBRARY "cbuild.exe"
 EXPORTS
     add_all_sources_from_directory
+    add_archiver_option
     add_compiler_option
     add_executable
+    add_global_archiver_option
+    add_global_compiler_option
+    add_global_include_search_path
+    add_global_linker_option
     add_include_search_path
     add_linker_option
     add_shared_library
     add_source_file
     add_static_library
-    get_target_name
     disable_registry
+    exclude_source_file
     get_argument_or_default
+    get_target_name
     link_with_library
     link_with_target
     register_action
@@ -19,4 +25,3 @@ EXPORTS
 
     ; Experimental API declarations
     add_target_hook
-    exclude_source_file
