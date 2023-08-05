@@ -552,17 +552,15 @@ Status_Code wait_for_semaphore_signal (Semaphore *semaphore) {
   return Status_Code::Success;
 }
 
-void raise_error_and_halt (String message) {
-  Format_String format = "Unexpected fatal error occured: %. Terminating the application";
-
-  // We need +1 space for the end line character the print will emplace.
-  // I should probably change this API to make it more explicit and avoid the confusion later.
-  auto buffer_size = format.reservation_size + message.length + 2;
-  auto buffer      = new char[buffer_size]();
-
+void raise_error_and_halt (const char *message) {
+  enum { buffer_size = 1024 };
+  char buffer [buffer_size] {};
   Memory_Arena local { buffer, buffer_size };
   
-  print(&local, std::move(format), message);
+  print(&local, "Unexpected fatal error occured");
+  if (message && message[0] != '\0') print(&local, ": %.", message);
+  print(&local, "Terminating the application\n");
+  
   exit(EXIT_FAILURE);
 }
 

@@ -1,7 +1,4 @@
 
-#include <cassert>
-#include <cstring>
-
 #include "core.hpp"
 #include "dependency_iterator.hpp"
 #include "platform.hpp"

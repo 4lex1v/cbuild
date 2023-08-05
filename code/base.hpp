@@ -30,8 +30,6 @@ using psize = usize;
 
 #define flag(N) 1 << (N)
 
-#define todo() assert(false && "Unimplemented");
-
 #define use(NAME) using enum NAME::Value
 
 #define cb_forceinline __attribute__((always_inline))

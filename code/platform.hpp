@@ -228,7 +228,7 @@ void init_rw_lock (RW_Lock *lock);
 void acquire_reader_lock (RW_Lock *lock);
 void acquire_writer_lock (RW_Lock *lock);
 
-void raise_error_and_halt (String message); 
+void raise_error_and_halt (const char *msg);
 
 const char * get_path_to_executable (Memory_Arena *arena, const char *name);
 
