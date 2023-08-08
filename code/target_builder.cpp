@@ -1,6 +1,7 @@
 
 #include "arrays.hpp"
 #include "base.hpp"
+#include "command_line.hpp"
 #include "driver.hpp"
 #include "seq.hpp"
 #include "atomics.hpp"
@@ -17,6 +18,7 @@
 #include "list.hpp"
 #include "toolchain.hpp"
 
+extern CLI_Flags     global_flags;
 extern File_Path     working_directory_path;
 extern File_Path     cache_directory_path;
 extern Platform_Info platform;
@@ -487,7 +489,7 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
 
   auto needs_linking = tracker->needs_linking || upstream_status == Upstream_Targets_Status::Updated;
   if (needs_linking) {
-    print(arena, "Linking target: %\n", target->name);
+    if (!global_flags.silenced) print(arena, "Linking target: %\n", target->name);
 
     auto output_file_path      = get_output_file_path_for_target(arena, target);
     auto object_file_extension = platform.type == Platform_Type::Win32 ? "obj" : "o";
@@ -656,7 +658,7 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
   auto file_compilation_status = File_Compile_Status::Ignore;
 
   if (should_rebuild) {
-    print(arena, "Building file: %\n", file->path.value);
+    if (!global_flags.silenced) print(arena, "Building file: %\n", file->path.value);
 
     auto is_cpp_file = check_extension(file->path, "cpp");
 
