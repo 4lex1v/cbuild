@@ -52,9 +52,9 @@ struct Target_Tracker {
     were updated.
 
     INVARIANT:
-      This field is written once by any thread that handles the last file for the target, it's a guarantee that
-      any other thread that would try to link this target, and read this field, will do that only after the
-      compilation phase has completed.
+      This field is written once by a thread that handles the last file for the target. Any other
+      thread that would try to link this target, and reads this field, will do so only after the
+      compilation phase has completed (i.e compile_status != Compiling).
    */
   bool needs_linking;
 
@@ -437,11 +437,30 @@ static File_Path get_output_file_path_for_target (Memory_Arena *arena, const Tar
   }
 }
 
+template <typename Lambda>
+static void schedule_downstream_linkage (const Target *target, Lambda update_tracker) {
+  for (auto downstream: target->required_by) {
+    auto downstream_tracker = downstream->tracker;
+
+    update_tracker(downstream_tracker);
+
+    if ((atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
+      submit_build_task(&build_queue, {
+        .type    = Build_Task::Type::Link,
+        .tracker = downstream_tracker
+      });
+    }
+  }
+}
+
 static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
   using TLS = Target_Link_Status;
 
   auto target  = tracker->target;
   auto project = target->project;
+
+  Target_Compile_Status target_compilation_status = atomic_load(&tracker->compile_status);
+  if (target_compilation_status == Target_Compile_Status::Compiling) return;
 
   /*
     For targets that have upstream dependencies, we must ensure that all upstreams were processed and finalized their
@@ -454,38 +473,20 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
 
   if (!atomic_compare_and_set(&tracker->link_status, TLS::Waiting, TLS::Linking)) return;
 
-  /*
-    GUARANTEE:
-      At this point only one thread should work with this target, this implies that the compilation status of the target
-      should be finalized by this point, as well as the state of upstream targets.
-   */
-
-  auto target_compilation_status = atomic_load(&tracker->compile_status);
-  assert((target_compilation_status == Target_Compile_Status::Success) ||
-         (target_compilation_status == Target_Compile_Status::Failed));
-
   auto upstream_status = atomic_load(&tracker->upstream_status);
   if ((target_compilation_status == Target_Compile_Status::Failed) ||
       (upstream_status           == Upstream_Targets_Status::Failed)) {
     atomic_store(&tracker->link_status, TLS::Failed);
 
-    for (auto downstream: target->required_by) {
-      auto downstream_tracker = downstream->tracker;
-
-      atomic_store(&downstream_tracker->upstream_status, Upstream_Targets_Status::Failed);
-      if ((atomic_fetch_sub<Memory_Order::Release>(&downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
-        // We can't submit a linking task before the target has been compiled
-        if (atomic_load(&downstream_tracker->compile_status) != Target_Compile_Status::Success) continue;
-
-        submit_build_task(&build_queue, {
-          .type    = Build_Task::Type::Link,
-          .tracker = downstream_tracker
-        });
-      }
-    }
+    schedule_downstream_linkage(target, [] (Target_Tracker *tracker) {
+      atomic_store(&tracker->upstream_status, Upstream_Targets_Status::Failed);
+    });
 
     return;
   }
+
+  enum struct Link_Result { Ignore, Success, Failed };
+  auto link_result = Link_Result::Ignore;
 
   auto needs_linking = tracker->needs_linking || upstream_status == Upstream_Targets_Status::Updated;
   if (needs_linking) {
@@ -496,7 +497,6 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
 
     String_Builder builder { arena };
 
-    Status_Code status = Status_Code::Success;
     switch (target->type) {
       case Target::Type::Static_Library: {
         builder += project->toolchain.archiver_path;
@@ -581,39 +581,26 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
 
     auto link_command = build_string_with_separator(&builder, ' ');
 
-    auto [_status, output] = run_system_command(arena, link_command);
-    status = _status;
+    auto [status, output] = run_system_command(arena, link_command);
+    link_result = (!status) ? Link_Result::Failed : Link_Result::Success;
 
     if (output.length) print(arena, "%\n", output);
-
-    if (!status) {
-      atomic_store(&tracker->link_status, Target_Link_Status::Failed);
-      return;
-    }
   }
 
-  atomic_store(&tracker->link_status, Target_Link_Status::Success);
+  auto target_link_status = (link_result == Link_Result::Failed) ? TLS::Failed : TLS::Success;
+  atomic_store(&tracker->link_status, target_link_status);
 
-  for (auto downstream: target->required_by) {
-    auto downstream_tracker = downstream->tracker;
-
-    if (needs_linking) {
+  schedule_downstream_linkage(target, [link_result] (Target_Tracker *tracker) {
+    if (link_result != Link_Result::Ignore) {
+      auto new_status = Upstream_Targets_Status::Updated;
+      if (link_result == Link_Result::Failed) {
+        new_status = Upstream_Targets_Status::Failed;
+      }
+      
       // In case another thread set this to Failed, which we don't want to overwrite
-      atomic_compare_and_set(&downstream_tracker->upstream_status,
-                             Upstream_Targets_Status::Ignore,
-                             Upstream_Targets_Status::Updated);  
+      atomic_compare_and_set(&tracker->upstream_status, Upstream_Targets_Status::Ignore, new_status);  
     }
-
-    if ((atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
-      // We can't submit a linking task before the target has been compiled
-      if (atomic_load(&downstream_tracker->compile_status) != Target_Compile_Status::Success) continue;
-
-      submit_build_task(&build_queue, {
-        .type    = Build_Task::Type::Link,
-        .tracker = downstream_tracker
-      });
-    }
-  }
+  });
 
   if (target->hooks.on_linked) {
     target->hooks.on_linked(project, target, project->args, Hook_Type_After_Target_Linked);
@@ -740,23 +727,21 @@ static void process_build_task (Memory_Arena *arena, Build_Queue *queue) {
   Build_Task task;
   if (!pull_task_for_execution(queue, &task)) return;
 
+  auto tracker = task.tracker;
+  auto target  = tracker->target;
+
   switch (task.type) {
     case Build_Task::Type::Uninit: {
       return;
     }
     case Build_Task::Type::Compile: {
-      compile_file(arena, task.tracker, &task.file, task.dependencies_updated);
+      compile_file(arena, tracker, &task.file, task.dependencies_updated);
 
-      auto status = atomic_load(&task.tracker->compile_status);
-      if ((status == Target_Compile_Status::Success) ||
-          /*
-            We still need to launch the linking tasks even if the target compilation has failed to propertly handle
-            downstream targets.
-           */
-          (status == Target_Compile_Status::Failed)) {
-        task.type = Build_Task::Link;
-        submit_build_task(queue, task);
-      }
+      auto status = atomic_load(&tracker->compile_status);
+      if (status == Target_Compile_Status::Compiling) break;
+
+      task.type = Build_Task::Link;
+      submit_build_task(queue, task);
 
       break;
     }
