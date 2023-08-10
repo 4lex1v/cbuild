@@ -30,6 +30,13 @@ Commands:
                     Accepts a value in the range [1, CORE_COUNT], allowing for parallelized builds.
                     Defaults to CORE_COUNT. "1" means that the project will be compiled on the main thread only.
 
+    cache=<VALUE>   Specifies builder's use of the caching system.
+                    <VALUE> parameter can take one of the following arguments:
+                      "on":     Full use of the caching system. Default behavior
+                      "off":    Caching system will not be used.
+                      "flush":  Existing cached information will be ignored by the builder. Results of the build
+                                will overwrite currently cached information.
+
     <others>        You can pass arbitrary arguments to the 'build' command. These arguments are accessible in your
                     project's configuration, via the tool's api defined in the generated ./project/cbuild.h.
 
@@ -241,6 +248,20 @@ Result<CLI_Input> parse_command_line (Memory_Arena *arena, int argc, char **_arg
 
         command.build.builders_count = count;
       }
+    }
+
+    {
+      auto [status, cache] = find_argument_value(arena, "cache", arguments_left, argv);
+      check_status(status);
+
+      if      (cache.is_empty())        command.build.cache = Build_Config::Cache_Behavior::On;
+      else if (!strcmp(cache, "on"))    command.build.cache = Build_Config::Cache_Behavior::On;
+      else if (!strcmp(cache, "off"))   command.build.cache = Build_Config::Cache_Behavior::Off;
+      else if (!strcmp(cache, "flush")) command.build.cache = Build_Config::Cache_Behavior::Flush;
+      else return {
+        Invalid_Value,
+        format_string(arena, "Invalid paramter value % for the 'cache' option", cache)
+      };
     }
 
     command.build.arguments = argv;

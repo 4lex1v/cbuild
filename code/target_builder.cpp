@@ -116,7 +116,7 @@ static File_Path   object_folder_path;
 static File_Path   out_folder_path;
 
 static Registry   registry;
-static bool       registry_disabled; // must be written only once before building, read by multiple threads
+static bool       registry_enabled; // must be written only once before building, read by multiple threads
 static Update_Set update_set;
 
 static Build_Queue   build_queue;
@@ -674,7 +674,7 @@ static void compile_file (Memory_Arena *arena, Target_Tracker *tracker, File *fi
     atomic_fetch_add(&tracker->skipped_counter, 1);
   }
 
-  if (!registry_disabled && file_compilation_status != File_Compile_Status::Failed) {
+  if (registry_enabled && file_compilation_status != File_Compile_Status::Failed) {
     auto index = atomic_fetch_add(&target_info->files_count, 1);
     assert(index < target_info->aligned_max_files_count);
 
@@ -803,7 +803,7 @@ static void init_trackers (Target_Tracker *trackers, const Project *project) {
   }
 }
 
-Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requested_builders_count) {
+Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Config config) {
   using enum Open_File_Flags;
   use(Status_Code);
 
@@ -817,8 +817,8 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   out_folder_path = make_file_path(arena, project->output_location_path, "out");
   check_status(create_directory(&out_folder_path));
 
-  registry_disabled = project->registry_disabled;
-  if (!registry_disabled) {
+  registry_enabled = !project->registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
+  if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
     auto registry_file_path = make_file_path(arena, project->output_location_path, "__registry");
     check_status(registry_file_path);
 
@@ -827,12 +827,15 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
     check_status(registry_file);
 
     check_status(load_registry(&registry, arena, registry_file)); 
-    check_status(init_update_set(&update_set, arena, &registry, project));
+  }
+
+  if (registry_enabled && config.cache != Build_Config::Cache_Behavior::Off) {
+    check_status(init_update_set(&update_set, arena, &registry, project)); 
   }
 
   chain_status_cache = reserve_array<Chain_Status>(arena, max_supported_files_count);
 
-  auto builders_count = number_of_extra_builders_to_spawn(arena, requested_builders_count);
+  auto builders_count = number_of_extra_builders_to_spawn(arena, config.builders_count);
   auto queue_size = project->targets.count + project->total_files_count;
   check_status(init_build_queue(&build_queue, arena, queue_size, builders_count, builder_thread_proc));
   defer { destroy_build_queue(&build_queue); };
@@ -854,7 +857,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
       check_status(file);
 
       auto dependencies_updated = true;
-      if (!registry_disabled) {
+      if (registry_enabled) {
         auto local = *arena;
 
         List<File_Path> include_paths;
@@ -877,7 +880,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
   while (has_unfinished_tasks(&build_queue))
     process_build_task(arena, &build_queue);
 
-  if (!registry_disabled) check_status(flush_registry(&registry, &update_set));
+  if (registry_enabled) check_status(flush_registry(&registry, &update_set));
 
   for (usize idx = 0; idx < project->targets.count; idx++) {
     auto tracker = trackers + idx;
@@ -893,3 +896,4 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, u32 requ
 
   return Success;
 }
+

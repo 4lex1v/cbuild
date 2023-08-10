@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "base.hpp"
+
 template <typename T> struct Seq;
 template <typename T> struct Result;
 
@@ -8,6 +10,18 @@ struct Memory_Arena;
 
 struct CLI_Flags {
   bool silenced;
+};
+
+struct Build_Config {
+  enum struct Cache_Behavior { On, Off, Flush };
+
+  const char *target_name;
+  u32 builders_count;
+
+  Cache_Behavior cache;
+
+  const char **arguments;
+  int          count; 
 };
 
 struct CLI_Command {
@@ -33,14 +47,6 @@ struct CLI_Command {
     bool all;
   };
 
-  struct Build {
-    const char *target_name;
-    u32 builders_count;
-
-    const char **arguments;
-    int          count; 
-  };
-
   struct Dynamic {
     const char  *command_name;
 
@@ -51,7 +57,7 @@ struct CLI_Command {
   Value type;
   union {
     struct Init    init;
-    struct Build   build;
+    Build_Config   build;
     struct Clean   clean;
     struct Dynamic dynamic;
   };

@@ -208,7 +208,7 @@ int main (int argc, char **argv) {
       }
 
       if (cli_command == CLI_Command::Build) {
-        verify_status(build_project(&arena, &project, cli_command.build.builders_count));
+        verify_status(build_project(&arena, &project, cli_command.build));
       }
       else {
         assert(cli_command == CLI_Command::Dynamic);

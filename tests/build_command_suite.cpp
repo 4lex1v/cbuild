@@ -417,6 +417,39 @@ static void build_project_tests (Memory_Arena *arena) {
   }
 }
 
+static void build_cache_tests (Memory_Arena *arena) {
+  build_testbed(arena, "cache=off");
+  validate_binary1(arena);
+  validate_binary2(arena);
+
+  auto registry_file = make_file_path(arena, ".cbuild", "build", "__registry");
+
+  require(check_file_exists(&registry_file) == false);
+
+  auto output = build_testbed(arena);
+  count_lines_starting_with(output, "Building file",  9); 
+  count_lines_starting_with(output, "Linking target", 9);
+
+  require(check_file_exists(&registry_file));
+
+  auto output2 = build_testbed(arena, "cache=flush");
+  count_lines_starting_with(output2, "Building file",  9); 
+  count_lines_starting_with(output2, "Linking target", 9);
+
+  require(check_file_exists(&registry_file));
+
+  auto output3 = build_testbed(arena);
+  count_lines_starting_with(output3, "Building file",  0); 
+  count_lines_starting_with(output3, "Linking target", 0);
+
+  auto output4 = build_testbed(arena, "cache=off");
+  count_lines_starting_with(output4, "Building file",  9); 
+  count_lines_starting_with(output4, "Linking target", 9);
+
+  validate_binary1(arena);
+  validate_binary2(arena);
+}
+
 static Test_Case build_command_tests [] {
   define_test_case_ex(build_init_project_tests, setup_workspace, cleanup_workspace),
   define_test_case_ex(build_testbed_tests,      setup_testbed,   cleanup_workspace),
@@ -424,6 +457,7 @@ static Test_Case build_command_tests [] {
   define_test_case_ex(build_changes_tests,      setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_errors_tests,       setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_project_tests,      setup_testbed,   cleanup_workspace),
+  define_test_case_ex(build_cache_tests,        setup_testbed,   cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)
