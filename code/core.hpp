@@ -7,11 +7,11 @@
 #include "base.hpp"
 
 #ifdef DEV_BUILD
-#define assert(EXPR)                                              \
-  do {                                                            \
-    void raise_error_and_halt (const char *);                     \
-    if (!static_cast<bool>(EXPR))                                 \
-      raise_error_and_halt("Assertion failed: " stringify(EXPR)); \
+#define assert(EXPR)                                                    \
+  do {                                                                  \
+    void raise_error_and_halt (const char *filename, u32 line, const char *function, const char *message); \
+    if (!static_cast<bool>(EXPR))                                       \
+      raise_error_and_halt(__FILE__, __LINE__, __FUNCTION__, "Assertion failed: " stringify(EXPR)); \
   } while (0)
 #else
 #define assert(EXPR)

@@ -111,7 +111,7 @@ template <typename T> constexpr Status_Code capture_status (const T &result) {
     auto        expr_result = (STATUS);                     \
     Status_Code __status    = capture_status(expr_result);  \
     String      __message   = (MESSAGE);                    \
-    if (!__status) raise_error_and_halt(__message);         \
+    if (!__status) raise_error_and_halt(__FILE__, __LINE__, __FUNCTION__, __message); \
   } while (0) 
 
 template <String_Convertible T>

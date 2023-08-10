@@ -552,14 +552,14 @@ Status_Code wait_for_semaphore_signal (Semaphore *semaphore) {
   return Status_Code::Success;
 }
 
-void raise_error_and_halt (const char *message) {
+void raise_error_and_halt (const char *filename, u32 line, const char *function, const char *message) {
   enum { buffer_size = 1024 };
   char buffer [buffer_size] {};
   Memory_Arena local { buffer, buffer_size };
   
-  print(&local, "Unexpected fatal error occured");
-  if (message && message[0] != '\0') print(&local, ": %.", message);
-  print(&local, "Terminating the application\n");
+  print(&local, "Unexpected fatal error occured:\n  Where: %(%): %\n", filename, line, function);
+  if (message && message[0] != '\0') print(&local, "  Message: %.\n", message);
+  else print(&local, "Terminating the application\n");
   
   exit(EXIT_FAILURE);
 }
