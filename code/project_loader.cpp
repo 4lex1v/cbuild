@@ -241,14 +241,8 @@ static Status_Code build_project_configuration (Memory_Arena *_arena, Project *p
                                  project_output_folder_path, cbuild_import_path, project_library_file_path);
         break;
       }
-      case Platform_Type::Unix: {
-        todo();
-        break;
-      }
-      case Platform_Type::Apple: {
-        todo();
-        break;
-      }
+      case Platform_Type::Unix:  { return { Build_Error, "Unix platforms are not supported at this point" }; }
+      case Platform_Type::Apple: { return { Build_Error, "Mac platform is not support at this point" }; }
     }
 
     auto linking_command = build_string_with_separator(&builder, ' ');

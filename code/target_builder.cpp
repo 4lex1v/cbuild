@@ -557,8 +557,6 @@ static void link_target (Memory_Arena *arena, Target_Tracker *tracker) {
 
         for (auto lib: target->depends_on) {
           assert(atomic_load(&lib->tracker->link_status) == Target_Link_Status::Success);
-
-          if (lib->type == Target::Type::Executable) todo(); // This should be disallowed
         
           const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
           if (!is_win32()) {

@@ -11,24 +11,26 @@
 struct Memory_Arena;
 
 struct String {
-  usize       length;
-  const char *value;
+  usize       length = 0;
+  const char *value  = nullptr;
 
-  constexpr String (): length { 0 }, value { nullptr } {}
-  constexpr String (const char *_value, usize _length): length { _length }, value { _value } {}
-  constexpr String (const char *c_str) {
-    if (c_str == nullptr) [[unlikely]] {
-      this->value  = nullptr;
-      this->length = 0;
-    }
-    else {
-      this->value  = c_str;
-      this->length = ([&c_str]() -> usize {
-        auto cursor = 0u;
-        while (c_str[cursor] != '\0') cursor += 1;
-        return cursor;
-      })();
-    }
+  constexpr String ()
+    : length { 0 },
+      value  { nullptr }
+  {}
+
+  constexpr String (const char *_value, usize _length)
+    : length { _length },
+      value  { _value }
+  {}
+
+  constexpr String (const char *_value)
+    : value { _value }
+  {
+    if (this->value == nullptr) return;
+    if (this->value[0] == '\0') return;
+    
+    while (this->value[++this->length]);
   }
   
   operator const char * () { return value; }
@@ -192,13 +194,16 @@ static String format_string (Memory_Arena *arena, Format_String format, Args&&..
    */
   assert(format.placeholder_count == N);
 
-  String arguments[N] { make_string(arena, args)... };
+  auto local = *arena;
+  String arguments[N] { make_string(&local, args)... };
 
   usize reservation_size = format.reservation_size + 1;
   for (auto &a: arguments) reservation_size += a.length;
 
-  auto buffer = reserve_array<char>(arena, reservation_size);
-  if (!buffer) todo();
+  auto buffer = reserve_array<char>(&local, reservation_size);
+  if (!buffer) return String{};
+
+  arena->offset = local.offset; // comit memory to arena if reservation was successful
 
   usize cursor    = 0;
   usize arg_index = 0;
