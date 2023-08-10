@@ -43,7 +43,7 @@ int main (int argc, char **argv) {
 
   working_directory = *get_working_directory_path(&suite_runner.arena);
   binary_path       = get_absolute_path(&suite_runner.arena, bin_path_arg);
-  workspace         = make_file_path(&suite_runner.arena, working_directory, "out", "verification");
+  workspace         = make_file_path(&suite_runner.arena, "tests", "verification");
 
   print(&suite_runner.arena, "Verifying: %\n", binary_path);
 

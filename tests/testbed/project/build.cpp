@@ -25,6 +25,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   // NOTE: Test checks these printf to ensure that values are passed correctly. DON'T REMOVE
   printf("Selected toolchain - %s\n", toolchain);
   printf("Selected configuration - %s\n", config);
+  printf("Cache - %s\n", cache);
 
   setup_toolchain(project, toolchain);
 

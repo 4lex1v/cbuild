@@ -16,11 +16,13 @@ static void setup_workspace (Memory_Arena *arena) {
 }
 
 static void setup_testbed (Memory_Arena *arena) {
-  setup_workspace(arena);
+  if (check_directory_exists(&workspace)) delete_directory(workspace);
+  create_directory(&workspace);
 
   auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
-
   copy_directory_content(arena, testbed_path, workspace);
+
+  set_working_directory(workspace);
 }
 
 static void cleanup_workspace (Memory_Arena *arena) {
@@ -39,7 +41,7 @@ static void build_init_project_tests (Memory_Arena *arena) {
 
   require(status == Status_Code::Success);
 
-  auto output_folder = make_file_path(arena, workspace, ".cbuild");
+  auto output_folder = make_file_path(arena, ".cbuild");
   require(check_directory_exists(&output_folder));
 
   auto produced_binary_path = make_file_path(arena, *output_folder, "build", "out", "main.exe");
@@ -118,7 +120,7 @@ static void build_testbed_tests (Memory_Arena *arena) {
   const char *toolchains [] { "msvc_x86", "msvc_x64", "llvm", "llvm_cl" };
   const char *configs    [] { "debug", "release" };
 
-  auto cbuild_output_folder = make_file_path(arena, workspace, ".cbuild");
+  auto cbuild_output_folder = make_file_path(arena, ".cbuild");
 
   for (auto toolchain: toolchains) {
     for (auto config: configs) {
@@ -169,7 +171,7 @@ static void build_testbed_tests (Memory_Arena *arena) {
 }
 
 static void build_registry_tests (Memory_Arena *arena) {
-  auto executable_path = make_file_path(arena, workspace, ".cbuild", "build", "out", "main.exe");
+  auto executable_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
 
   auto output = build_testbed(arena);
   count_lines_starting_with(output, "Building file", 9);

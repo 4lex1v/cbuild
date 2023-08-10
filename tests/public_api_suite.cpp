@@ -38,9 +38,11 @@ static void setup_workspace (Memory_Arena *arena) {
 
   if (check_directory_exists(&workspace)) delete_directory(workspace);
   create_directory(&workspace);
-  set_working_directory(workspace);
+
   auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
   copy_directory_content(arena, testbed_path, workspace);
+
+  set_working_directory(workspace);
 }
 
 static void cleanup_workspace (Memory_Arena *arena) {

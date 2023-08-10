@@ -11,7 +11,7 @@ extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena *arena) {
   if (check_directory_exists(&workspace)) delete_directory(workspace);
-  create_directory(&workspace);
+  require(create_directory(&workspace));
   set_working_directory(workspace);
 }
 
