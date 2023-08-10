@@ -310,13 +310,56 @@ void add_all_sources_from_directory (Target *target, const char *directory, cons
   target->project->total_files_count += (target->files.count - existing_target_count);
 }
 
+static void add_options (Memory_Arena *arena, List<String> *list, String option) {
+  auto cursor = option.value;
+  usize start_idx = 0;
+
+  for (size_t idx = 0; idx <= option.length; idx++) {
+    if (cursor[idx] == ' ' || cursor[idx] == '\0') {
+      String sub_option_string { cursor + start_idx, idx - start_idx };
+      add(arena, list, copy_string(arena, sub_option_string));
+
+      start_idx = idx + 1;
+    }
+  }
+}
+
+static void remove_option (List<String> *options, const String &value_to_remove) {
+  const char *cursor = value_to_remove.value;
+  size_t start_idx = 0;
+
+  for (size_t idx = 0; idx <= value_to_remove.length; idx++) {
+    if (cursor[idx] == ' ' || cursor[idx] == '\0') {
+      String option_to_remove { cursor + start_idx, idx - start_idx };
+
+      // Find the position of the option_to_remove in the options list and remove it
+      auto [found, position] = find_position(options, [&option_to_remove] (const String *value) {
+        return contains_string(*value, option_to_remove);
+      });
+
+      if (found) remove_at(options, position);
+
+      start_idx = idx + 1;
+    }
+  }
+}
+
 void add_compiler_option (Target *target, const char *option) {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
   
   auto arena = &target->project->arena;
-  add(arena, &target->options.compiler, copy_string(arena, option));
+  
+  add_options(arena, &target->options.compiler, option);
+}
+
+void remove_compiler_option (Target *target, const char *option) {
+  require_non_null(target);
+  require_non_null(option);
+  require_non_empty(option);
+
+  remove_option(&target->options.compiler, option);
 }
 
 void add_archiver_option (Target *target, const char *option) {
@@ -325,7 +368,15 @@ void add_archiver_option (Target *target, const char *option) {
   require_non_empty(option);
   
   auto arena = &target->project->arena;
-  add(arena, &target->options.archiver, copy_string(arena, option));
+  add_options(arena, &target->options.archiver, option);
+}
+
+void remove_archiver_option (Target *target, const char *option) {
+  require_non_null(target);
+  require_non_null(option);
+  require_non_empty(option);
+
+  remove_option(&target->options.archiver, option);
 }
 
 void add_linker_option (Target *target, const char *option) {
@@ -334,7 +385,15 @@ void add_linker_option (Target *target, const char *option) {
   require_non_empty(option);
 
   auto arena = &target->project->arena;
-  add(arena, &target->options.linker, copy_string(arena, option));
+  add_options(arena, &target->options.linker, option);
+}
+
+void remove_linker_option (Target *target, const char *option) {
+  require_non_null(target);
+  require_non_null(option);
+  require_non_empty(option);
+
+  remove_option(&target->options.linker, option);
 }
 
 void link_with_target (Target *target, Target *dependency) {

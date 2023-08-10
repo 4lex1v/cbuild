@@ -31,12 +31,14 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
+  if (strstr(toolchain, "msvc"))
+    add_global_compiler_option(project, "/nologo");  
+
   auto apply_common_settings = [&] (Target *target) {
     add_include_search_path(target, "code");
     add_include_search_path(target, ".");
 
     if (strstr(toolchain, "msvc")) {
-      add_compiler_option(target, "/nologo");  
       add_linker_option(target, "/nologo");
     }
 
@@ -81,6 +83,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     apply_common_settings(dyn2);
     add_all_sources_from_directory(dyn2, "code/dynamic2", "cpp", false);
     link_with(dyn2, lib2, dyn1);
+    remove_linker_option(dyn2, "/nologo");
   }
 
   auto dyn3 = add_shared_library(project, "dynamic3");

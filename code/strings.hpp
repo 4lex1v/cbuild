@@ -59,6 +59,17 @@ constexpr bool compare_strings (const String &first, const String &second) {
   return (strncmp(first.value, second.value, first.length) == 0);
 }
 
+constexpr bool contains_string (const String &text, const String &value) {
+  if (value.length == 0)          return true;
+  if (text.length < value.length) return false;
+
+  for (size_t i = 0; i <= text.length - value.length; i++) {
+    if (memcmp(text.value + i, value.value, value.length) == 0) return true;
+  }
+
+  return false;
+}
+
 template <typename T>
 concept Has_To_String_Defined = requires (Memory_Arena *arena, T a) {
   { to_string(arena, a) } -> std::same_as<String>;

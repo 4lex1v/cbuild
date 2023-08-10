@@ -20,6 +20,9 @@ EXPORTS
     link_with_library
     link_with_target
     register_action
+    remove_archiver_option
+    remove_compiler_option
+    remove_linker_option
     set_output_location
     set_toolchain
 
