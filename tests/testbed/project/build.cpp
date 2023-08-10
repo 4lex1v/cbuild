@@ -33,6 +33,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   auto apply_common_settings = [&] (Target *target) {
     add_include_search_path(target, "code");
+    add_include_search_path(target, ".");
 
     if (strstr(toolchain, "msvc")) {
       add_compiler_option(target, "/nologo");  

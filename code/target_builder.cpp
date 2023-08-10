@@ -273,7 +273,6 @@ static Result<Chain_Status> scan_dependency_chains (Memory_Arena *arena, File *s
   {
     add(arena, &include_directories, get_parent_folder_path(arena, source_file).value);
     for (auto path: extra_include_paths) add(arena, &include_directories, path);
-    add(arena, &include_directories, working_directory_path);
   };
 
   bool chain_has_updates = false;
@@ -355,7 +354,6 @@ static Result<bool> scan_file_dependencies (Memory_Arena *_arena, File *source_f
   {
     add(&local, &include_directories, get_parent_folder_path(&local, source_file).value);
     for (auto path: extra_include_paths) add(&local, &include_directories, path);
-    add(&local, &include_directories, working_directory_path);
   };
 
   bool chain_has_updates = false;
