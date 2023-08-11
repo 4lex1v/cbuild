@@ -440,6 +440,9 @@ static void schedule_downstream_linkage (const Target *target, Lambda update_tra
   for (auto downstream: target->required_by) {
     auto downstream_tracker = downstream->tracker;
 
+    // In targetted builds, target may not have an associated tracker, thus we skip these
+    if (downstream_tracker == nullptr) continue;
+
     update_tracker(downstream_tracker);
 
     if ((atomic_fetch_sub(&downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
@@ -794,13 +797,61 @@ static Status_Code create_output_directories (Memory_Arena *arena, const Project
   return Status_Code::Success;
 }
 
-static void init_trackers (Target_Tracker *trackers, const Project *project) {
-  for (int idx = 0; auto target: project->targets) {
-    trackers[idx]   = Target_Tracker(target, project->rebuild_required);
-    target->tracker = &trackers[idx];
+static Result<Seq<Target_Tracker *>> prepare_build_plan (Memory_Arena *arena, const Project *project, const Build_Config *config) {
+  if (config->targets_count == 0) {
+    auto trackers = reserve_seq<Target_Tracker *>(arena, project->targets.count);
+    for (int idx = 0; auto target: project->targets) {
+      auto tracker = push_struct<Target_Tracker>(arena, target, project->rebuild_required);
 
-    idx += 1;
+      trackers[idx++] = tracker;
+      target->tracker = tracker;
+    }
+
+    return trackers;
   }
+
+  List<Target *> build_list;
+  auto add_build_target = [&] (Target *target) {
+    auto fixpoint = [&] (Target *target, auto &thunk) -> void {
+      for (auto upstream: target->depends_on)
+        thunk(const_cast<Target *>(upstream), thunk);
+
+      for (auto it: build_list) {
+        if (compare_strings(it->name, target->name)) return;
+      }
+
+      add(arena, &build_list, target);
+    };
+    
+    fixpoint(target, fixpoint);
+  };
+
+  for (usize idx = 0; idx < config->targets_count; idx++) {
+    auto target_name = config->targets[idx];
+
+    Target *target = nullptr;
+    for (auto it: project->targets) {
+      if (compare_strings(it->name, target_name)) { target = it; break; }
+    }
+
+    if (target == nullptr)
+      return Status_Code {
+        Status_Code::Invalid_Value,
+        format_string(arena, "Target '%' not found in the project", target_name)
+      };
+
+    add_build_target(target);
+  }
+
+  auto trackers = reserve_seq<Target_Tracker *>(arena, build_list.count);
+  for (usize idx = 0; auto target: build_list) {
+    auto tracker = push_struct<Target_Tracker>(arena, target, project->rebuild_required);
+
+    trackers[idx++] = tracker;
+    target->tracker = tracker;
+  }
+
+  return trackers;
 }
 
 Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Config config) {
@@ -840,17 +891,16 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Co
   check_status(init_build_queue(&build_queue, arena, queue_size, builders_count, builder_thread_proc));
   defer { destroy_build_queue(&build_queue); };
 
-  auto trackers = reserve_array<Target_Tracker>(arena, project->targets.count);
-  init_trackers(trackers, project);
+  auto build_plan = prepare_build_plan(arena, project, &config);
+  check_status(build_plan);
 
-  for (u32 idx = 0; idx < project->targets.count; idx++) {
-    auto tracker = trackers + idx;
-    auto target  = tracker->target;
-
+  for (auto target: project->targets) {
     if (target->files.count == 0) {
       print(arena, "Target '%' doesn't have any input files and will be skipped\n", target->name);
       continue;
     }
+
+    bool should_build_target = (target->tracker != nullptr);
 
     for (auto file_path: target->files) {
       auto file = open_file(&file_path);
@@ -868,12 +918,35 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Co
         dependencies_updated = !scan_result.status || scan_result.value;
       }
 
-      submit_build_task(&build_queue, {
-        .type    = Build_Task::Compile,
-        .tracker = tracker,
-        .file    = file,
-        .dependencies_updated = dependencies_updated,
-      });
+      if (should_build_target) {
+        submit_build_task(&build_queue, {
+          .type    = Build_Task::Compile,
+          .tracker = target->tracker,
+          .file    = file,
+          .dependencies_updated = dependencies_updated,
+        });
+      }
+    }
+
+    /*
+      For the targets that won't be build, copy whatever information is in the registry right now into the update set.
+      Not doing this, would cause the registry to be overwritten with whatever was saved in the update set.
+    */
+    if (!should_build_target) {
+      auto last_info = reinterpret_cast<Registry::Target_Info *>(target->last_info);
+      if (last_info == nullptr) continue;
+
+      auto info = reinterpret_cast<Registry::Target_Info *>(target->info);
+
+      copy_memory(update_set.files + last_info->files_offset,
+                  registry.records.files + last_info->files_offset,
+                  last_info->files_count.value);
+
+      copy_memory(update_set.file_records + last_info->files_offset,
+                  registry.records.file_records + last_info->files_offset,
+                  last_info->files_count.value);
+
+      *info = *last_info;
     }
   }
 
@@ -882,9 +955,7 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Co
 
   if (registry_enabled) check_status(flush_registry(&registry, &update_set));
 
-  for (usize idx = 0; idx < project->targets.count; idx++) {
-    auto tracker = trackers + idx;
-
+  for (auto tracker: *build_plan) {
     assert(tracker->compile_status.value != Target_Compile_Status::Compiling);
     assert(tracker->link_status.value    != Target_Link_Status::Waiting);
 

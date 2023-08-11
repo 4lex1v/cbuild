@@ -37,6 +37,10 @@ Commands:
                       "flush":  Existing cached information will be ignored by the builder. Results of the build
                                 will overwrite currently cached information.
 
+    targets=<NAMES> Specifies a list of targets that should be build. CBuild will build these targets (along with their
+                    upstream dependencies) only. Multiple targets name be specied, separated by ",", e.g:
+                      cbuild build targets=bin1,bin2
+
     <others>        You can pass arbitrary arguments to the 'build' command. These arguments are accessible in your
                     project's configuration, via the tool's api defined in the generated ./project/cbuild.h.
 
@@ -262,6 +266,41 @@ Result<CLI_Input> parse_command_line (Memory_Arena *arena, int argc, char **_arg
         Invalid_Value,
         format_string(arena, "Invalid paramter value % for the 'cache' option", cache)
       };
+    }
+
+    {
+      auto [status, targets] = find_argument_value(arena, "targets", arguments_left, argv);
+      check_status(status);
+
+      if (targets) {
+        command.build.targets = get_memory_at_current_offset<String>(arena);
+
+        usize offset = 0;
+        while (true) {
+          const char *value_start = targets + offset;
+
+          usize length = 0;
+          for (usize idx = offset; idx < targets.length; idx++) {
+            if (targets[idx] == ',') break;
+            offset += 1;
+            length += 1;
+          }
+
+          if (offset > 0 && length > 0) {
+            push_struct<String>(arena, value_start, length);
+            command.build.targets_count += 1;
+          } else if (offset == 0) {
+            return {
+              Invalid_Value,
+              format_string(arena, "Invalid 'targets' value, starting with ',': %", targets)
+            };
+          }
+
+          if (offset == targets.length) break;
+
+          offset += 1; // Move past the comma
+        }
+      }
     }
 
     command.build.arguments = argv;

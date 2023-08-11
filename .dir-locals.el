@@ -1,4 +1,5 @@
-((c++-mode . ((compile-command . "powershell -noprofile -file .\\build.ps1")
+;;((c++-mode . ((compile-command . "powershell -noprofile -file .\\build.ps1")
+((c++-mode . ((compile-command . "cbuild -s build")
               (eval . (progn
                         (flycheck-mode)
                         (setq flycheck-clang-args '("-std=c++20"

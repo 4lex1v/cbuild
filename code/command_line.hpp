@@ -7,6 +7,7 @@ template <typename T> struct Seq;
 template <typename T> struct Result;
 
 struct Memory_Arena;
+struct String;
 
 struct CLI_Flags {
   bool silenced;
@@ -15,7 +16,9 @@ struct CLI_Flags {
 struct Build_Config {
   enum struct Cache_Behavior { On, Off, Flush };
 
-  const char *target_name;
+  String *targets;
+  u32     targets_count;
+
   u32 builders_count;
 
   Cache_Behavior cache;

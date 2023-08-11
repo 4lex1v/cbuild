@@ -55,7 +55,7 @@ static void build_init_project_tests (Memory_Arena *arena) {
 }
 
 static String build_testbed (Memory_Arena *arena, const String &extra_arguments = {}) {
-  auto build_command    = format_string(arena, "% build %", binary_path, extra_arguments);
+  auto build_command = format_string(arena, "% build %", binary_path, extra_arguments);
   auto [status, output] = run_system_command(arena, build_command);
   if (!status) print(arena, "%\n", output);
   require(status);
@@ -450,6 +450,40 @@ static void build_cache_tests (Memory_Arena *arena) {
   validate_binary2(arena);
 }
 
+static void build_targets_tests (Memory_Arena *arena) {
+  auto output = build_testbed(arena, "targets=library1");
+  count_lines_starting_with(output, "Building file",  1); // library1
+  count_lines_starting_with(output, "Linking target", 1); // library1
+
+  auto output3 = build_testbed(arena, "targets=\"binary2,library3\"");
+  count_lines_starting_with(output3, "Building file",  3); // binary2, dynamic3, library3
+  count_lines_starting_with(output3, "Linking target", 3);
+
+  auto output2 = build_testbed(arena, "targets=dynamic2,");
+  count_lines_starting_with(output2, "Building file",  3); // library2, dynamic1, dynamic2
+  count_lines_starting_with(output2, "Linking target", 3); 
+
+  auto output4 = build_testbed(arena);
+  count_lines_starting_with(output4, "Building file",  2); // binary1, library4
+  count_lines_starting_with(output4, "Linking target", 2);
+
+  auto output5 = build_testbed(arena, "targets=library3,library2");
+  count_lines_starting_with(output5, "Building file",  0);
+  count_lines_starting_with(output5, "Linking target", 0);
+
+  {
+    auto build_command = format_string(arena, "% build targets=nonexisting", binary_path);
+    auto [status, output] = run_system_command(arena, build_command);
+    require(contains_string(output, "Target 'nonexisting' not found in the project"));
+  }
+
+  {
+    auto build_command = format_string(arena, "% build targets=,library1", binary_path);
+    auto [status, output] = run_system_command(arena, build_command);
+    require(contains_string(output, "Invalid 'targets' value"));
+  }
+}
+
 static Test_Case build_command_tests [] {
   define_test_case_ex(build_init_project_tests, setup_workspace, cleanup_workspace),
   define_test_case_ex(build_testbed_tests,      setup_testbed,   cleanup_workspace),
@@ -458,6 +492,7 @@ static Test_Case build_command_tests [] {
   define_test_case_ex(build_errors_tests,       setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_project_tests,      setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_cache_tests,        setup_testbed,   cleanup_workspace),
+  define_test_case_ex(build_targets_tests,      setup_testbed,   cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)
