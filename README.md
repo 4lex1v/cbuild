@@ -43,3 +43,53 @@ You can see available function [here](./code/cbuild_api_template) or view the ge
   - This should create base files for the project and a main file to get you started
 - Call `cbuild build` to build the project
 - By default binary will be generated in `.cbuild\build\out\main.exe`
+
+## Performance
+
+Here are some numbers for this project.
+
+The build script that I'm using to bootstrap the project calls the compiler and nothing else. On my Ryzen 7950X, it takes approximately 800ms after all file-system things are cached:
+
+```
+$ measure-command { ./build }
+Compile:   0.682162 seconds
+Link:      0.097300 seconds
+
+TotalMilliseconds : 785.5088
+```
+
+For comparison, here are the numbers for building CBuild with GNU Make:
+
+```
+$ measure-command { make -j32 | out-host }
+
+TotalMilliseconds : 928.7488
+```
+
+And here's an equivalent call for CBuild:
+
+```
+$ measure-command { cbuild build targets=cbuild cache=off | Write-Host }
+CBuild r8
+...
+Linking target: cbuild
+Finished in: 1338ms
+
+TotalMilliseconds : 1348.6275
+```
+
+While it's clearly slower, this time can largely be attributed to the need to build the meta-program itself. After it's built and available, the build times for the project itself are roughly the following:
+
+```
+$ measure-command { cbuild build targets=cbuild cache=off | Write-Host }
+CBuild r8
+...
+Linking target: cbuild
+Finished in: 673ms
+
+TotalMilliseconds : 688.0592
+```
+
+While CBuild shows better numbers across projects where I've used it, the main point here is that it's not slower than alternative programs.
+
+P.S. Unfortunately, CMake and Premake were not able to produce a configuration that can build a C++ project on Windows using clang++. :shrug:
