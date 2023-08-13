@@ -1,4 +1,3 @@
-
 $versions = Get-Content (Resolve-Path ".\versions").Path | Select-Object -First 2
 $TOOL_VERSION = $versions[0]
 $API_VERSION  = $versions[1]
@@ -12,10 +11,8 @@ if (!(Test-Path -Path ".\out")) {
 Push-Location .\out
 
 $compile_time = Measure-Command {
-  Get-ChildItem -Path "..\code" -Filter "*.cpp" -Recurse `
-  | Where-Object { $_.Name -ne "tests_main.cpp" } `
-  | ForEach-Object {
-      & clang++ $CXX_FLAGS -c $_.FullName
+  Get-ChildItem -Path "..\code" -Filter "*.cpp" | ForEach-Object -Parallel {
+    & clang++ $using:CXX_FLAGS -c $_.FullName
   }
 }
 
@@ -26,18 +23,5 @@ $link_time = Measure-Command {
 }
 
 Write-Host ("Link: {0,13:F6} seconds" -f $link_time.TotalSeconds)
-
-$file = Get-Item "cbuild.exe"
-$fileSize = $file.Length
-
-if ($fileSize -ge 1GB) {
-    Write-Host ("File size: {0:F2} GB" -f ($fileSize / 1GB))
-} elseif ($fileSize -ge 1MB) {
-    Write-Host ("File size: {0:F2} MB" -f ($fileSize / 1MB))
-} elseif ($fileSize -ge 1KB) {
-    Write-Host ("File size: {0:F2} KB" -f ($fileSize / 1KB))
-} else {
-    Write-Host ("File size: {0} bytes" -f $fileSize)
-}
 
 Pop-Location
