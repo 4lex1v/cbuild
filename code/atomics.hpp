@@ -4,11 +4,11 @@
 #include "base.hpp"
 
 enum struct Memory_Order: u32 {
-  Sequential,
+  Whatever,
   Acquire,
   Release,
   Acquire_Release,
-  Whatever,
+  Sequential
 };
 
 template <typename T>
@@ -55,18 +55,23 @@ using Atomic_Value = typename Atomic<T>::Value_Type;
   #include <x86intrin.h>
 #endif
 
-#define compiler_barrier() do { asm volatile ("" ::: "memory"); } while(0)
+#define compiler_barrier() do { asm volatile ("" ::: "memory"); } while (0)
+
+#define release_fence() do { asm volatile ("sfence" ::: "memory"); } while (0)
+#define acquire_fence() do { asm volatile ("lfence" ::: "memory"); } while (0)
+#define memory_fence() do { asm volatile ("mfence" ::: "memory"); } while (0)
 
 template <Memory_Order order = Memory_Order::Whatever, typename T>
 static T atomic_load (const Atomic<T> *atomic) {
   using enum Memory_Order;
 
   static_assert(sizeof(T) <= sizeof(void*));
-  static_assert((order == Sequential) || (order == Acquire) || (order == Whatever));
+  static_assert((order == Whatever) || (order == Acquire) || (order == Sequential));
 
-  if constexpr (order == Sequential) compiler_barrier();
+  if constexpr (order == Acquire)    compiler_barrier();
+  if constexpr (order == Sequential) memory_fence(); // full mfence
   auto result = atomic->value;
-  if constexpr ((order == Sequential) || (order == Acquire)) compiler_barrier();
+  if constexpr (order == Sequential) memory_fence();
 
   return result;
 }
@@ -76,11 +81,20 @@ static void atomic_store (Atomic<T> *atomic, Atomic_Value<T> value) {
   using enum Memory_Order;
 
   static_assert(sizeof(T) <= sizeof(void*));
-  static_assert((order == Sequential) || (order == Release) || (order == Whatever));
-  
-  if constexpr ((order == Sequential) || (order == Release)) compiler_barrier();
-  reinterpret_cast<volatile T &>(atomic->value) = value;
-  if constexpr (order == Sequential) compiler_barrier();
+  static_assert((order == Whatever) || (order == Release) || (order == Sequential));
+
+  if constexpr (order == Whatever || order == Release) {
+    reinterpret_cast<volatile T &>(atomic->value) = value;
+    compiler_barrier();
+  }
+  else {
+    asm volatile (
+      "lock xchg %1, %0"
+      : "+r"(value), "+m"(atomic->value)
+      :
+      : "memory"
+    );
+  }
 }
 
 template <Memory_Order order = Memory_Order::Whatever, typename T>
