@@ -68,10 +68,9 @@ static T atomic_load (const Atomic<T> *atomic) {
   static_assert(sizeof(T) <= sizeof(void*));
   static_assert((order == Whatever) || (order == Acquire) || (order == Sequential));
 
-  if constexpr (order == Acquire)    compiler_barrier();
-  if constexpr (order == Sequential) memory_fence(); // full mfence
-  auto result = atomic->value;
   if constexpr (order == Sequential) memory_fence();
+  auto result = atomic->value;
+  if constexpr (order != Whatever) compiler_barrier();
 
   return result;
 }
@@ -83,9 +82,12 @@ static void atomic_store (Atomic<T> *atomic, Atomic_Value<T> value) {
   static_assert(sizeof(T) <= sizeof(void*));
   static_assert((order == Whatever) || (order == Release) || (order == Sequential));
 
-  if constexpr (order == Whatever || order == Release) {
-    reinterpret_cast<volatile T &>(atomic->value) = value;
+  if constexpr (order == Whatever) {
+    atomic->value = value;
+  }
+  else if constexpr (order == Release) {
     compiler_barrier();
+    atomic->value = value;
   }
   else {
     asm volatile (
