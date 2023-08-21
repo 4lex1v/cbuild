@@ -2,12 +2,20 @@
 #include "code/base.hpp"
 #include "code/platform.hpp"
 #include "code/runtime.hpp"
+#include "code/driver.hpp"
 
 #include "test_suite.hpp"
 
 File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 File_Path binary_path;       // Executable under test
+
+/*
+  These variables are set by the project loader and used used by the cbuild api implementation "code/cbuild_api.cpp".
+ */
+Platform_Info platform;      
+File_Path object_folder_path;
+File_Path out_folder_path;
 
 static int find_arg (const char * arg, const int argc, const char * const * const argv) {
   for (auto idx = 0; idx < argc; idx++) {

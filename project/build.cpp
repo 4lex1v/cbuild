@@ -27,8 +27,27 @@ static std::string_view platform;
 static int generate_headers (const Arguments *args);
 static int generate_tags    (const Arguments *args);
 
-static void install_hook (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
-//  printf("Installing target: %s!\n", get_target_name(target));
+static void print_hashes (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
+  if (!strstr(get_argument_or_default(args, "config", "debug"), "release")) return;
+
+  // For this I'd need to get a target and get its generated files
+  auto file_path = get_generated_binary_file_path(target);
+
+  char command[2046];
+  { // Print MD5
+    snprintf(command, 2046, "certutil -hashfile %s MD5", file_path);
+    std::system(command);
+  }
+
+  { // Print SHA256
+    snprintf(command, 2046, "certutil -hashfile %s SHA256", file_path);
+    std::system(command);
+  }
+
+  { // generate gpg signature
+    snprintf(command, 2046, "gpg --detach-sign -o cbuild.sig %s", file_path);
+    std::system(command);
+  }
 }
 
 static bool read_versions (u32 *tool, u32 *api) {
@@ -119,6 +138,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
     set_output_location(project, release_folder);
   }
+
+  add_target_hook(cbuild, Hook_Type_After_Target_Linked, print_hashes);
   
   return true;
 }

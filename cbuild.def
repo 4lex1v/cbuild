@@ -28,3 +28,4 @@ EXPORTS
 
     ; Experimental API declarations
     add_target_hook
+    get_generated_binary_file_path

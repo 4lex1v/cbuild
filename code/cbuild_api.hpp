@@ -88,6 +88,8 @@ struct Target {
     Executable,
   };
 
+  using enum Type;
+
   String name;
   Type   type;
 
@@ -123,3 +125,6 @@ struct Target {
 };
 
 const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
+
+const char * get_target_extension (const Target *target);
+File_Path get_output_file_path_for_target (Memory_Arena *arena, const Target *target);

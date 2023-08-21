@@ -27,7 +27,7 @@ typedef void (*Hook_Func) (const Project *project, const Target *target, const A
 extern "C" {
 CBUILD_EXPERIMENTAL_API void add_target_hook (Target *target, Hook_Type type, Hook_Func func);
 
-CBUILD_EXPERIMENTAL_API void exclude_source_file (Target *target, const char *_file_path);
+CBUILD_EXPERIMENTAL_API const char * get_generated_binary_file_path (const Target *target);
 }
 
 #ifdef __cplusplus

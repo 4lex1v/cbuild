@@ -24,6 +24,9 @@ extern File_Path cache_directory_path;
 extern Platform_Info platform;
 extern CLI_Flags  global_flags;
 
+File_Path object_folder_path;
+File_Path out_folder_path;
+
 typedef bool project_func (const Arguments &args, Project &project);
 
 Status_Code create_new_project_in_workspace (Memory_Arena *arena, bool create_c_project) {
@@ -167,6 +170,18 @@ static Status_Code load_project_from_library (const Arguments *args, Project *pr
   auto output_location = make_file_path(arena, cache_directory_path, "build", project->output_location);
   check_status(create_directory_recursive(arena, &output_location));
   project->output_location_path = output_location;
+
+  object_folder_path = make_file_path(arena, project->output_location_path, "obj");
+  check_status(create_directory(&object_folder_path));
+
+  for (auto target: project->targets) {
+    auto local = *arena;
+    auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
+    check_status(create_directory(&target_object_folder_path));
+  }
+
+  out_folder_path = make_file_path(arena, project->output_location_path, "out");
+  check_status(create_directory(&out_folder_path));
 
   return Success;
 }

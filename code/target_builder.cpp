@@ -12,16 +12,19 @@
 #include "platform.hpp"
 #include "project_loader.hpp"
 #include "cbuild_api.hpp"
+#include "cbuild_api.hpp"
 #include "target_builder.hpp"
 #include "result.hpp"
 #include "runtime.hpp"
 #include "list.hpp"
 #include "toolchain.hpp"
 
+extern Platform_Info platform;
 extern CLI_Flags     global_flags;
 extern File_Path     working_directory_path;
 extern File_Path     cache_directory_path;
-extern Platform_Info platform;
+extern File_Path     object_folder_path;
+extern File_Path     out_folder_path;
 
 enum struct Chain_Status: u32 {
   Unchecked,
@@ -111,9 +114,6 @@ struct Build_Queue {
   cau32 tasks_submitted;
   cau32 tasks_completed;
 };
-
-static File_Path   object_folder_path;
-static File_Path   out_folder_path;
 
 static Registry   registry;
 static bool       registry_enabled; // must be written only once before building, read by multiple threads
@@ -411,28 +411,6 @@ static bool is_msvc (const Toolchain_Configuration *config) {
 
 static bool is_win32 () {
   return platform.type == Platform_Type::Win32;
-}
-
-static const char * get_target_extension (const Target *target) {
-  switch (target->type) {
-    case Target::Type::Static_Library: return (platform.type == Platform_Type::Win32) ? "lib" : "a";
-    case Target::Type::Shared_Library: return (platform.type == Platform_Type::Win32) ? "dll" : "so";
-    case Target::Type::Executable:     return (platform.type == Platform_Type::Win32) ? "exe" : "";
-  }
-}
-
-static File_Path get_output_file_path_for_target (Memory_Arena *arena, const Target *target) {
-  switch (target->type) {
-    case Target::Type::Static_Library:
-    case Target::Type::Shared_Library: {
-      auto library_extension = get_target_extension(target);
-      return make_file_path(arena, out_folder_path, format_string(arena, "%.%", target->name, library_extension));
-    }
-    case Target::Type::Executable: {
-      auto target_file_name = is_win32() ? format_string(arena, "%.exe", target->name) : target->name;
-      return make_file_path(arena, out_folder_path, target_file_name);
-    }
-  }
 }
 
 template <typename Lambda>
@@ -787,16 +765,6 @@ static u32 number_of_extra_builders_to_spawn (Memory_Arena *arena, u32 request_b
   return count - 1;
 }
 
-static Status_Code create_output_directories (Memory_Arena *arena, const Project *project) {
-  for (auto target: project->targets) {
-    auto local = *arena;
-    auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
-    check_status(create_directory(&target_object_folder_path));
-  }
-
-  return Status_Code::Success;
-}
-
 static Result<Seq<Target_Tracker *>> prepare_build_plan (Memory_Arena *arena, const Project *project, const Build_Config *config) {
   if (config->targets_count == 0) {
     auto trackers = reserve_seq<Target_Tracker *>(arena, project->targets.count);
@@ -859,14 +827,6 @@ Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Co
   use(Status_Code);
 
   if (project->targets.count == 0) return Success;
-
-  object_folder_path = make_file_path(arena, project->output_location_path, "obj");
-  check_status(create_directory(&object_folder_path));
-
-  check_status(create_output_directories(arena, project));
-
-  out_folder_path = make_file_path(arena, project->output_location_path, "out");
-  check_status(create_directory(&out_folder_path));
 
   registry_enabled = !project->registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
   if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {

@@ -1,5 +1,6 @@
 
 #include <cstring>
+#include <cstdio>
 
 #include "base.hpp"
 #include "driver.hpp"
@@ -10,6 +11,7 @@
 #include "toolchain.hpp"
 
 extern Platform_Info platform;
+extern File_Path     out_folder_path;
 
 Config_Crash_Handler crash_handler_hook;
 
@@ -436,4 +438,34 @@ const char * get_target_name (const Target *target) {
   require_non_null(target);
   
   return target->name.value;
+}
+
+const char * get_target_extension (const Target *target) {
+  switch (target->type) {
+    case Target::Static_Library: return (platform.type == Platform_Type::Win32) ? ".lib" : ".a";
+    case Target::Shared_Library: return (platform.type == Platform_Type::Win32) ? ".dll" : ".so";
+    case Target::Executable:     return (platform.type == Platform_Type::Win32) ? ".exe" : "";
+  }
+}
+
+File_Path get_output_file_path_for_target (Memory_Arena *arena, const Target *target) {
+  auto extension = get_target_extension(target);
+
+  char file_name[1024];
+
+  // TODO: my print impl doesn't support consequtive placeholders, i.e "%%", not important at the moment
+  auto file_name_length = snprintf(file_name, array_count_elements(file_name), "%s%s", target->name.value, extension);
+
+  auto path = make_file_path(arena, out_folder_path, String(file_name, file_name_length));
+
+  return path;
+}
+
+const char * get_generated_binary_file_path (const Target *target) {
+  require_non_null(target);
+
+  auto project = target->project;
+  auto path    = get_output_file_path_for_target(&project->arena, target);
+
+  return path.value;
 }
