@@ -14,7 +14,7 @@
 
 #ifdef CBUILD_PROJECT_CONFIGURATION
 
-unsigned int cbuild_api_version = 2;
+unsigned int cbuild_api_version = 3;
 
 #endif // CBUILD_PROJECT_CONFIGURATION
 
@@ -294,6 +294,27 @@ CBUILD_API void add_global_include_search_path (Project *project, const char *pa
 CBUILD_API void add_compiler_option (Target *target, const char *option);
 
 /*
+  Remove options that were previously added to the compiler executable.
+  `option` string may contain multiple compiler arguments separated by space, which are to be removed for the
+  current target.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      const char *config = get_argument_or_default(args, "config", "release");
+
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+
+      Target *main = add_executable(project, "main");
+      add_compiler_option(main, "/nologo /std:c++20");
+      remove_compiler_option(main, "/nologo"); // Removes the "/nologo" option from the compiler arguments
+      if (!strcmp(config, "debug")) remove_compiler_option(main, "/O2 /Zi"); // Removes the "/O2 /Zi" options if in debug configuration
+    }
+
+ */
+CBUILD_API void remove_compiler_option (Target *target, const char *option);
+
+/*
   Add options that will be passed to the archiver executable as-is.
   `option` string may contain multiple compiler arguments separated by space.
 
@@ -313,6 +334,27 @@ CBUILD_API void add_compiler_option (Target *target, const char *option);
 
  */
 CBUILD_API void add_archiver_option (Target *target, const char *option);
+
+/*
+  Remove options that were previously added for the archiver executable.
+  `option` string may contain multiple archiver arguments separated by space, which are to be removed for the
+  current target.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      const char *config = get_argument_or_default(args, "config", "release");
+
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+
+      Target *main = add_executable(project, "main");
+      add_archiver_option(main, "/nologo /std:c++20");
+      remove_archiver_option(main, "/nologo"); // Removes the "/nologo" option from the archiver arguments
+      if (!strcmp(config, "debug")) remove_archiver_option(main, "/O2 /Zi"); // Removes the "/O2 /Zi" options if in debug configuration
+    }
+
+ */
+CBUILD_API void remove_archiver_option (Target *target, const char *option);
 
 /*
   Add options that will be passed to the linker executable as-is.
@@ -336,6 +378,27 @@ CBUILD_API void add_archiver_option (Target *target, const char *option);
 
  */
 CBUILD_API void add_linker_option (Target *target, const char *option);
+
+/*
+  Remove options that were previously added for the linker executable.
+  `option` string may contain multiple linker arguments separated by space, which are to be removed for the
+  current target.
+
+  Example:
+
+    void setup_project (const Arguments *args, Project *project) {
+      const char *config = get_argument_or_default(args, "config", "release");
+
+      set_toolchain(project, Toolchain_Type_MSVC_X64);
+
+      Target *main = add_executable(project, "main");
+      add_linker_option(main, "/nologo /std:c++20");
+      remove_linker_option(main, "/nologo"); // Removes the "/nologo" option from the linker arguments
+      if (!strcmp(config, "debug")) remove_linker_option(main, "/O2 /Zi"); // Removes the "/O2 /Zi" options if in debug configuration
+    }
+
+ */
+CBUILD_API void remove_linker_option (Target *target, const char *option);
 
 /*
   Add a C/C++ source file to the target.
@@ -479,6 +542,15 @@ static void add_compiler_options (Target *target, const char *option, T&&... mor
 }
 
 /*
+  C++ helper function for `remove_compiler_option`.
+ */
+template <typename... T>
+static void remove_compiler_options (Target *target, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) remove_compiler_option(target, it);
+}
+
+/*
   C++ helper function for `add_archiver_option`.
  */
 template <typename... T>
@@ -488,12 +560,30 @@ static void add_archiver_options (Target *target, const char *option, T&&... mor
 }
 
 /*
+  C++ helper function for `remove_archiver_option`.
+ */
+template <typename... T>
+static void remove_archiver_options (Target *target, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) remove_archiver_option(target, it);
+}
+
+/*
   C++ helper function for `add_linker_option`.
  */
 template <typename... T>
 static void add_linker_options (Target *target, const char *option, T&&... more_options) {
   const char *options[] { option, more_options... };
   for (auto it: options) add_linker_option(target, it);
+}
+
+/*
+  C++ helper function for `remove_linker_option`.
+ */
+template <typename... T>
+static void remove_linker_options (Target *target, const char *option, T&&... more_options) {
+  const char *options[] { option, more_options... };
+  for (auto it: options) remove_linker_option(target, it);
 }
 
 /*

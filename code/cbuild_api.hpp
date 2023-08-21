@@ -1,8 +1,8 @@
 
 #pragma once
 
-#include "cbuild_api_template"
-#include "cbuild_api_experimental"
+#include "cbuild_api_template.hpp"
+#include "cbuild_api_experimental.hpp"
 
 #include "base.hpp"
 #include "arena.hpp"

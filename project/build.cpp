@@ -142,7 +142,7 @@ static int generate_headers (const Arguments *args) {
   }
 
   {
-    auto api_template_file_path = "./code/cbuild_api_template";
+    auto api_template_file_path = "./code/cbuild_api_template.hpp";
     auto api_template_content   = fopen(api_template_file_path, "rb+");
     if (api_template_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", api_template_file_path);
@@ -197,7 +197,7 @@ static int generate_headers (const Arguments *args) {
 
   {
     // experimental api
-    auto file_path = "./code/cbuild_api_experimental";
+    auto file_path = "./code/cbuild_api_experimental.hpp";
     auto content   = fopen(file_path, "rb+");
     if (content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", file_path);
@@ -238,7 +238,7 @@ static int generate_headers (const Arguments *args) {
 
   {
     // build_template
-    auto build_template_file_path = "./code/build_template";
+    auto build_template_file_path = "./code/build_template.hpp";
     auto build_template_content   = fopen(build_template_file_path, "rb+");
     if (build_template_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", build_template_file_path);
@@ -277,9 +277,9 @@ static int generate_headers (const Arguments *args) {
     fclose(build_template_content);
   }
 
-    {
+  {
     // main_cpp_template
-    auto main_cpp_file_path = "./code/main_cpp_template";
+    auto main_cpp_file_path = "./code/main_cpp_template.hpp";
     auto main_cpp_content   = fopen(main_cpp_file_path, "rb+");
     if (main_cpp_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", main_cpp_file_path);

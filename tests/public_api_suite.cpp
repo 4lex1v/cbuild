@@ -6,7 +6,7 @@
 #include "code/toolchain.hpp"
 
 #define CBUILD_API_VERSION 1
-#include "code/cbuild_api_template"
+#include "code/cbuild_api_template.hpp"
 
 #include "test_suite.hpp"
 
