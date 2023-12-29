@@ -27,9 +27,9 @@ static void cleanup_workspace (Memory_Arena *arena) {
 }
 
 static void basic_clean_command_usage (Memory_Arena *arena) {
-  auto cbuild_output_folder  = make_file_path(arena, ".cbuild");
-  auto output_build_folder   = make_file_path(arena, *cbuild_output_folder, "build");
-  auto output_project_folder = make_file_path(arena, *cbuild_output_folder, "project");
+  auto cbuild_output_folder  = *make_file_path(arena, ".cbuild");
+  auto output_build_folder   = *make_file_path(arena, cbuild_output_folder, "build");
+  auto output_project_folder = *make_file_path(arena, cbuild_output_folder, "project");
 
   require(check_directory_exists(&output_build_folder));
   require(check_directory_exists(&output_project_folder));

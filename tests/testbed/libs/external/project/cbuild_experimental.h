@@ -15,7 +15,6 @@
 #endif
 
 struct Project;
-struct Project_Ref;
 struct Target;
 struct Arguments;
 
@@ -28,11 +27,7 @@ typedef void (*Hook_Func) (const Project *project, const Target *target, const A
 extern "C" {
 CBUILD_EXPERIMENTAL_API void add_target_hook (Target *target, Hook_Type type, Hook_Func func);
 
-CBUILD_EXPERIMENTAL_API const char * get_generated_binary_file_path (const Target *target);
-
-CBUILD_EXPERIMENTAL_API Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path);
-
-CBUILD_EXPERIMENTAL_API Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name);
+CBUILD_EXPERIMENTAL_API void exclude_source_file (Target *target, const char *_file_path);
 }
 
 #ifdef __cplusplus

@@ -199,11 +199,7 @@ struct Format_String {
 template <String_Convertible... Args>
 static String format_string (Memory_Arena *arena, Format_String format, Args&&... args) {
   constexpr usize N = sizeof...(Args);
-
-  /*
-    I wish this could be done at compile time :sadface:
-   */
-  assert(format.placeholder_count == N);
+  assert(format.placeholder_count == N); // I wish this could be done at compile time :sadface:
 
   auto local = *arena;
   String arguments[N] { make_string(&local, args)... };
@@ -275,5 +271,3 @@ struct String_Builder {
   void operator += (S &&value) { add(make_string(this->arena, value)); }
 };
 
-String build_string (const String_Builder *builder);
-String build_string_with_separator (const String_Builder *builder, char separator = ' ');

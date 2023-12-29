@@ -1,17 +1,21 @@
 
 #pragma once
 
-#include "base.hpp"
+#include "anyfin/core/option.hpp"
+#include "anyfin/core/list.hpp"
+#include "anyfin/core/slice.hpp"
+
 #include "cbuild_api.hpp"
 
-struct String;
+Option<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena &arena, Toolchain_Type type);
 
-template <typename T> struct List;
-template <typename T> struct Result;
+Option<Toolchain_Configuration> discover_toolchain (Memory_Arena &arena);
 
-Result<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena *arena, Toolchain_Type type);
+struct Env_Var {
+  String key;
+  String value;
+};
 
-Result<Toolchain_Configuration> discover_toolchain (Memory_Arena *arena);
+List<Env_Var> setup_system_sdk (Memory_Arena &arena, Target_Arch architecture);
 
-List<Pair<String, String>> setup_system_sdk (Memory_Arena *arena, Target_Arch architecture);
-void reset_environment (const List<Pair<String, String>> *env);
+void reset_environment (const Slice<Env_Var> &env);

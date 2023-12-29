@@ -1,9 +1,11 @@
 
 #pragma once
 
-#include "base.hpp"
+#include "anyfin/base.hpp"
+
+#include "anyfin/core/atomics.hpp"
+
 #include "cbuild_api.hpp"
-#include "atomics.hpp"
 
 /*
   Capping the number of files the tool supports per project, largely for the purposes of
@@ -70,8 +72,8 @@ struct Update_Set {
   Registry::Record *dependency_records;
 };
 
-Status_Code load_registry (Registry *registry, Memory_Arena *arena, File registry_file);
+Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path);
 
-Status_Code init_update_set (Update_Set *update_set, Memory_Arena *arena, Registry *registry, const Project *project);
+Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const Project &project);
 
-Status_Code flush_registry (Registry *registry, const Update_Set *update_set);
+void flush_registry (Registry &registry, const Update_Set &update_set);

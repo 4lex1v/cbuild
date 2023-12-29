@@ -1,14 +1,11 @@
 
-#include "core.hpp"
-#include "dependency_iterator.hpp"
-#include "platform.hpp"
-#include "runtime.hpp"
-#include "result.hpp"
+#include "anyfin/base.hpp"
 
-Dependency_Iterator::Dependency_Iterator (const File_Mapping *_mapping)
-  : mapping { _mapping },
-    cursor  { _mapping->memory }
-{}
+#include "anyfin/core/result.hpp"
+
+#include "anyfin/platform/files.hpp"
+
+#include "dependency_iterator.hpp"
 
 static const char* skip_to_any_symbol (const char* str, size_t size, const char* symbols) {
   for (size_t i = 0; i < size; i++) {
@@ -21,6 +18,14 @@ static const char* skip_to_any_symbol (const char* str, size_t size, const char*
   return nullptr;
 }
 
+static bool compare_memory (const char *source, const char *value, const usize length) {
+  for (usize idx = 0; idx < length; idx++) {
+    if (source[idx] != value[idx]) return false;
+  }
+
+  return true;
+}
+
 static const char* find_substring (const char *memory, size_t memory_size, const char *value, size_t value_size) {
   if (value  == nullptr || value_size  == 0) return nullptr;
   if (memory == nullptr || memory_size == 0) return nullptr;
@@ -29,28 +34,28 @@ static const char* find_substring (const char *memory, size_t memory_size, const
   auto end = memory + memory_size - value_size + 1;
 
   while (memory < end) {
-    if (memcmp(memory, value, value_size) == 0) return memory;
+    if (!compare_memory(memory, value, value_size)) return memory;
     memory++;
   }
 
   return nullptr;
 }
 
-Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *include) {
-  use(Status_Code);
-  
-  auto cursor = iterator->cursor;
-  auto end    = iterator->mapping->memory + iterator->mapping->size;
-  
+Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Dependency_Iterator &iterator) {
+  auto cursor = iterator.cursor;
+  auto end    = iterator.mapping.memory + iterator.mapping.size;
+
+  auto &&None = Fin::Core::Ok(Option<String_View>());
+
   while (cursor < end) {
     if (*cursor == '\"') {
-      if (cursor == iterator->mapping->memory || (*(cursor - 1) != 'R')) {
+      if (cursor == iterator.mapping.memory || (*(cursor - 1) != 'R')) {
         while (cursor < end) {
           auto search_from_position = cursor + 1;
-          if (search_from_position == end) return false;
+          if (search_from_position == end) return None;
 
-          cursor = reinterpret_cast<const char *>(memchr(search_from_position, '"', end - search_from_position));  
-          if (cursor == nullptr) return false;
+          cursor = get_character_offset_reversed(search_from_position, '"', end - search_from_position);  
+          if (cursor == nullptr) return None;
 
           cursor += 1;
 
@@ -73,15 +78,15 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
       auto safe_word = cursor + 1;
       if (safe_word != end && *safe_word == '(') {
         auto raw_string_end = find_substring(cursor, end - cursor, ")\"", 2);
-        if (raw_string_end == nullptr) return false;
+        if (raw_string_end == nullptr) return None;
 
         cursor = raw_string_end + 2;
           
         continue;
       }
 
-      auto end_of_safe_word = reinterpret_cast<const char *>(memchr(safe_word, '(', end - safe_word));
-      if (end_of_safe_word == nullptr) return false;
+      auto end_of_safe_word = get_character_offset_reversed(safe_word, '(', end - safe_word);
+      if (end_of_safe_word == nullptr) return None;
 
       auto safe_word_length = end_of_safe_word - safe_word;
       char raw_string_closing_path[64] = { ')' };
@@ -92,7 +97,7 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
                                                     raw_string_closing_path, raw_string_closing_path_length);
       if ((raw_string_end_position == nullptr) ||
           (raw_string_end_position[raw_string_closing_path_length] != '"')) {
-        return Invalid_Value; // Unclosed string literal, TODO: report a proper error message
+        return Fin::Core::Error(Parse_Error::Invalid_Value); // Unclosed string literal, TODO: report a proper error message
       }
 
       auto position = raw_string_end_position + safe_word_length + 1;
@@ -105,10 +110,10 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
     if (*cursor == '\'') {
       while (cursor < end) {
         auto search_from_position = cursor + 1;
-        if (search_from_position == end) return false;
+        if (search_from_position == end) return None;
 
-        cursor = reinterpret_cast<const char *>(memchr(search_from_position, '\'', end - search_from_position));  
-        if (cursor == nullptr) return false;
+        cursor = get_character_offset_reversed(search_from_position, '\'', end - search_from_position);  
+        if (cursor == nullptr) return None;
 
         cursor += 1;
 
@@ -124,26 +129,25 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
     }
 
     if (*cursor == '#') {
-      if (strncmp(cursor, "#include", 8) != 0) {
+      if (compare_bytes(cursor, "#include", 8) != 0) {
         cursor += 1;
         continue;
       }
 
-#define advance_by(VALUE)                           \
-      do {                                          \
-        if ((cursor + VALUE) >= end) return false;  \
-        cursor += VALUE;                            \
+#define advance_by(VALUE)                         \
+      do {                                        \
+        if ((cursor + VALUE) >= end) return None; \
+        cursor += VALUE;                          \
       } while(0)
 
       advance_by(8);
 
       while (*cursor == ' ') advance_by(1);
       if (*cursor == '<') {
-        cursor = reinterpret_cast<const char *>(memchr(cursor, '>', end - cursor));
-        if (cursor == nullptr) return false;
+        cursor = get_character_offset_reversed(cursor, '>', end - cursor);
+        if (cursor == nullptr) return None;
 
         cursor += 1;
-
         continue;
       }
 
@@ -154,28 +158,27 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
 
       while (*cursor != '"') advance_by(1);
 
-      include->value = file_path_start;
-      include->length  = (cursor - file_path_start);
+      auto include = String_View(file_path_start, cursor - file_path_start);
 
-      iterator->cursor = cursor + 1;
+      iterator.cursor = cursor + 1;
 
 #undef advance_by
 
-      return true;
+      return Fin::Core::Ok(Option(move(include)));
     }
 
     if (*cursor == '/') {
       if ((cursor + 1) < end) {
         if (cursor[1] == '/') {
-          cursor = reinterpret_cast<const char *>(memchr(cursor, '\n', end - cursor));
-          if (cursor == nullptr) return false;
+          cursor = get_character_offset_reversed(cursor, '\n', end - cursor);
+          if (cursor == nullptr) return None;
           cursor += 1;
           continue;
         }
 
         if (cursor[1] == '*') {
           auto position = find_substring(cursor, end - cursor, "*/", 2);
-          if (position == nullptr) return false;
+          if (position == nullptr) return None;
           cursor = position + 2;
           continue;
         }
@@ -185,10 +188,10 @@ Result<bool> get_next_include_value (Dependency_Iterator *iterator, String *incl
     }
     
     cursor = skip_to_any_symbol(cursor, end - cursor, "/#'\"");
-    if (cursor == nullptr) return false;
+    if (cursor == nullptr) return None;
   }
 
-  return false;
+  return None;
 }
 
 // static void register_file_dependencies (const char *file_path, int offset = 0) {

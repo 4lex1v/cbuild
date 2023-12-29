@@ -1,241 +1,349 @@
 
-#include <cstdlib>
-#include <cstring>
-#include <cstdio>
+#include "anyfin/core/arena.hpp"
+#include "anyfin/core/lifecycle.hpp"
+#include "anyfin/core/memory.hpp"
+#include "anyfin/core/option.hpp"
+#include "anyfin/core/result.hpp"
+#include "anyfin/core/seq.hpp"
+#include "anyfin/core/strings.hpp"
 
-#include "base.hpp"
-#include "command_line.hpp"
-#include "driver.hpp"
-#include "arena.hpp"
-#include "list.hpp"
-#include "core.hpp"
-#include "toolchain.hpp"
-#include "target_builder.hpp"
-#include "project_loader.hpp"
+#include "anyfin/platform/console.hpp"
+#include "anyfin/platform/timers.hpp"
+
+#include "cbuild.hpp"
 #include "cbuild_api.hpp"
-#include "platform.hpp"
-#include "result.hpp"
-#include "runtime.hpp"
-
-#if !defined(TOOL_VERSION) || !defined(API_VERSION)
-  #error "TOOL_VERSION and API_VERSION values must be defined at compile time"
-#endif
-
-extern Config_Crash_Handler crash_handler_hook;
+#include "driver.hpp"
+#include "project_loader.hpp"
+#include "target_builder.hpp"
 
 CLI_Flags global_flags;
 
-File_Path working_directory_path;
-File_Path cache_directory_path;
+enum struct CLI_Command {
+  Init,
+  Build,
+  Clean,
+  Update,
+  Version,
+  Help,
+  Dynamic
+};
 
-Platform_Info platform;
-
-static void config_exit_failure (u32 exit_code) {
-  exit(exit_code);
-}
-
-static Result<Arguments> parse_arguments (Memory_Arena *arena, const CLI_Command *command) {
-  use(Status_Code);
-
-  Arguments args {};
-
-  const char **argv;
-  int argc;
-  switch (command->type) {
-    case CLI_Command::Build: {
-      argv = command->build.arguments;
-      argc = command->build.count;
-
-      break;
-    }
-    case CLI_Command::Dynamic: {
-      argv = command->dynamic.arguments;
-      argc = command->dynamic.count;
-
-      break;
-    }
-    default: {
-      return args;
-    }
+static Option<String_View> find_argument_value (const Slice<Startup_Argument>& args, const String_View& name) {
+  for (auto arg: args) {
+    if (arg.is_value()) continue;
+    if (compare_strings(arg.key, name)) return String_View(arg.value);
   }
 
-  if (argc <= 0) return args;
+  return {};
+};
 
-  auto parse_argument = [&arena] (const char *cli_arg) -> Result<Argument> {
-    auto value_offset = strchr(cli_arg, '=');
-    if (not value_offset)            return Argument { Argument::Type::Flag, cli_arg };
-    if (*(value_offset + 1) == '\0') return { Invalid_Value, format_string(arena, "Argument value after '=' cannot be empty, invalid value: %", cli_arg) };
+static bool find_option_flag (const Slice<Startup_Argument>& args, const String_View& name) {
+  for (auto arg: args) {
+    if (arg.is_pair()) continue;
+    if (compare_strings(arg.key, name)) return true;
+  }
 
-    usize key_length = value_offset - cli_arg;
-    if (key_length == 0) return { Invalid_Value, format_string(arena, "Argument cannot start with '=', invalid value: %", cli_arg) };
+  return false;
+};
 
-    return Argument {
-      .type  = Argument::Type::Key_Value,
-      .key   = copy_string(arena, { cli_arg, key_length }),
-      .value = value_offset + 1,
+struct Build_Command {
+  Build_Config config;
+  Slice<Startup_Argument> build_arguments;
+
+  static Build_Command parse (const Slice<Startup_Argument>& command_arguments) {
+    Build_Command command;
+
+    find_argument_value(command_arguments, "builders")
+      .handle_value([&command](auto &value) {
+        if (value[0] == '-') panic("Invalid value for the 'builders' option, this value cannot be negative");
+        if (value[0] == '0') panic("Invalid value for the 'builders' option, this value cannot be '0'");
+
+        s32 count = 0;
+        for (auto digit: value) count = (count * 10) + (digit - '0');
+
+        command.config.builders_count = count;
+      });
+
+    find_argument_value(command_arguments, "cache")
+      .handle_value([&command](auto &value) {
+        if      (is_empty(value))                 command.config.cache = Build_Config::Cache_Behavior::On;
+        else if (compare_strings(value, "on"))    command.config.cache = Build_Config::Cache_Behavior::On;
+        else if (compare_strings(value, "off"))   command.config.cache = Build_Config::Cache_Behavior::Off;
+        else if (compare_strings(value, "flush")) command.config.cache = Build_Config::Cache_Behavior::Flush;
+        else panic("Invalid paramter value % for the 'cache' option", value);
+      });
+
+    find_argument_value(command_arguments, "targets")
+      .handle_value([&command](auto &value) {
+        //usize offset = 0;
+        // while (true) {
+        //   const char *value_start = targets + offset;
+
+        //   usize length = 0;
+        //   for (usize idx = offset; idx < targets.length; idx++) {
+        //     if (targets[idx] == ',') break;
+        //     offset += 1;
+        //     length += 1;
+        //   }
+
+        //   if (offset > 0 && length > 0) {
+        //     push_struct<String>(arena, value_start, length);
+        //     command.build.targets_count += 1;
+        //   } else if (offset == 0) {
+        //     panic("Invalid 'targets' value, starting with ',': %", targets));
+        //   }
+
+        //   if (offset == targets.length) break;
+
+        //   offset += 1; // Move past the comma
+      });
+
+    return command;
+  }
+};
+
+struct Init_Command {
+  Configuration_Type type;
+
+  static Init_Command parse (const Slice<Startup_Argument>& command_arguments) {
+    Init_Command command;
+
+    find_argument_value(command_arguments, "type")
+        .handle_value([&command](auto value) {
+          if (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
+          else if (compare_strings(value, "c")) command.type = Configuration_Type::C;
+          else panic("Unrecognized argument value for the 'type' option: %", value);
+        });
+
+    return command;
+  }
+};
+
+struct Clean_Command {
+  bool all;
+
+  static Clean_Command parse (const Slice<Startup_Argument>& command_arguments) {
+    return Clean_Command{
+      .all = find_option_flag(command_arguments, "all"),
     };
-  };
-
-  for (int idx = 0; idx < argc; idx++) {
-    auto arg = parse_argument(argv[idx]);
-    check_status(arg);
-
-    add(arena, &args.args, *arg);
   }
+};
 
-  return args;
-}
+static constexpr String_View help_message =
+    R"help(
+Usage: cbuild [switches] <command> [command_args]
 
-int main (int argc, char **argv) {
-  crash_handler_hook = config_exit_failure;
-  
-  auto arena = Memory_Arena { reserve_virtual_memory(megabytes(64)) };
+Switches:
+  -s, --silence
+    Silence cbuild's output (e.g working directory, discovered path to the configuration file, etc..), keeping only
+    the output from the compiler and the linker.
 
-  bool silence_report = false;
-  auto counter     = create_performance_counter(&arena);
-  auto start_stamp = get_clock_timestamp(counter);
-  defer {
-    if (!silence_report) {
-      auto end_stamp = get_clock_timestamp(counter);
-      auto elapsed   = get_ellapsed_millis(counter, start_stamp, end_stamp);
+Commands:
+  init
+    Initializes a new project by creating a project configuration in the current directory under the ./project folder.
 
-      print(&arena, "Finished in: %ms\n", elapsed);
-    }
-  };
+    type=<c | cpp>  Specifies the type of the project's configuration file. Defaults to 'cpp'
 
-  auto [cli_parse_status, cli_input] = parse_command_line(&arena, argc, argv);
-  if (!cli_parse_status) {
-    print(&arena, "ERROR: %\n", cli_parse_status.details);
-    print_usage(&arena);
-    exit(EXIT_FAILURE);
+  build
+    Compiles and constructs your project based on the existing project configuration defined in ./project/build.cpp or
+    ./project/build.c files.
+
+    builders=<NUM>  Specifies the number of CPU cores to be used for building the project.
+                    Accepts a value in the range [1, CORE_COUNT], allowing for parallelized builds.
+                    Defaults to CORE_COUNT. "1" means that the project will be compiled on the main thread only.
+
+    cache=<VALUE>   Specifies builder's use of the caching system.
+                    <VALUE> parameter can take one of the following arguments:
+                      "on":     Full use of the caching system. Default behavior
+                      "off":    Caching system will not be used.
+                      "flush":  Existing cached information will be ignored by the builder. Results of the build
+                                will overwrite currently cached information.
+
+    targets=<NAMES> Specifies a list of targets that should be build. CBuild will build these targets (along with their
+                    upstream dependencies) only. Multiple targets name be specied, separated by ",", e.g:
+                      cbuild build targets=bin1,bin2
+
+    <others>        You can pass arbitrary arguments to the 'build' command. These arguments are accessible in your
+                    project's configuration, via the tool's api defined in the generated ./project/cbuild.h.
+
+  clean
+    Removes all build artifacts (compiled objects, binary files, etc.) created by the 'build' command, restoring workspace to
+    its pre-build state.
+
+    all            Additionally remove artifacts associated with the project's configuration build, which are not removed by
+                   default.
+
+  update
+    Updates the tool's API header files within your current project configuration folder (i.e ./project) to match the latest
+    version of the tool.
+    This operation affects only the API headers provided by the tool and doesn't modify your project source code.
+
+  version
+    Prints tool's version.
+
+  help
+    Prints the help message.
+)help";
+
+namespace {
+
+  void print_usage () {
+    print("%\n", help_message);
   }
-
-  global_flags = cli_input.flags;
-  auto cli_command = cli_input.command;
-
-  if (!global_flags.silenced || cli_command == CLI_Command::Version) {
-#ifdef DEV_BUILD
-    print(&arena, "CBuild r% DEV\n", TOOL_VERSION);
-#else
-    print(&arena, "CBuild r%\n", TOOL_VERSION);
-#endif
-  }
-
-  if (cli_command == CLI_Command::Version) { silence_report = true; return EXIT_SUCCESS; }
-
-  working_directory_path = *get_working_directory_path(&arena);
-  if (!global_flags.silenced) print(&arena, "Working directory: %\n", working_directory_path);
 
   /*
-    We only set the path here, the actual creation of the folder is handled during
-    the project loading phase. This is done to avoid the scenario when the tool is
-    invoked in a wrong directory, but still creates a guarbage folder. To avoid
-    littering user's system, we'll create the folder, if needed, after the configuration
-    file has been discovered.
+    Global flags are the very first argument values passed to the CBuild executable that go before all other options.
    */
-  cache_directory_path = make_file_path(&arena,working_directory_path, ".cbuild");
-
-  Status_Code exit_status = Status_Code::Success;
-#define verify_status(EXPR) do { if (exit_status = capture_status(EXPR); !exit_status) goto exit_failure; } while (0)
-
-  if (cli_command == CLI_Command::Init) {
-    verify_status(create_new_project_in_workspace(&arena, cli_command.init.type == CLI_Command::Init::Type::C));
-  }
-  else if (cli_command == CLI_Command::Update) {
-    verify_status(update_cbuild_api_file(&arena));
-  }
-  else if (cli_command == CLI_Command::Clean) {
-    verify_status(delete_directory(make_file_path(&arena, cache_directory_path, "build")));
-
-    if (cli_command.clean.all) {
-      verify_status(delete_directory(make_file_path(&arena, cache_directory_path, "project")));
-    }
-  }
-  else if (cli_command == CLI_Command::Help) {
-    silence_report = true;
-    print_usage(&arena);
-  }
-  else {
-    auto [status, default_toolchain] = discover_toolchain(&arena);
-    if (!status) {
-      print(&arena, "Couldn't find any suitable C/C++ toolchain installed on the system.\n");
-      return EXIT_FAILURE;
-    }
-
-    auto previous_env = setup_system_sdk(&arena, Target_Arch_x64);
-
-    Project project {
-      .arena     = Memory_Arena { reserve_memory_unsafe(&arena, megabytes(2)), megabytes(2) },
-      .toolchain = default_toolchain,
+  void parse_global_flags (Slice<Startup_Argument>& args) {
+    struct {
+      char short_name;
+      const char* name;
+      bool* flag;
+    } table[] {
+      {'s', "silence", &global_flags.silenced},
     };
 
-    auto args = parse_arguments(&arena, &cli_command);
-    verify_status(args);
+    while (true) {
+      auto arg = *args++;
 
-    auto load_status = load_project(&arena, &args, &project);
-    if (not load_status) {
-      if (cli_command == CLI_Command::Dynamic) {
-        /*
-          If we can't load the project, there's no way to resolve user-defined commands.
-          I think it's still a good idea to report usage here, because of a different style and 
-          possible input mistakes, like `cbuild --version` instead of `cbuild version`. In the 
-          first case, we'll try to look up the command in the project, if it's called from a
-          non-project directory, it'll terminate with project not found error.
-         */
+      if (arg.is_value()) return;
+      if (arg.key[0] != '-') return; // It's required that flags start with -- or -, for full- or short- name
 
-        print(&arena, "\nNo such command: %\n", argv[1]);
+      if (arg.key.length < 2) panic("Incomplete flag value passed");
 
-        print_usage(&arena);
-        return EXIT_SUCCESS;
-      }
-
-      // Otherwise, just crash
-      verify_status(load_status);
-    }
-
-    if (exit_status) {
-      /*
-        Previous setup_system_sdk call configures env to build the the project's configuration for the host machine,
-        while this call should setup CBuild to build the project for the specific target, where, at least in the case of
-        Windows, different dll libs should be used.
-
-        CBuild itself targets x64 machine only, while it allows the user to build for x86. Since the default toolchain must
-        be x64, current env must already be configured for that and there's no need to do this again.
-      */
-      if (project.target_architecture == Target_Arch_x86) {
-        reset_environment(&previous_env);
-        setup_system_sdk(&arena, project.target_architecture);
-      }
-
-      if (cli_command == CLI_Command::Build) {
-        verify_status(build_project(&arena, &project, cli_command.build));
-      }
-      else {
-        assert(cli_command == CLI_Command::Dynamic);
-
-        exit_status = Status_Code(Status_Code::User_Command_Error,
-                                  format_string(&arena, "Unrecognized cli_input '%'", argv[1]));
-
-        String command_name = argv[1];
-        for (auto cmd: project.user_defined_commands) {
-          if (compare_strings(cmd.name, command_name)) {
-            auto status_code = cmd.proc(&args);
-            if (status_code == 0) exit_status = Status_Code::Success;
-            else {
-              exit_status.value = Status_Code::User_Command_Error;
-              exit_status.code  = status_code;
+      if (arg.key[1] != '-') {
+        // Parsing a chain a single character switches, similar to how most Unix tools can group flags, e.g `tar -zcvf myfile.tgz .`
+        for (int idx = 1; idx < arg.key.length; idx++) {
+          bool* flag = nullptr;
+          for (auto& option: table) {
+            if (option.short_name == arg.key[idx]) {
+              flag = option.flag;
+              break;
             }
+          }
 
+          if (flag == nullptr) panic("Flag '-%' is not supported", arg.key[idx]);
+          if (*flag) print("Flag -% is a duplicated and has no affect\n", arg.key[idx]);
+
+          *flag = true;
+        }
+      } else {
+        if (arg.key.length < 3) panic("Incomplete flag value passed");
+
+        bool* flag = nullptr;
+        for (auto& option: table) {
+          if (!compare_strings(arg.key + 2, String_View(option.name))) {
+            // offset first 2 --
+            flag = option.flag;
             break;
           }
         }
+
+        if (flag == nullptr) panic("Flag '%' is not supported", arg.key);
+        if (*flag) print("Flag % is a duplicated and has no affect\n", arg.key);
+
+        *flag = true;
       }
     }
   }
 
-  if (exit_status) return EXIT_SUCCESS;
+  CLI_Command parse_command (Slice<Startup_Argument>& args) {
+    assert(args[0].is_value());
 
-exit_failure:
-  print(&arena, "Program terminated with an error status: %\n", exit_status);
-  return EXIT_FAILURE;
+    const auto command_name = (*args++).key;
+
+    if (compare_strings(command_name, "init"))    return CLI_Command::Init;
+    if (compare_strings(command_name, "build"))   return CLI_Command::Build;
+    if (compare_strings(command_name, "clean"))   return CLI_Command::Clean;
+    if (compare_strings(command_name, "update"))  return CLI_Command::Update;
+    if (compare_strings(command_name, "version")) return CLI_Command::Version;
+    if (compare_strings(command_name, "help"))    return CLI_Command::Help;
+
+    return CLI_Command::Dynamic;
+  }
+
+} // namespace
+
+u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
+  Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
+    
+  bool silence_report = false;
+  auto start_stamp = get_timer_value();
+  defer {
+    if (!silence_report) {
+      auto end_stamp = get_timer_value();
+      auto elapsed = get_elapsed_millis(get_timer_frequency(), start_stamp, end_stamp);
+      print("Finished in: %ms\n", elapsed);
+    }
+  };
+
+  parse_global_flags(args);
+  auto command_type = parse_command(args);
+
+  if (!global_flags.silenced || command_type == CLI_Command::Version) {
+#ifdef DEV_BUILD
+    print("CBuild r% DEV\n", TOOL_VERSION);
+#else
+    print("CBuild r%\n", TOOL_VERSION);
+#endif
+
+    if (command_type == CLI_Command::Version) {
+      silence_report = true;
+      return 0;
+    }
+  }
+
+  auto working_directory_path = *get_working_directory_path(arena);
+  if (!global_flags.silenced) print("Working directory: %\n", working_directory_path);
+
+  if (command_type == CLI_Command::Init) {
+    auto command = Init_Command::parse(args);
+    init_workspace(arena, working_directory_path, command.type);
+    return 0;
+  }
+
+  if (command_type == CLI_Command::Update) {
+    update_cbuild_api_file(arena, working_directory_path);
+    return 0;
+  }
+
+  if (command_type == CLI_Command::Clean) {
+    auto command = Clean_Command::parse(args);
+    cleanup_workspace(command.all);
+    return 0;
+  }
+
+  if (command_type == CLI_Command::Help) {
+    silence_report = true;
+    print_usage();
+    return 0;
+  }
+
+  auto project = load_project(arena, "project", working_directory_path, working_directory_path, args);
+
+  if (command_type == CLI_Command::Build) {
+    auto command = Build_Command::parse(args);
+    return build_project(arena, project, command);
+  }
+
+  assert(command_type == CLI_Command::Dynamic);
+
+  //   exit_status = Status_Code(Status_Code::User_Command_Error,
+  //                             format_string(&arena, "Unrecognized cli_input '%'", argv[1]));
+
+  //   String command_name = argv[1];
+  //   for (auto cmd: project.user_defined_commands) {
+  //     if (compare_strings(cmd.name, command_name)) {
+  //       auto status_code = cmd.proc(&args);
+  //       if (status_code == 0) exit_status = Status_Code::Success;
+  //       else {
+  //         exit_status.value = Status_Code::User_Command_Error;
+  //         exit_status.code  = status_code;
+  //       }
+
+  //       break;
+  //     }
+  //   }
+
+  return 0;
 }

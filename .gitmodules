@@ -1,0 +1,3 @@
+[submodule "libs/anyfin"]
+	path = libs/anyfin
+	url = git@github.com:4lex1v/anyfin.git

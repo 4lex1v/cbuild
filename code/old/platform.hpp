@@ -6,7 +6,6 @@
 #include "strings.hpp"
 #include "result.hpp"
 
-struct Shared_Library;
 struct Memory_Region;
 struct Memory_Arena;
 struct Status_Code;
@@ -14,11 +13,17 @@ struct Status_Code;
 template <typename T> struct Bit_Mask;
 template <typename T> struct List;
 
-#ifdef PLATFORM_WIN32
-  #define platform_path_separator '\\'
-#else
-  #define platform_path_separator '/'
-#endif
+extern const char platform_path_separator;
+extern const char platform_static_library_extension_name[];
+extern const char platform_shared_library_extension_name[];
+extern const char platform_executable_extension_name[];
+extern const char platform_object_extension_name[];
+
+// #ifdef PLATFORM_WIN32
+//   #define platform_path_separator '\\'
+// #else
+//   #define platform_path_separator '/'
+// #endif
 
 struct File_Path_Info {
   const char *full_path;
@@ -78,10 +83,6 @@ Result<File_Path> make_file_path (Memory_Arena *arena, Segment&&... args) {
 
   auto reservation_size = (get_reservation_size(args) + ...);
 
-#ifdef PLATFORM_WIN32
-  if (reservation_size > 260) return { Invalid_Value, "Constructed path surpases Windows path length limitation of 256 characters" };
-#endif
-
   auto buffer = reserve_array<char>(arena, reservation_size, alignof(char));
   if (buffer == nullptr) return { Out_Of_Memory, "Not enough memory to construct the file path" };
 
@@ -135,7 +136,7 @@ Status_Code get_file_path_info (File_Path_Info *info, Memory_Arena *arena, const
 
 Result<File_Path> get_absolute_path (Memory_Arena *arena, const char *path);
 
-String get_file_name (const File_Path *path);
+Result<String> get_file_name (const File_Path *path);
 
 void read_bytes_from_file_to_buffer (const File *file, char *buffer, const size_t bytes_to_read);
 
@@ -160,75 +161,24 @@ Result<File_Path> get_file_path (Memory_Arena *arena, const File *file);
 
 Result<File_Path> get_parent_folder_path (Memory_Arena *arena, const File *file);
 
-Result<u64> get_last_update_timestamp (const File *file);
-
-Status_Code load_shared_library (Shared_Library **handle, const File_Path *library_file_path);
-
-void unload_library (Shared_Library *library);
-
-void * load_symbol_from_library (const Shared_Library *library, const char *symbol_name);
-
-struct System_Command_Result {
-  Status_Code status;
-  String      output;
-};
-
-System_Command_Result run_system_command (Memory_Arena *arena, const char *command_line);
 
 void retrieve_system_error (char **buffer, uint32_t *message_length);
 
 Result<u64> get_file_id (const File *file);
 
-struct File_Mapping {
-  void *handle;
-  
-  char *memory;
-  usize size;
-};
-
-Result<File_Mapping> map_file_into_memory (const File *file);
-
-Status_Code unmap_file (File_Mapping *mapping);
-
 Memory_Region reserve_virtual_memory (usize size);
 
 void free_virtual_memory (Memory_Region *region);
 
-using Thread_Proc = u32 (void *);
-
-struct Thread {
-  struct Handle;
-
-  Handle *handle;
-  u32     id;
-};
-
-Result<Thread> spawn_thread (Thread_Proc *proc, void *data);
-void shutdown_thread (Thread *thread);
-
 u32 get_logical_cpu_count ();
 
 u32 get_current_thread_id ();
-
-struct Semaphore {
-  struct Handle;
-  Handle *handle;
-};
-
-Result<Semaphore> create_semaphore (u32 count = static_cast<u32>(-1));
-Status_Code destroy_semaphore (Semaphore *semaphore);
-
-Result<u32> increment_semaphore (Semaphore *semaphore, u32 increment_value = 1);
-
-Status_Code wait_for_semaphore_signal (Semaphore *sempahore);
 
 struct RW_Lock;
 
 void init_rw_lock (RW_Lock *lock);
 void acquire_reader_lock (RW_Lock *lock);
 void acquire_writer_lock (RW_Lock *lock);
-
-void raise_error_and_halt (const char *filename, u32 line, const char *function, const char *message);
 
 const char * get_path_to_executable (Memory_Arena *arena, const char *name);
 

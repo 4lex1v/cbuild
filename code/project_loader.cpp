@@ -1,341 +1,392 @@
 
+#include "anyfin/base.hpp"
+
+#include "anyfin/core/arena.hpp"
+#include "anyfin/core/option.hpp"
+#include "anyfin/core/result.hpp"
+#include "anyfin/core/string_builder.hpp"
+#include "anyfin/core/strings.hpp"
+
+#include "anyfin/platform/console.hpp"
+#include "anyfin/platform/files.hpp"
+#include "anyfin/platform/shared_library.hpp"
+
 #include "generated.h"
 
-#include "base.hpp"
-#include "command_line.hpp"
-#include "driver.hpp"
-#include "arena.hpp"
-#include "core.hpp"
-#include "project_loader.hpp"
+#include "cbuild.hpp"
 #include "cbuild_api.hpp"
-#include "platform.hpp"
-#include "result.hpp"
-#include "runtime.hpp"
+#include "driver.hpp"
+#include "project_loader.hpp"
 #include "toolchain.hpp"
 
-#ifndef API_VERSION
-  #error "API version must be defined at compile time"
-#endif
+extern CLI_Flags global_flags;
+
+struct Arguments;
+typedef bool project_func (const Arguments *args, Project &project);
 
 static const u32 api_version = (API_VERSION);
 
-extern File_Path working_directory_path;
-extern File_Path cache_directory_path;
-extern Platform_Info platform;
-extern CLI_Flags  global_flags;
+void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Configuration_Type config_file_type) {
+  Scope_Allocator allocator { arena };
 
-File_Path object_folder_path;
-File_Path out_folder_path;
+  auto project_directory_path = make_file_path(allocator, working_directory, "project");
+  create_directory(project_directory_path).expect();
 
-typedef bool project_func (const Arguments &args, Project &project);
+  auto build_file_name = (config_file_type == Configuration_Type::C) ? String_View("build.c") : String_View("build.cpp");
+  auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
 
-Status_Code create_new_project_in_workspace (Memory_Arena *arena, bool create_c_project) {
-  use(Status_Code);
-  using enum Open_File_Flags;
-
-  {
-    auto local = *arena;
-    auto build_c_file_path   = make_file_path(&local, working_directory_path, "project", "build.c");
-    auto build_cpp_file_path = make_file_path(&local, working_directory_path, "project", "build.cpp");
-
-    if (check_file_exists(&build_c_file_path)) {
-      return {
-        Resource_Already_Exists,
-        format_string(&local, "It looks like this workspace already has a project configuration file at %", build_c_file_path)
-      };
-    }
-    else if (check_file_exists(&build_cpp_file_path)) {
-      return {
-        Resource_Already_Exists,
-        format_string(&local, "It looks like this workspace already has a project configuration file at %", build_cpp_file_path)
-      };
-    }
+  if (check_file_exists(build_file_path)) {
+    print("It looks like this workspace already has a project configuration file at %", build_file_path);
+    return;
   }
 
-  auto project_directory_path = make_file_path(arena, working_directory_path, "project");
-  check_status(create_directory(&project_directory_path));
+  auto code_directory_path = make_file_path(arena, working_directory, "code");
+  create_directory(code_directory_path).expect();
 
-  auto code_directory_path = make_file_path(arena, working_directory_path, "code");
-  check_status(create_directory(&code_directory_path));
+  auto cbuild_h_path     = make_file_path(arena, project_directory_path, "cbuild.h");
+  auto cbuild_exp_h_path = make_file_path(arena, project_directory_path, "cbuild_experimental.h");
+  auto main_path         = make_file_path(arena, code_directory_path,    "main.cpp");
 
-#define generate_file(FILE_PATH, DATA) \
-    do {                                          \
-      auto header_file = open_file(&(FILE_PATH), Request_Write_Access | Create_File_If_Not_Exists); \
-      check_status(header_file); \
-      defer { close_file(&header_file); }; \
-      write_buffer_to_file(&header_file, reinterpret_cast<const char *>(DATA), array_count_elements(DATA)); \
-  } while(0)
+  const auto generate_file = [&arena] <usize N> (const File_Path &path, const u8 (&data)[N]) {
+    using enum Open_File_Flags;
 
-  auto cbuild_h_path     = make_file_path(arena, *project_directory_path, "cbuild.h");
-  auto cbuild_exp_h_path = make_file_path(arena, *project_directory_path, "cbuild_experimental.h");
-  auto build_path        = make_file_path(arena, *project_directory_path, format_string(arena, "build.%", create_c_project ? "c" : "cpp"));
-  auto main_path         = make_file_path(arena, *code_directory_path,    "main.cpp");
+    auto file = open_file(path, Write_Access | Create_Missing)
+      .take(format_string(arena, "Failed to open file '%' for writing.", path));
+
+    write_buffer_to_file(file, Slice(data, N))
+      .expect(format_string(arena, "Failed to write data into the file '%'", path));
+
+     close_file(file).expect(format_string(arena, "Failed to close file '%'", path));
+  };
 
   generate_file(cbuild_h_path,     cbuild_api_content);
   generate_file(cbuild_exp_h_path, cbuild_experimental_api_content);
-  generate_file(build_path,        build_template_content);
+  generate_file(build_file_path,   build_template_content);
   generate_file(main_path,         main_cpp_content);
 
-#undef generate_file
-
-  print(arena, "Project initialized\n");
-
-  return Success;
+  print("Project initialized\n");
 }
 
-Status_Code update_cbuild_api_file (Memory_Arena *arena) {
-  use(Status_Code);
+void cleanup_workspace (bool full_cleanup) {
+  auto allocator = get_global_allocator();
+
+  delete_directory(make_file_path(allocator, ".cbuild", "build")).expect();
+
+  if (full_cleanup) {
+    delete_directory(make_file_path(allocator, ".cbuild", "project")).expect();
+  }
+}
+
+static inline void load_project_from_library (
+  Project                       &project,
+  const File_Path               &project_library_file_path,
+  const Slice<Startup_Argument> &args) {
+
+  auto library = load_shared_library(project_library_file_path)
+    .get("Workspace configuration load failed.\n");
+
+  /*
+    If there's something wrong with the library that we load, like some expected symbols are missing, it's fine to ignore
+    some of them, like 'cbuild_api_version'.
+   */
+  lookup_symbol<unsigned char>(*library, "cbuild_api_version")
+    .handle_value([] (auto symbol) {
+      if (!symbol) {
+        print("Expected symbol 'cbuild_api_version' wasn't found in the loaded configuration file\n"
+              "This is not expected and could be a sign of some larger issue. Please report this issue.\n");
+        return;
+      }
+
+      const auto config_api_version_value = *symbol;
+
+      if (api_version > config_api_version_value) {
+        print("It looks like your project configuration uses an older API.\n"
+              "You may update API version using `cbuild update` command.\n");
+      }
+
+      if (api_version < config_api_version_value) {
+        print("Project configuration uses a newer cbuild API (tool: %, config: %).\n"
+              "While it's not a violation of the cbuild usage, compatibility is not guaranteed in this case.\n"
+              "Please download a newer version at https://github.com/4lex1v/cbuild/releases\n",
+              api_version,
+              config_api_version_value);
+      }
+    });
+
+  auto loader = lookup_symbol<project_func>(*library, "setup_project")
+    .get("Failed to load the 'setup_project' symbol from a shared library.\n");
+
+  if (!loader) panic("Build definition load failure, couldn't resolve 'setup_project' function");
+
+  loader(reinterpret_cast<const Arguments *>(&args), project);
+}
+
+struct Workspace {
+  File_Path project_output_directory_path;
+  File_Path project_tag_file_path;
+};
+
+static void build_project_configuration (
+  Memory_Arena      &arena,
+  const Workspace   &workspace,
+  const String_View &project_name,
+  const File_Path   &build_file_path,
+  const File_Path   &project_library_file_path,
+  const Toolchain_Configuration &toolchain) {
+
   using enum Open_File_Flags;
 
-  {
-    /*
-      cbuild.h
-    */
-
-    auto header_file_path = make_file_path(arena, working_directory_path, "project", "cbuild.h");
-    check_status(delete_file(header_file_path));
-
-    auto header_file = open_file(&header_file_path, Request_Write_Access | Create_File_If_Not_Exists);
-    check_status(header_file);
-
-    write_buffer_to_file(&header_file, reinterpret_cast<const char *>(cbuild_api_content), cbuild_api_content_size);
-
-    close_file(&header_file);
-  }
+  auto project_obj_file_name = format_string(arena, "%.%", project_name, platform_object_extension_name);
+  auto project_obj_file_path = make_file_path(arena, workspace.project_output_directory_path, project_obj_file_name);
 
   {
-    /*
-      cbuild_experimental.h
-    */
+    Scope_Allocator local   { arena };
+    String_Builder  builder { local };
 
-    auto header_file_path = make_file_path(arena, working_directory_path, "project", "cbuild_experimental.h");
-    check_status(delete_file(header_file_path));
+    bool is_cpp = ends_with(build_file_path, "cpp");
 
-    auto header_file = open_file(&header_file_path, Request_Write_Access | Create_File_If_Not_Exists);
-    check_status(header_file);
+    builder += String_View(is_cpp ? toolchain.cpp_compiler_path : toolchain.c_compiler_path);
 
-    write_buffer_to_file(&header_file, reinterpret_cast<const char *>(cbuild_experimental_api_content), cbuild_experimental_api_content_size);
+    auto standard_value = is_cpp ? String_View("c++17") : String_View("c11");
 
-    close_file(&header_file);
-  }
-
-  return Success;
-}
-
-Result<File_Path> discover_build_file (Memory_Arena *arena) {
-  use(Status_Code);
-
-  {
-    auto build_file_path = make_file_path(arena, working_directory_path, "project", "build.cpp");
-    if (check_file_exists(&build_file_path)) return build_file_path;
-  }
-
-  {
-    auto build_file_path = make_file_path(arena, working_directory_path, "project", "build.c");
-    if (check_file_exists(&build_file_path)) return build_file_path;
-  }
-
-  return { Resource_Missing, "No project definition found.\nPlease setup a new project manually or via the 'init' command.\n" };
-}
-
-static Status_Code load_project_from_library (const Arguments *args, Project *project, const File_Path *project_library_file_path) {
-  use(Status_Code);
-
-  Shared_Library *library = nullptr;
-  check_status(load_shared_library(&library, project_library_file_path));
-
-  auto config_api_version_value = *reinterpret_cast<unsigned int *>(load_symbol_from_library(library, "cbuild_api_version"));
-
-  if (api_version > config_api_version_value) {
-    print(&project->arena,
-          "It looks like your project configuration uses an older API.\n"
-          "You may update API version using `cbuild update` command.\n");
-  }
-
-  if (api_version < config_api_version_value) {
-    print(&project->arena,
-          "Project configuration uses a newer cbuild API (tool: %, config: %).\n"
-          "While it's not a violation of the cbuild usage, compatibility is not guaranteed in this case.\n"
-          "Please download a newer version at https://github.com/4lex1v/cbuild/releases\n",
-          api_version,
-          config_api_version_value);
-  }
-
-  auto loader = reinterpret_cast<project_func *>(load_symbol_from_library(library, "setup_project"));
-  if (not loader) return { Load_Error, "Build definition load failure, couldn't resolve 'setup_project' function" };
-
-  loader(*args, *project);
-
-  auto arena = &project->arena;
-  auto output_location = make_file_path(arena, cache_directory_path, "build", project->output_location);
-  check_status(create_directory_recursive(arena, &output_location));
-  project->output_location_path = output_location;
-
-  object_folder_path = make_file_path(arena, project->output_location_path, "obj");
-  check_status(create_directory(&object_folder_path));
-
-  for (auto target: project->targets) {
-    auto local = *arena;
-    auto target_object_folder_path = make_file_path(&local, object_folder_path, target->name);
-    check_status(create_directory(&target_object_folder_path));
-  }
-
-  out_folder_path = make_file_path(arena, project->output_location_path, "out");
-  check_status(create_directory(&out_folder_path));
-
-  return Success;
-}
-
-static Status_Code build_project_configuration (Memory_Arena *_arena, Project *project,
-                                                File_Path project_output_folder_path,
-                                                File_Path project_library_file_path,
-                                                File_Path build_file_path) {
-  use(Status_Code);
-  using enum Open_File_Flags;
-
-  auto toolchain = &project->toolchain;
-
-  auto project_obj_file_path = make_file_path(_arena, project_output_folder_path, format_string(_arena, "project.%", platform.is_win32() ? "obj" : "o"));
-
-  {
-    auto local = *_arena;
-
-    String_Builder builder { &local };
-
-    bool is_cpp = check_extension(build_file_path, "cpp");
-
-    builder += is_cpp ? toolchain->cpp_compiler_path : toolchain->c_compiler_path;
-
-    const char *standard_value = is_cpp ? "c++17" : "c11";
-
-    if ((toolchain->type == Toolchain_Type_MSVC_X64) ||
-        (toolchain->type == Toolchain_Type_MSVC_X86) ||
-        (toolchain->type == Toolchain_Type_LLVM_CL)) {
-      builder += format_string(&local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file_path);
+    if ((toolchain.type == Toolchain_Type_MSVC_X64) ||
+        (toolchain.type == Toolchain_Type_MSVC_X86) ||
+        (toolchain.type == Toolchain_Type_LLVM_CL)) {
+      builder += format_string(local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file_path);
     }
     else {
-      builder += format_string(&local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file_path, project_obj_file_path);
+      builder += format_string(local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file_path, project_obj_file_path);
     }
 
-    auto compilation_command = build_string_with_separator(&builder, ' ');
+    auto compilation_command = build_string_with_separator(builder, ' ');
 
-    auto [status, output] = run_system_command(&local, compilation_command);
+    auto result = run_system_command(local, compilation_command);
+    if (!result) panic("Failed to execute system command.\n");
 
-    if (output.length) print(&local, "%\n", output);
-    if (not status)    print(&local, "%\n", status);
-    
-    if (!status) return { Build_Error, "Build description file compilation failure", status.code };
+    auto [status, output] = result.get();
+
+    if (output)  console_print_message(format_string(local, "%\n", output));
+    if (!status) console_print_message(format_string(local, "%\n", status));
   }
 
   {
     /*
       Linking project configuration into a shared library.
     */
-    auto local = *_arena;
+    Scope_Allocator local   { arena };
+    String_Builder  builder { local };
 
-    String_Builder builder { &local };
-
-    builder += toolchain->linker_path;
-
-    switch (platform.type) {
-      case Platform_Type::Win32: {
-        auto cbuild_import_path = make_file_path(&local, project_output_folder_path, "cbuild.lib");
+    builder += String_View(toolchain.linker_path);
 
 #ifdef PLATFORM_WIN32
-        auto export_file = open_file(&cbuild_import_path, Request_Write_Access | Create_File_If_Not_Exists);
-        check_status(export_file);
+    {
+      auto cbuild_import_path = make_file_path(local, workspace.project_output_directory_path,
+                                                format_string(local, "cbuild.%", platform_static_library_extension_name));
 
-        auto file_write_result = write_buffer_to_file(&export_file, reinterpret_cast<const char *>(cbuild_lib_content), cbuild_lib_content_size);
-        check_status(file_write_result);
+      auto export_file = open_file(cbuild_import_path, Write_Access | Create_Missing)
+        .take("Couldn't create export file to write data to.\n");
 
-        close_file(&export_file);
+      write_buffer_to_file(export_file, cbuild_lib_content)
+        .expect("Failed to write win32 export data into a file.\n");
+
+      close_file(export_file);
+
+      builder += format_string(local,
+                               "/nologo /dll /debug:full /defaultlib:libcmt /export:cbuild_api_version /export:setup_project \"%\\*.obj\" \"%\" /out:\"%\"",
+                               workspace.project_output_directory_path, cbuild_import_path, project_library_file_path);
+    }
 #endif
 
-        builder += format_string(&local,
-                                 "/nologo /dll /debug:full /defaultlib:libcmt /export:cbuild_api_version /export:setup_project \"%\\*.obj\" \"%\" /out:\"%\"",
-                                 project_output_folder_path, cbuild_import_path, project_library_file_path);
-        break;
-      }
-      case Platform_Type::Unix:  { return { Build_Error, "Unix platforms are not supported at this point" }; }
-      case Platform_Type::Apple: { return { Build_Error, "Mac platform is not support at this point" }; }
-    }
+    auto linking_command = build_string_with_separator(builder, ' ');
 
-    auto linking_command = build_string_with_separator(&builder, ' ');
+    auto result = run_system_command(local, linking_command);
+    if (!result) panic("Failed to execute system command.\n");
 
-    auto [status, output] = run_system_command(&local, linking_command);
+    auto [status, output] = result.get();
 
-    if (output.length) print(&local, "%\n", output);
-    if (not status)    print(&local, "%\n", status);
-
-    if (!status) return { Build_Error, "Build description linkage failure", status.code };
+    if (output)  console_print_message(format_string(local, "%\n", output));
+    if (!status) console_print_message(format_string(local, "%\n", status));
   }
-
-  return Success;
 }
 
-Status_Code load_project (Memory_Arena *arena, const Arguments *args, Project *project) {
-  use(Status_Code);
+// Result<Project_Loader> create_project_loader (Memory_Arena *arena, File_Path cache_directory) {
+//   use(Status_Code);
+  
+//   auto cache_project_directory = make_file_path(arena, cache_directory, "project");
+//   if (!cache_project_directory_creation_status) 
+//   check_status(project_output_folder);
+//   check_status(create_directory(&project_output_folder));
+
+//   auto project_tag_file = make_file_path(arena, *project_output_folder, "tag");
+//   check_status(project_tag_file);
+
+//   return Project_Loader {
+//     .project_output_directory = project_output_folder,
+//     .project_tag_file         = project_tag_file,
+//   };
+// }
+
+static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &project_directory_path) {
+  String_View files[] { "build.cpp", "build.c" };
+
+  for (auto build_file_name: files) {
+    auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
+    if (check_file_exists(build_file_path)) return Option(move(build_file_path));
+  }
+
+  return {};
+}
+
+struct Project_Registry {
+  constexpr static usize Version = 1;
+
+  struct Header {
+    u16 version;
+
+    // Version 1
+    u16 entries_count;
+  };
+
+  struct Record {
+    char name[32];
+    u64  timestamp;
+    u64  hash;
+  };
+
+  File         tag_file;
+  File_Mapping tag_file_mapping;
+};
+
+Project load_project (
+  Memory_Arena                  &arena,
+  String                        project_name,
+  const File_Path               &working_directory,
+  const File_Path               &workspace_directory,
+  const Slice<Startup_Argument> &args) {
+
   using enum Open_File_Flags;
 
-  auto project_output_folder_path = make_file_path(arena, cache_directory_path, "project");
-  check_status(project_output_folder_path);
+  auto previous_env = setup_system_sdk(arena, Target_Arch_x64);
 
-  const char *platform_shared_lib_ext = nullptr;
-  switch (platform.type) {
-    case Platform_Type::Win32: { platform_shared_lib_ext = "dll";   break; }
-    case Platform_Type::Unix:  { platform_shared_lib_ext = "so";    break; }
-    case Platform_Type::Apple: { platform_shared_lib_ext = "dylib"; break; }
+  auto cache_directory_path = make_file_path(arena, working_directory, ".cbuild");
+
+    /*
+      Previous setup_system_sdk call configures env to build the the project's configuration for the host machine,
+      while this call should setup CBuild to build the project for the specific target, where, at least in the case of
+      Windows, different dll libs should be used.
+
+      CBuild itself targets x64 machine only, while it allows the user to build for x86. Since the default toolchain must
+      be x64, current env must already be configured for that and there's no need to do this again.
+    */
+    // if (project.target_architecture == Target_Arch_x86) {
+    //   reset_environment(previous_env);
+    //   setup_system_sdk(arena, project.target_architecture);
+    // }
+
+  auto build_file_path = discover_build_file(arena, workspace_directory)
+    .get(format_string(arena, "No project configuration at: %\n", workspace_directory).value);
+
+  if (!global_flags.silenced) print("Configuration file: %\n", build_file_path);
+
+  /*
+    There are two parts to loading the project:
+      - Check if there's corresponding shared object
+        - If not, proceed with building the configuraiton
+      - Check the build file's timestamp
+        - If it's out of sync -> rebuild the configuration
+
+     If the project was rebuilt, update configuration's timestamp in the tags file.
+   */
+
+  auto build_file = open_file(build_file_path)
+    .take("Failed to open project's configuration file.");
+
+  defer { close_file(build_file); };
+
+  auto build_file_timestamp = get_last_update_timestamp(build_file)
+    .get("Failed to retrieve configuration's file timestamp.");
+
+  //auto must_rebuild_configuration = /* load the tag file content and read stuff from it */;
+
+  auto project_output_directory = make_file_path(arena, cache_directory_path, "project");
+  auto project_tag_file         = make_file_path(arena, project_output_directory, "tag");
+
+  const auto workspace = Workspace {
+    project_output_directory,
+    project_tag_file,
+  };
+
+  auto shared_library_file_name  = format_string(arena, "%.%", project_name, platform_shared_library_extension_name);
+  auto project_library_file_path = make_file_path(arena, workspace.project_output_directory_path, shared_library_file_name);
+  if (!check_file_exists(project_library_file_path)) {
+    auto toolchain = discover_toolchain(arena)
+      .get("Failed to find any suitable toolchain on the host machine to "
+           "build & load the project's configuration file.\n");
+
+    build_project_configuration(arena, workspace, project_name, build_file_path, project_library_file_path, toolchain);
   }
 
-  auto project_library_file_path = make_file_path(arena, *project_output_folder_path, format_string(arena, "project.%", platform_shared_lib_ext));
+  Project project { arena, project_name, workspace_directory, project_output_directory };
+  // load_project_from_library(user_arguments, &project, project_library_file_path);
 
-  auto tag_file_path = make_file_path(arena, *project_output_folder_path, "tag");
+  create_directory_recursive(project.output_location_path).expect();
 
-  auto build_file_path = discover_build_file(&project->arena);
-  check_status(build_file_path);
+  return project;
+  //check_status(project_library_file_path);
 
-  create_directory(&cache_directory_path);
+  // if (!create_directory(&cache_directory_path)) {
+  //   print(arena, "Failed to create a cache directory at: %. This is a fatal error, terminating the program.\n", cache_directory_path);
+  //   exit(EXIT_FAILURE);
+  // }
 
-  if (!global_flags.silenced) print(&project->arena, "Build file: %\n", build_file_path);
+  // if (!create_directory(&project_output_folder_path)) return System_Error;
+  // else {
+  //   auto tag_file = open_file(&tag_file_path);
+  //   if (tag_file.status) {
+  //     defer { close_file(&tag_file); };
 
-  if (!create_directory(&cache_directory_path)) {
-    print(&project->arena, "Failed to create a cache directory at: %. This is a fatal error, terminating the program.\n", cache_directory_path);
-    exit(EXIT_FAILURE);
-  }
+  //     auto file_size = get_file_size(&tag_file);
+  //     if (file_size) {
+  //       u64 checked_timestamp = 0ull;
+  //       read_bytes_from_file_to_buffer(&tag_file, (char*) &checked_timestamp, sizeof(decltype(checked_timestamp)));
 
-  auto build_file = open_file(&build_file_path);
-  defer { close_file(&build_file); };
+  //       if (build_file_timestamp == checked_timestamp)
+  //         return load_project_from_library(args, project, &project_library_file_path);
+  //     }
+  //   }
+  // }
 
-  auto build_file_timestamp  = get_last_update_timestamp(&build_file);
-
-  if (!create_directory(&project_output_folder_path)) return System_Error;
-  else {
-    auto tag_file = open_file(&tag_file_path);
-    if (tag_file.status) {
-      defer { close_file(&tag_file); };
-
-      auto file_size = get_file_size(&tag_file);
-      if (file_size) {
-        u64 checked_timestamp = 0ull;
-        read_bytes_from_file_to_buffer(&tag_file, (char*) &checked_timestamp, sizeof(decltype(checked_timestamp)));
-
-        if (build_file_timestamp == checked_timestamp)
-          return load_project_from_library(args, project, &project_library_file_path);
-      }
-    }
-  }
-
-  check_status(build_project_configuration(arena, project, project_output_folder_path, project_library_file_path, build_file_path));
+  // check_status(build_project_configuration(arena, project, project_output_folder_path, project_library_file_path, build_file_path));
   
-  auto tag_file = open_file(&tag_file_path, Request_Write_Access | Create_File_If_Not_Exists);
-  check_status(tag_file);
-  defer { close_file(&tag_file); };
+  // auto tag_file = open_file(&tag_file_path, Request_Write_Access | Create_File_If_Not_Exists);
+  // check_status(tag_file);
+  // defer { close_file(&tag_file); };
 
-  check_status(write_buffer_to_file(&tag_file, reinterpret_cast<const char *>(&build_file_timestamp), sizeof(decltype(build_file_timestamp))));
+  // check_status(write_buffer_to_file(&tag_file, reinterpret_cast<const char *>(&build_file_timestamp), sizeof(decltype(build_file_timestamp))));
 
-  project->rebuild_required = true;
+  // project->rebuild_required = true;
   
-  return load_project_from_library(args, project, &project_library_file_path);
+  // return load_project_from_library(args, project, &project_library_file_path);
 }
 
+void update_cbuild_api_file (Memory_Arena &arena, const File_Path &working_directory) {
+  struct { String_View file_name; Slice<const u8> data; } input[] {
+    { "cbuild.h",              cbuild_api_content },
+    { "cbuild_experimental.h", cbuild_experimental_api_content }
+  };
 
+  for (auto &[file_name, data]: input) {
+    using enum Open_File_Flags;
+
+    auto file_path = make_file_path(arena, working_directory, "project", file_name);
+
+    auto file = open_file(file_path, Write_Access | Create_Missing)
+      .take(format_string(arena, "Couldn't open file %", file_path));
+
+    write_buffer_to_file(file, data)
+      .expect("Failed to write data to the generated header file");
+
+    close_file(file).expect("Failed to close the generate header file's handle");
+  }
+
+}

@@ -1,12 +1,13 @@
 
 #pragma once
 
-#include "base.hpp"
+#include "anyfin/base.hpp"
+
+#include "anyfin/core/arena.hpp"
+
+#include "cbuild.hpp"
 
 struct Project;
-struct Memory_Arena;
-struct Status_Code;
-struct Arguments;
-struct Build_Config;
+struct Build_Command;
 
-Status_Code build_project (Memory_Arena *arena, const Project *project, Build_Config config);
+u32 build_project (Memory_Arena &arena, const Project &project, Build_Command config);

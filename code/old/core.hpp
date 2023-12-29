@@ -3,21 +3,39 @@
 
 #include <concepts>
 #include <type_traits>
+#include <source_location>
 
 #include "base.hpp"
+
+#define loctag() (__FILE__ "(" stringify(__LINE__) "): " stringify(__FUNCTION__))
+
+[[noreturn]] void raise_error_and_halt (const char *location_tag, const char *message);
+
+[[noreturn]] void trap (const char *message, const std::source_location loc = std::source_location::current());
 
 #ifdef DEV_BUILD
 #define assert(EXPR)                                                    \
   do {                                                                  \
-    void raise_error_and_halt (const char *filename, u32 line, const char *function, const char *message); \
-    if (!static_cast<bool>(EXPR))                                       \
-      raise_error_and_halt(__FILE__, __LINE__, __FUNCTION__, "Assertion failed: " stringify(EXPR)); \
-  } while (0)
+    if (!static_cast<bool>(EXPR)) raise_error_and_halt(loctag(), stringify(EXPR)); \
+  } while (false)
+
+#define fassert(EXPR, FMT, ...)                                         \
+  do {                                                                  \
+    enum { buffer_size = 1024 };                                        \
+    char buffer [buffer_size] {};                                       \
+    Memory_Arena local { buffer, buffer_size };                         \
+    auto message = format_string(&local, "Expr: %\n" FMT, stringify(EXPR), __VA_ARGS__); \
+    if (!static_cast<bool>(EXPR)) raise_error_and_halt(loctag(), message); \
+  } while (false)
+
 #else
 #define assert(EXPR)
+#define fassert(EXPR, FMT, ...)
 #endif
 
 #define todo() assert(false && "Unimplemented");
+
+//#define trap(ARENA, FMT, ...) raise_error_and_halt(loctag(), format_string(ARENA, FMT, __VA_ARGS__))
 
 template <typename N> constexpr N max (N a, N b) { return (a > b ? a : b); }
 template <typename N> constexpr N min (N a, N b) { return (a > b ? b : a); }
@@ -55,19 +73,6 @@ constexpr T align_forward (const T value, const usize by) {
 
   if constexpr (!is_pointer_v<T>) return (value + (by - 1)) & ~(by - 1);  
   else return reinterpret_cast<T>((reinterpret_cast<usize>(value) + (by - 1)) & ~(by - 1));
-}
-
-template <typename T>
-constexpr bool is_aligned_by (const T value, const usize by) {
-  return value == align_forward(value, by);
-}
-
-template <typename T>
-constexpr T align_forward_to_pow_2 (const T value) {
-  if (value == 0) return 1;
-
-  const auto lead_zero_count = __builtin_clz(value);
-  return 1 << ((sizeof(T) * 8) - lead_zero_count);
 }
 
 template <bool B, typename T = void> struct check_condition          { };
@@ -129,4 +134,5 @@ struct Memory_Region {
   char  *memory;
   usize  size;
 };
+
 

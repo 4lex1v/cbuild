@@ -19,7 +19,7 @@ static void setup_testbed (Memory_Arena *arena) {
   if (check_directory_exists(&workspace)) delete_directory(workspace);
   create_directory(&workspace);
 
-  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
+  auto testbed_path = *make_file_path(arena, working_directory, "tests", "testbed");
   copy_directory_content(arena, testbed_path, workspace);
 
   set_working_directory(workspace);
@@ -120,7 +120,7 @@ static void build_testbed_tests (Memory_Arena *arena) {
   const char *toolchains [] { "msvc_x86", "msvc_x64", "llvm", "llvm_cl" };
   const char *configs    [] { "debug", "release" };
 
-  auto cbuild_output_folder = make_file_path(arena, ".cbuild");
+  auto cbuild_output_folder = *make_file_path(arena, ".cbuild");
 
   for (auto toolchain: toolchains) {
     for (auto config: configs) {
@@ -217,8 +217,8 @@ void library2 () {
 }
 )lib";
 
-  auto old_library_path = make_file_path(arena, "code", "library2", "library2.cpp");
-  auto new_library_path = make_file_path(arena, "code", "library2", "new_library2.cpp");
+  auto old_library_path = *make_file_path(arena, "code", "library2", "library2.cpp");
+  auto new_library_path = *make_file_path(arena, "code", "library2", "new_library2.cpp");
 
   delete_file(old_library_path);
 
@@ -280,13 +280,13 @@ static void build_errors_tests (Memory_Arena *arena) {
   validate_binary1(arena);
   validate_binary2(arena);
 
-  auto file_path = make_file_path(arena, "code", "dynamic1", "dynamic1.cpp");
+  auto file_path = *make_file_path(arena, "code", "dynamic1", "dynamic1.cpp");
   auto file      = open_file(&file_path);
-  auto mapping   = map_file_into_memory(&file);
+  auto mapping   = *map_file_into_memory(&file);
 
-  auto correct_file_content = reserve_memory(arena, mapping->size + 1);
-  copy_memory(correct_file_content, mapping->memory, mapping->size);
-  correct_file_content[mapping->size] = '\0';
+  auto correct_file_content = reserve_memory(arena, mapping.size + 1);
+  copy_memory(correct_file_content, mapping.memory, mapping.size);
+  correct_file_content[mapping.size] = '\0';
 
   unmap_file(&mapping);
   close_file(&file);
@@ -314,8 +314,8 @@ void library2 () {
 }
 )lib";
 
-  auto old_library_path = make_file_path(arena, "code", "library2", "library2.cpp");
-  auto new_library_path = make_file_path(arena, "code", "library2", "new_library2.cpp");
+  auto old_library_path = *make_file_path(arena, "code", "library2", "library2.cpp");
+  auto new_library_path = *make_file_path(arena, "code", "library2", "new_library2.cpp");
 
   delete_file(old_library_path);
 

@@ -50,8 +50,8 @@ int main (int argc, char **argv) {
   }
 
   working_directory = *get_working_directory_path(&suite_runner.arena);
-  binary_path       = get_absolute_path(&suite_runner.arena, bin_path_arg);
-  workspace         = make_file_path(&suite_runner.arena, "tests", "verification");
+  binary_path       = *get_absolute_path(&suite_runner.arena, bin_path_arg);
+  workspace         = *make_file_path(&suite_runner.arena, "tests", "verification");
 
   print(&suite_runner.arena, "Verifying: %\n", binary_path);
 
@@ -63,6 +63,7 @@ int main (int argc, char **argv) {
   run_suite(build_command);
   run_suite(clean_command);
   run_suite(public_api);
+  run_suite(subprojects);
 
   return suite_runner.report();
 }

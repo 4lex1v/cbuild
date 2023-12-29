@@ -1,19 +1,39 @@
 
 #pragma once
 
-#include "base.hpp"
+#include "cbuild.hpp"
 
-enum struct Platform_Type: u32 {
-  Win32,
-  Unix,
-  Apple
+struct CLI_Flags {
+  bool silenced = false;
 };
 
-struct Platform_Info {
-  Platform_Type type;
+struct Build_Config {
+  enum struct Cache_Behavior {
+    // Full use of the caching system. Default behavior
+    On,
 
-  bool is_win32 () const { return type == Platform_Type::Win32; }
-  bool is_unix  () const { return type == Platform_Type::Unix; }
-  bool is_apple () const { return type == Platform_Type::Apple; }
+    // Caching system will not be used.
+    Off,
+
+    // Existing cached information will be ignored by the builder.
+    // Results of the build will overwrite currently cached information.
+    Flush
+  };
+
+  /*
+    Number of additional build processes to spawn with CBuild as requested by the user.
+    If none is specified, the number of logical cores would be used by default.
+   */
+  s32 builders_count = -1;
+
+  /*
+    Defines the cache (i.e the registry in CBuild's parlance) behavior for the build process.
+   */
+  Cache_Behavior cache = Cache_Behavior::On;
+
+  /*
+    List of targets (names) requested by the user to build.
+    Only these targets (and their upstream dependencies) should be built by CBuild.
+   */
+  Slice<String_View> selected_targets;
 };
-

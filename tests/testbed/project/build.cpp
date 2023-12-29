@@ -2,6 +2,7 @@
 #include <string_view>
 
 #include "cbuild.h"
+#include "cbuild_experimental.h"
 
 #include <cstdio>
 #include <cstring>
@@ -29,6 +30,9 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   setup_toolchain(project, toolchain);
 
+  auto external = register_external_project(project, args, "external", "libs/external");
+  auto ext_lib  = get_external_target(project, external, "library1");
+
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
   if (strstr(toolchain, "msvc"))
@@ -38,13 +42,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_include_search_path(target, "code");
     add_include_search_path(target, ".");
 
-    if (strstr(toolchain, "msvc")) {
-      add_linker_option(target, "/nologo");
-    }
-
-    if (strstr(toolchain, "llvm")) {
-      link_with(target, "libcmt.lib");
-    }
+    if (strstr(toolchain, "msvc")) add_linker_option(target, "/nologo");
+    if (strstr(toolchain, "llvm")) link_with(target, "libcmt.lib");
   };
 
   auto lib1 = add_static_library(project, "library1");
@@ -105,6 +104,13 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     apply_common_settings(bin2);
     add_all_sources_from_directory(bin2, "code/binary2", "cpp", false);
     link_with(bin2, dyn3);
+  }
+
+  auto bin3 = add_executable(project, "binary3");
+  {
+    apply_common_settings(bin3);
+    add_all_sources_from_directory(bin3, "code/binary3", "c", false);
+    link_with(bin3, ext_lib);
   }
 
   return true;

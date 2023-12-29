@@ -27,28 +27,28 @@ static std::string_view platform;
 static int generate_headers (const Arguments *args);
 static int generate_tags    (const Arguments *args);
 
-static void print_hashes (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
-  if (!strstr(get_argument_or_default(args, "config", "debug"), "release")) return;
+// static void print_hashes (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
+//   if (!strstr(get_argument_or_default(args, "config", "debug"), "release")) return;
 
-  // For this I'd need to get a target and get its generated files
-  auto file_path = get_generated_binary_file_path(target);
+//   // For this I'd need to get a target and get its generated files
+//   auto file_path = get_generated_binary_file_path(target);
 
-  char command[2046];
-  { // Print MD5
-    snprintf(command, 2046, "certutil -hashfile %s MD5", file_path);
-    std::system(command);
-  }
+//   char command[2046];
+//   { // Print MD5
+//     snprintf(command, 2046, "certutil -hashfile %s MD5", file_path);
+//     std::system(command);
+//   }
 
-  { // Print SHA256
-    snprintf(command, 2046, "certutil -hashfile %s SHA256", file_path);
-    std::system(command);
-  }
+//   { // Print SHA256
+//     snprintf(command, 2046, "certutil -hashfile %s SHA256", file_path);
+//     std::system(command);
+//   }
 
-  { // generate gpg signature
-    snprintf(command, 2046, "gpg --detach-sign -o cbuild.sig %s", file_path);
-    std::system(command);
-  }
-}
+//   { // generate gpg signature
+//     snprintf(command, 2046, "gpg --detach-sign -o cbuild.sig %s", file_path);
+//     std::system(command);
+//   }
+// }
 
 static bool read_versions (u32 *tool, u32 *api) {
   auto file = fopen("./versions", "rb");
@@ -107,39 +107,73 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   add_global_include_search_path(project, ".");
 
+  auto anyfin = add_static_library(project, "anyfin");
+  {
+    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/assert_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/memory_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/trap_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/console_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/runtime_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/files_win32.cpp");
+    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/timers_win32.cpp");
+
+    add_compiler_options(anyfin, "-fno-exceptions -mno-stack-arg-probe -nostdlib -nostdlib++ -nostdinc++");
+
+    add_include_search_path(anyfin, "libs/anyfin");
+  }
+
+  // auto cbuild = add_executable(project, "cbuild");
+  // {
+  //   add_all_sources_from_directory(cbuild, "code", "cpp", false);
+  //   add_compiler_options(cbuild, "-fno-exceptions");
+
+  //   char exports_option[256] = "/def:";
+  //   snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
+  //   add_linker_option(cbuild, exports_option);
+  //   link_with(cbuild, "kernel32.lib", "libcmt.lib", "advapi32.lib");
+  // }
+
   auto cbuild = add_executable(project, "cbuild");
   {
-    add_all_sources_from_directory(cbuild, "code", "cpp", false);
-    add_compiler_options(cbuild, "-fno-exceptions");
+    add_source_file(cbuild, "code/main.cpp");
+    add_source_file(cbuild, "code/project_loader.cpp");
+    add_source_file(cbuild, "code/toolchain_win32.cpp");
+    add_source_file(cbuild, "code/cbuild_api.cpp");
+    add_source_file(cbuild, "code/dependency_iterator.cpp");
+    add_source_file(cbuild, "code/registry.cpp");
+    add_source_file(cbuild, "code/target_builder.cpp");
 
-    char exports_option[256] = "/def:";
-    snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
-    add_linker_option(cbuild, exports_option);
-    link_with(cbuild, "kernel32.lib", "libcmt.lib", "advapi32.lib", "shell32.lib");
+    add_compiler_options(cbuild, "-fno-exceptions -mno-stack-arg-probe -nostdlib -nostdlib++ -nostdinc++");
+    add_include_search_path(cbuild, "libs/anyfin");
+
+    // char exports_option[256] = "/def:";
+    // snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
+    // add_linker_option(cbuild, exports_option);
+    link_with(cbuild, anyfin, "kernel32.lib", "advapi32.lib", "winmm.lib");
   }
 
-  auto rdump = add_executable(project, "rdump");
-  {
-    add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
-    add_source_files(rdump, "code/platform_win32.cpp", "code/registry.cpp");
-    add_compiler_options(cbuild, "-fno-exceptions");
-    link_with(rdump, "kernel32.lib", "libcmt.lib", "advapi32.lib", "shell32.lib");
-  }
+  // auto rdump = add_executable(project, "rdump");
+  // {
+  //   add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
+  //   add_source_files(rdump, "code/platform_win32.cpp", "code/registry.cpp");
+  //   add_compiler_options(cbuild, "-fno-exceptions");
+  //   link_with(rdump, "kernel32.lib", "advapi32.lib");
+  // }
 
-  auto tests = add_executable(project, "tests");
-  {
-    add_all_sources_from_directory(tests, "tests", "cpp", false);
-    add_source_files(tests, "code/platform_win32.cpp", "code/cbuild_api.cpp", "code/toolchain_win32.cpp", "code/strings.cpp");
-    link_with(tests, "kernel32.lib", "libcmt.lib", "advapi32.lib", "shell32.lib");
-  }
+  // auto tests = add_executable(project, "tests");
+  // {
+  //   add_all_sources_from_directory(tests, "tests", "cpp", false);
+  //   add_source_files(tests, "code/platform_win32.cpp", "code/cbuild_api.cpp", "code/toolchain_win32.cpp", "code/strings.cpp");
+  //   link_with(tests, "kernel32.lib", "advapi32.lib");
+  // }
 
-  if (config == "release") {
-    char release_folder[128];
-    snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
-    set_output_location(project, release_folder);
-  }
+  // if (config == "release") {
+  //   char release_folder[128];
+  //   snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
+  //   set_output_location(project, release_folder);
+  // }
 
-  add_target_hook(cbuild, Hook_Type_After_Target_Linked, print_hashes);
+  //add_target_hook(cbuild, Hook_Type_After_Target_Linked, print_hashes);
   
   return true;
 }

@@ -1,0 +1,15 @@
+
+// template <String_Convertible T>
+// constexpr String to_string (Memory_Arena *arena, Result<T> &result) {
+//   if (result.status == Status_Code::Success) {
+//     if constexpr (std::convertible_to<T, String>)
+//       return static_cast<String>(result.value);
+//     else {
+//       static_assert(Has_To_String_Defined<T>);
+//       return to_string(arena, result.value);
+//     }
+//   }
+//   else {
+//     return to_string(arena, result.status);
+//   }
+// }

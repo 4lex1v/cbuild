@@ -13,7 +13,7 @@
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 
-extern Config_Crash_Handler crash_handler_hook;
+Config_Crash_Handler crash_handler_hook;
 
 static void test_configuration_failure (u32 exit_code) {
   require(false);
@@ -39,7 +39,7 @@ static void setup_workspace (Memory_Arena *arena) {
   if (check_directory_exists(&workspace)) delete_directory(workspace);
   create_directory(&workspace);
 
-  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
+  auto testbed_path = *make_file_path(arena, working_directory, "tests", "testbed");
   copy_directory_content(arena, testbed_path, workspace);
 
   set_working_directory(workspace);
@@ -51,10 +51,7 @@ static void cleanup_workspace (Memory_Arena *arena) {
 }
 
 static Project create_project (Memory_Arena *arena) {
-  return {
-    .arena     = Memory_Arena { reserve_memory_unsafe(arena, kilobytes(256)), kilobytes(256) },
-    .toolchain = {}
-  };
+  return { arena, "test_project", working_directory, {} };
 }
 
 #define require_crash(EXPR)                       \
@@ -134,12 +131,12 @@ static void register_action_test (Memory_Arena *arena) {
 static void output_location_test (Memory_Arena *arena) {
   auto project = create_project(arena);
 
-  require(project.output_location.length == 0);
+  require(project.output_location_path.is_empty());
 
   String path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(compare_strings(project.output_location, path));
+  require(compare_strings(project.output_location_path, path));
 }
 
 static void add_static_library_test (Memory_Arena *arena) {
