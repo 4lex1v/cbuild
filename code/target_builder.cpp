@@ -144,18 +144,20 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
 
   bool chain_has_updates = false;
   while (true) {
-    auto [tag, parse_error, include_value] = get_next_include_value(iterator);
+    auto [tag, parse_error, next_value] = get_next_include_value(iterator);
 
     /*
       TODO: Perhaps this shouldn't trap the entire process and it would be better to keep building other targets to make
       overall progress?
     */
     if (!tag) panic("Parse error occurred while resolving included files");
-    if (include_value.is_none()) break;
+    if (next_value.is_none()) break;
+
+    auto include_value = next_value.take();
 
     File_Path resolved_path;
-    for (auto prefix: include_directories) {
-      auto full_path = make_file_path(arena, prefix, include_value.get());
+    for (auto &prefix: include_directories) {
+      auto full_path = make_file_path(arena, prefix, include_value);
       if (auto [tag, _, result] = check_file_exists(full_path); !tag || result) continue;
 
       resolved_path = move(full_path);

@@ -1,14 +1,16 @@
 
 #include "anyfin/core/meta.hpp"
 
+#include "anyfin/platform/files.hpp"
+
 #include "cbuild_api.hpp"
 #include "registry.hpp"
 
 Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path) {
-  using enum Open_File_Flags;
+  using enum File_System_Flags;
 
   auto registry_file =
-    open_file(registry_file_path, Write_Access | Create_Missing)
+    open_file(arena, registry_file_path, Write_Access | Create_Missing)
       .take("Couldn't open the file");
 
   auto file_size =
@@ -111,7 +113,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
 
   auto reservation_size = buffer_cursor - update_set_buffer;
   {
-    auto reservation = arena.reserve(reservation_size, 32);
+    auto reservation = reserve_memory(arena, reservation_size, 32);
     if (reservation == nullptr) panic("Not enough memory to allocate buffer for registry update set");
 
     assert((void*)reservation == (void*)update_set_buffer);

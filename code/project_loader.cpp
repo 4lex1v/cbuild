@@ -30,27 +30,27 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
   Scope_Allocator allocator { arena };
 
   auto project_directory_path = make_file_path(allocator, working_directory, "project");
-  create_directory(project_directory_path).expect();
+  create_resource(project_directory_path, Resource_Type::Directory).expect();
 
   auto build_file_name = (config_file_type == Configuration_Type::C) ? String_View("build.c") : String_View("build.cpp");
   auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
 
-  if (check_file_exists(build_file_path)) {
+  if (check_resource_exists(build_file_path, Resource_Type::File)) {
     print("It looks like this workspace already has a project configuration file at %", build_file_path);
     return;
   }
 
   auto code_directory_path = make_file_path(arena, working_directory, "code");
-  create_directory(code_directory_path).expect();
+  create_resource(code_directory_path, Resource_Type::Directory).expect();
 
   auto cbuild_h_path     = make_file_path(arena, project_directory_path, "cbuild.h");
   auto cbuild_exp_h_path = make_file_path(arena, project_directory_path, "cbuild_experimental.h");
   auto main_path         = make_file_path(arena, code_directory_path,    "main.cpp");
 
   const auto generate_file = [&arena] <usize N> (const File_Path &path, const u8 (&data)[N]) {
-    using enum Open_File_Flags;
+    using enum File_System_Flags;
 
-    auto file = open_file(path, Write_Access | Create_Missing)
+    auto file = open_file(arena, path, Write_Access | Create_Missing)
       .take(format_string(arena, "Failed to open file '%' for writing.", path));
 
     write_buffer_to_file(file, Slice(data, N))
@@ -67,13 +67,10 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
   print("Project initialized\n");
 }
 
-void cleanup_workspace (bool full_cleanup) {
-  auto allocator = get_global_allocator();
-
-  delete_directory(make_file_path(allocator, ".cbuild", "build")).expect();
-
+void cleanup_workspace (Memory_Arena &arena, bool full_cleanup) {
+  delete_resource(make_file_path(arena, ".cbuild", "build"), Resource_Type::Directory).expect();
   if (full_cleanup) {
-    delete_directory(make_file_path(allocator, ".cbuild", "project")).expect();
+    delete_resource(make_file_path(arena, ".cbuild", "project"), Resource_Type::Directory).expect();
   }
 }
 
@@ -134,7 +131,7 @@ static void build_project_configuration (
   const File_Path   &project_library_file_path,
   const Toolchain_Configuration &toolchain) {
 
-  using enum Open_File_Flags;
+  using enum File_System_Flags;
 
   auto project_obj_file_name = format_string(arena, "%.%", project_name, platform_object_extension_name);
   auto project_obj_file_path = make_file_path(arena, workspace.project_output_directory_path, project_obj_file_name);
@@ -158,9 +155,9 @@ static void build_project_configuration (
       builder += format_string(local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file_path, project_obj_file_path);
     }
 
-    auto compilation_command = build_string_with_separator(builder, ' ');
+    auto compilation_command = build_string_with_separator(local, builder, ' ');
 
-    auto result = run_system_command(local, compilation_command);
+    auto result = run_system_command(compilation_command, local);
     if (!result) panic("Failed to execute system command.\n");
 
     auto [status, output] = result.get();
@@ -183,7 +180,7 @@ static void build_project_configuration (
       auto cbuild_import_path = make_file_path(local, workspace.project_output_directory_path,
                                                 format_string(local, "cbuild.%", platform_static_library_extension_name));
 
-      auto export_file = open_file(cbuild_import_path, Write_Access | Create_Missing)
+      auto export_file = open_file(arena, cbuild_import_path, Write_Access | Create_Missing)
         .take("Couldn't create export file to write data to.\n");
 
       write_buffer_to_file(export_file, cbuild_lib_content)
@@ -197,9 +194,9 @@ static void build_project_configuration (
     }
 #endif
 
-    auto linking_command = build_string_with_separator(builder, ' ');
+    auto linking_command = build_string_with_separator(arena, builder, ' ');
 
-    auto result = run_system_command(local, linking_command);
+    auto result = run_system_command(linking_command, local);
     if (!result) panic("Failed to execute system command.\n");
 
     auto [status, output] = result.get();
@@ -231,7 +228,7 @@ static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Pa
 
   for (auto build_file_name: files) {
     auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
-    if (check_file_exists(build_file_path)) return Option(move(build_file_path));
+    if (check_resource_exists(build_file_path, Resource_Type::File)) return Option(move(build_file_path));
   }
 
   return {};
@@ -264,7 +261,7 @@ Project load_project (
   const File_Path               &workspace_directory,
   const Slice<Startup_Argument> &args) {
 
-  using enum Open_File_Flags;
+  using enum File_System_Flags;
 
   auto previous_env = setup_system_sdk(arena, Target_Arch_x64);
 

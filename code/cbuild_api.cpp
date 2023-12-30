@@ -84,7 +84,7 @@ void register_action (Project *project, const char *name, Action_Type action) {
   require_non_empty(name);
 
   list_push(project->user_defined_commands, {
-    .name = String(name, project->arena),
+    .name = String::copy(name, project->arena),
     .proc = action
   });
 }
@@ -102,7 +102,7 @@ void add_global_compiler_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.compiler, String(option, project->arena));
+  list_push(project->project_options.compiler, String::copy(option, project->arena));
 }
 
 void add_global_archiver_option (Project *project, const char *option) {
@@ -110,7 +110,7 @@ void add_global_archiver_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.archiver, String(option, project->arena));
+  list_push(project->project_options.archiver, String::copy(option, project->arena));
 }
 
 void add_global_linker_option (Project *project, const char *option) {
@@ -118,7 +118,7 @@ void add_global_linker_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.linker, String(option, project->arena));
+  list_push(project->project_options.linker, String::copy(option, project->arena));
 }
 
 void add_global_include_search_path (Project *project, const char *path) {
@@ -126,8 +126,12 @@ void add_global_include_search_path (Project *project, const char *path) {
   require_non_null(path);
   require_non_empty(path);
 
-  auto absolute_path = get_absolute_path(String_View(path));
-  if (!absolute_path) panic("Couldn't resolve the provided path '%', error details: %", String_View(path), absolute_path.status);
+  const auto path_view = String_View(path);
+
+  const auto file_path = make_file_path(project->arena, path_view);
+
+  auto absolute_path = get_absolute_path(project->arena, file_path);
+  if (!absolute_path) panic("Couldn't resolve the provided path '%', error details: %", file_path, absolute_path.status);
 
   list_push(project->project_options.include_paths, absolute_path.take());
 }
@@ -137,7 +141,7 @@ static Target * create_target (Project *project, Target::Type type, const char *
   require_non_null(_name);
   require_non_empty(_name);
 
-  auto name = String(_name, project->arena);
+  auto name = String::copy(_name, project->arena);
   if (name.length > Target::Max_Name_Limit) 
     panic("Target's name length is limited to % symbols. If your case requires a "
           "longer target name, please submit an issue on the project's Github page\n",
@@ -179,17 +183,18 @@ Target * add_executable (Project *project, const char *name) {
   return create_target(project, Target::Type::Executable, name);
 }
 
-void add_source_file (Target *target, const char *_file_path) {
+void add_source_file (Target *target, const char *path) {
   require_non_null(target);
-  require_non_null(_file_path);
-  require_non_empty(_file_path);
+  require_non_null(path);
+  require_non_empty(path);
 
-  auto file_path = String_View(_file_path);
+  const auto path_view = String_View(path);
+  const auto file_path = make_file_path(target->project->arena, path_view);
 
-  auto abs_file_path = get_absolute_path(file_path)
-    .get(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
+  auto abs_file_path = get_absolute_path(target->project->arena, file_path)
+    .take(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
 
-  if (!check_file_exists(abs_file_path)) {
+  if (!check_resource_exists(abs_file_path, Resource_Type::File)) {
     panic("File '%' wasn't found, please check the correctness of the specified path and that the file exists\n", *abs_file_path);
   }
 
@@ -198,17 +203,18 @@ void add_source_file (Target *target, const char *_file_path) {
   target->project->total_files_count += 1;
 }
 
-void exclude_source_file (Target *target, const char *_file_path) {
+void exclude_source_file (Target *target, const char *path) {
   require_non_null(target);
-  require_non_null(_file_path);
-  require_non_empty(_file_path);
+  require_non_null(path);
+  require_non_empty(path);
 
   if (is_empty(target->files)) return;
 
-  auto file_path = String_View(_file_path);
+  const auto path_view = String_View(path);
+  const auto file_path = make_file_path(target->project->arena, path_view);
 
-  auto abs_file_path = get_absolute_path(file_path)
-    .get(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
+  auto abs_file_path = get_absolute_path(target->project->arena, file_path)
+    .take(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
 
   auto removed = target->files.remove([&] (const File_Path &file) {
     return compare_strings(file, abs_file_path);
@@ -219,15 +225,16 @@ void exclude_source_file (Target *target, const char *_file_path) {
   target->project->total_files_count -= 1;
 }
 
-void add_include_search_path (Target *target, const char *_path) {
+void add_include_search_path (Target *target, const char *path) {
   require_non_null(target);
-  require_non_null(_path);
-  require_non_empty(_path);
+  require_non_null(path);
+  require_non_empty(path);
 
-  auto path = String_View(_path);
+  const auto path_view = String_View(path);
+  const auto file_path = make_file_path(target->project->arena, path_view);
 
-  auto include_path = get_absolute_path(path);
-  if (!include_path) panic("Couldn't resolve the path '%', error details: %", path, include_path.status);
+  auto include_path = get_absolute_path(target->project->arena, file_path);
+  if (!include_path) panic("Couldn't resolve the path '%', error details: %", path_view, include_path.status);
   
   list_push(target->include_paths, include_path.take());
 }
@@ -241,34 +248,35 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
   
   auto &arena = target->project->arena;
 
-  auto directory = String_View(_directory);
-  auto extension = String_View(_extension);
+  const auto directory = make_file_path(arena, String_View(_directory));
+  const auto extension = make_file_path(arena, String_View(_extension));
 
-  auto folder_path = get_absolute_path(directory)
-    .get(format_string(arena, "Couldn't get absolute path for '%'\n", directory));
-  if (!check_directory_exists(folder_path)) 
+  auto folder_path = get_absolute_path(arena, directory)
+    .take(format_string(arena, "Couldn't get absolute path for '%'\n", directory));
+
+  if (!check_resource_exists(folder_path, Resource_Type::Directory)) 
     panic("Directory '%' specified for 'add_all_sources_from_directory' wasn't found, "
           "please ensure that the path is correct and the directory exists\n",
           folder_path);
   
   auto existing_target_count = target->files.count;
-  auto files = list_files_in_directory(folder_path, extension, recurse)
+  auto files = list_files(arena, folder_path, extension, recurse)
     .get(format_string(arena, "Couldn't get a list of files from directory '%'", directory));
 
-  for (auto file: files) list_push(target->files, move(file));
+  for (auto &file: files) list_push(target->files, move(file));
 
   target->project->total_files_count += (target->files.count - existing_target_count);
 }
 
 static void add_options (Memory_Arena &arena, List<String> &list, const String_View &values) {
   for (auto value: iterator::split(values, ' ')) {
-    list_push(list, String(value, arena));
+    list_push(list, String::copy(value, arena));
   }
 }
 
 static void remove_option (List<String> &options, const String_View &values) {
   for (auto value: iterator::split(values, ' ')) {
-    options.remove([&value] (auto it) { return compare_strings(it, value); });
+    options.remove([&value] (auto &it) { return compare_strings(it, value); });
   }
 }
 
@@ -343,7 +351,7 @@ void link_with_library (Target *target, const char *library_name) {
   require_non_empty(library_name);
   
   auto &arena = target->project->arena;
-  list_push(target->link_libraries, String(library_name, arena));
+  list_push(target->link_libraries, String::copy(library_name, arena));
 }
 
 void add_target_hook (Target *target, Hook_Type type, Hook_Func func) {
@@ -390,7 +398,8 @@ Project_Ref * register_external_project (Project *project, const Arguments *args
   auto &arena = project->global_arena;
 
   auto sub_project_path = make_file_path(arena, project->project_root, String_View(external_project_path));
-  if (!check_directory_exists(sub_project_path)) panic("ERROR: No valid CBuild project found under %\n", sub_project_path);
+  if (!check_resource_exists(sub_project_path, Resource_Type::Directory))
+    panic("ERROR: No valid CBuild project found under %\n", sub_project_path);
 
   //String external_name = name;
   // if (!external_name) {
