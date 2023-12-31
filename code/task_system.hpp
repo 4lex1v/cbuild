@@ -28,7 +28,7 @@ struct Build_Queue {
 
   static_assert(sizeof(Node) == CACHE_LINE_SIZE);
 
-  Allocator allocator;
+  Allocator_View allocator;
 
   Slice<Node> tasks_queue;
 
@@ -38,7 +38,7 @@ struct Build_Queue {
   cau32 tasks_submitted = 0;
   cau32 tasks_completed = 0;
 
-  Build_Queue (Allocator &_allocator, const usize queue_size)
+  Build_Queue (Allocator auto &_allocator, const usize queue_size)
     : allocator       { _allocator },
       tasks_queue     { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
     {}
@@ -126,7 +126,7 @@ struct Task_System {
 
   abool terminating = false;
 
-  Task_System (Allocator allocator, const usize queue_size, const usize builders_count, Handler &&func)
+  Task_System (Allocator auto &allocator, const usize queue_size, const usize builders_count, Handler &&func)
     : queue     { allocator, queue_size },
       builders  { reserve_array<Thread>(allocator, builders_count) },
       semaphore { create_semaphore().take("Failed to create a semaphore resource for the build queue system") },

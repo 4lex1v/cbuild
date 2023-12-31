@@ -137,7 +137,8 @@ static void build_project_configuration (
   auto project_obj_file_path = make_file_path(arena, workspace.project_output_directory_path, project_obj_file_name);
 
   {
-    Scope_Allocator local   { arena };
+    auto local = arena;
+    
     String_Builder  builder { local };
 
     bool is_cpp = ends_with(build_file_path, "cpp");
@@ -157,13 +158,13 @@ static void build_project_configuration (
 
     auto compilation_command = build_string_with_separator(local, builder, ' ');
 
-    auto result = run_system_command(compilation_command, local);
-    if (!result) panic("Failed to execute system command.\n");
+    auto [has_failed, error, status] = run_system_command(local, compilation_command);
+    if (has_failed) panic("Failed to execute system command, details: %.\n", error);
 
-    auto [status, output] = result.get();
+    const auto &[output, return_code] = status;
 
-    if (output)  console_print_message(format_string(local, "%\n", output));
-    if (!status) console_print_message(format_string(local, "%\n", status));
+    if (!return_code) panic("Command execution failed with, code: %, command: %\n", return_code, compilation_command);
+    if (output) console_print_message(format_string(local, "%\n", output));
   }
 
   {
@@ -196,13 +197,13 @@ static void build_project_configuration (
 
     auto linking_command = build_string_with_separator(arena, builder, ' ');
 
-    auto result = run_system_command(linking_command, local);
-    if (!result) panic("Failed to execute system command.\n");
+    auto [has_failed, error, status] = run_system_command(local, linking_command);
+    if (has_failed) panic("Failed to execute system command, details: %, command: %.\n", error, linking_command);
 
-    auto [status, output] = result.get();
+    const auto &[output, return_code] = status;
 
-    if (output)  console_print_message(format_string(local, "%\n", output));
-    if (!status) console_print_message(format_string(local, "%\n", status));
+    if (!return_code) panic("Command execution failed with, code: %, command: %\n", return_code, linking_command);
+    if (output) console_print_message(format_string(local, "%\n", output));
   }
 }
 
@@ -281,7 +282,7 @@ Project load_project (
     // }
 
   auto build_file_path = discover_build_file(arena, workspace_directory)
-    .get(format_string(arena, "No project configuration at: %\n", workspace_directory).value);
+    .take(format_string(arena, "No project configuration at: %\n", workspace_directory));
 
   if (!global_flags.silenced) print("Configuration file: %\n", build_file_path);
 
@@ -295,7 +296,7 @@ Project load_project (
      If the project was rebuilt, update configuration's timestamp in the tags file.
    */
 
-  auto build_file = open_file(build_file_path)
+  auto build_file = open_file(arena, build_file_path)
     .take("Failed to open project's configuration file.");
 
   defer { close_file(build_file); };
@@ -305,17 +306,17 @@ Project load_project (
 
   //auto must_rebuild_configuration = /* load the tag file content and read stuff from it */;
 
-  auto project_output_directory = make_file_path(arena, cache_directory_path, "project");
-  auto project_tag_file         = make_file_path(arena, project_output_directory, "tag");
+  Workspace workspace;
+  {
+    auto project_output_directory = make_file_path(arena, cache_directory_path, "project");
+    auto project_tag_file         = make_file_path(arena, project_output_directory, "tag");
 
-  const auto workspace = Workspace {
-    project_output_directory,
-    project_tag_file,
-  };
+    workspace = Workspace { move(project_output_directory), move(project_tag_file) };
+  }
 
   auto shared_library_file_name  = format_string(arena, "%.%", project_name, platform_shared_library_extension_name);
   auto project_library_file_path = make_file_path(arena, workspace.project_output_directory_path, shared_library_file_name);
-  if (!check_file_exists(project_library_file_path)) {
+  if (!check_resource_exists(project_library_file_path, Resource_Type::File)) {
     auto toolchain = discover_toolchain(arena)
       .get("Failed to find any suitable toolchain on the host machine to "
            "build & load the project's configuration file.\n");
@@ -323,10 +324,16 @@ Project load_project (
     build_project_configuration(arena, workspace, project_name, build_file_path, project_library_file_path, toolchain);
   }
 
-  Project project { arena, project_name, workspace_directory, project_output_directory };
+  Project project {
+    arena,
+    project_name,
+    String::copy(arena, workspace_directory),
+    String::copy(arena, workspace.project_output_directory_path)
+  };
+
   // load_project_from_library(user_arguments, &project, project_library_file_path);
 
-  create_directory_recursive(project.output_location_path).expect();
+  create_resource(project.output_location_path, Resource_Type::Directory).expect();
 
   return project;
   //check_status(project_library_file_path);
@@ -373,11 +380,11 @@ void update_cbuild_api_file (Memory_Arena &arena, const File_Path &working_direc
   };
 
   for (auto &[file_name, data]: input) {
-    using enum Open_File_Flags;
+    using enum File_System_Flags;
 
     auto file_path = make_file_path(arena, working_directory, "project", file_name);
 
-    auto file = open_file(file_path, Write_Access | Create_Missing)
+    auto file = open_file(arena, file_path, Write_Access | Create_Missing)
       .take(format_string(arena, "Couldn't open file %", file_path));
 
     write_buffer_to_file(file, data)

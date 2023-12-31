@@ -112,7 +112,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/assert_win32.cpp");
     add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/memory_win32.cpp");
     add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/trap_win32.cpp");
-    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/console_win32.cpp");
+    //add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/console_win32.cpp");
     add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/runtime_win32.cpp");
     //add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/files_win32.cpp");
     add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/timers_win32.cpp");

@@ -23,7 +23,7 @@ static File_Path get_program_files_path (Memory_Arena &arena) {
   auto env_value_reservation_size = GetEnvironmentVariable("ProgramFiles(x86)", nullptr, 0);
   if (env_value_reservation_size == 0) panic("Couldn't load ProgramFiles(x86) path from Windows' registry.");
 
-  auto env_value_buffer = reserve_array(arena, env_value_reservation_size);
+  auto env_value_buffer = reinterpret_cast<char *>(reserve_memory(arena, env_value_reservation_size));
   if (!GetEnvironmentVariable("ProgramFiles(x86)", env_value_buffer, env_value_reservation_size))
     panic("Couldn't load ProgramFiles(x86) path from Windows' registry.");
 
@@ -62,7 +62,7 @@ static Option<String_View> get_msvc_installation_path (Memory_Arena &arena) {
 
   auto command = format_string(arena,  R"("%\\Microsoft Visual Studio\\Installer\\vswhere.exe" -property installationPath)", program_files_path);
   auto [vswhere_status, vs_path] = run_system_command(arena, command)
-    .get("Visual Studio install not found on the host system.");
+    .take("Visual Studio install not found on the host system.");
     
   auto msvc_folder_query = format_string(arena, "%\\VC\\Tools\\MSVC\\*", vs_path);
 
@@ -121,8 +121,8 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
       status = reinterpret_cast<usize>(FindExecutable("clang++", NULL, _clang_cpp_path));
       if (status <= 32) return {};
       
-      clang_path     = String::copy(_clang_path, arena);
-      clang_cpp_path = String::copy(_clang_cpp_path, arena);
+      clang_path     = String::copy(arena, _clang_path);
+      clang_cpp_path = String::copy(arena, _clang_cpp_path);
     }
     else {
       char _clang_cl_path[MAX_PATH];
@@ -131,7 +131,7 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
       auto status = reinterpret_cast<usize>(FindExecutable("clang-cl", NULL, _clang_cl_path));
       if (status <= 32) return {};
 
-      clang_path     = String::copy(_clang_cl_path, arena);
+      clang_path     = String::copy(arena, _clang_cl_path);
       clang_cpp_path = clang_path;
     }
   }
@@ -143,7 +143,7 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
     auto status = reinterpret_cast<usize>(FindExecutable("lld-link", NULL, _lld_link_path));
     if (status <= 32) return {};
 
-    lld_link_path = String::copy(_lld_link_path, arena);
+    lld_link_path = String::copy(arena, _lld_link_path);
   }
 
   {
@@ -153,7 +153,7 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
     auto status = reinterpret_cast<usize>(FindExecutable("llvm-lib", NULL, _llvm_lib_path));
     if (status <= 32) return {};
 
-    llvm_lib_path = String::copy(_llvm_lib_path, arena);
+    llvm_lib_path = String::copy(arena, _llvm_lib_path);
   }
   
   return Toolchain_Configuration {
@@ -172,35 +172,37 @@ static Option<Toolchain_Configuration> load_gcc_toolchain (Memory_Arena &arena) 
 }
 
 static Option<Toolchain_Configuration> load_msvc_x86_toolchain (Memory_Arena &arena) {
-  return get_msvc_installation_path(arena).map<Toolchain_Configuration>([&] (auto msvc_path) {
-    auto cl_path   = format_string(arena, "%\\bin\\Hostx64\\x86\\cl.exe", msvc_path);
-    auto link_path = format_string(arena, "%\\bin\\Hostx64\\x86\\link.exe", msvc_path);
-    auto lib_path  = format_string(arena, "%\\bin\\Hostx64\\x86\\lib.exe", msvc_path);
+  auto [is_defined, msvc_path] = get_msvc_installation_path(arena);
+  if (!is_defined) return {};
 
-    return Toolchain_Configuration {
-      .type              = Toolchain_Type_MSVC_X86,
-      .c_compiler_path   = cl_path,
-      .cpp_compiler_path = cl_path,
-      .linker_path       = link_path,
-      .archiver_path     = lib_path,
-    };
-  });
+  auto cl_path   = format_string(arena, "%\\bin\\Hostx64\\x86\\cl.exe",   msvc_path);
+  auto link_path = format_string(arena, "%\\bin\\Hostx64\\x86\\link.exe", msvc_path);
+  auto lib_path  = format_string(arena, "%\\bin\\Hostx64\\x86\\lib.exe",  msvc_path);
+
+  return Toolchain_Configuration {
+    .type              = Toolchain_Type_MSVC_X86,
+    .c_compiler_path   = cl_path,
+    .cpp_compiler_path = cl_path,
+    .linker_path       = link_path,
+    .archiver_path     = lib_path,
+  };
 }
 
 static Option<Toolchain_Configuration> load_msvc_x64_toolchain (Memory_Arena &arena) {
-  return get_msvc_installation_path(arena).map<Toolchain_Configuration>([&] (auto msvc_path) {
-    auto cl_path   = format_string(arena, "%\\bin\\Hostx64\\x64\\cl.exe",   msvc_path);
-    auto link_path = format_string(arena, "%\\bin\\Hostx64\\x64\\link.exe", msvc_path);
-    auto lib_path  = format_string(arena, "%\\bin\\Hostx64\\x64\\lib.exe",  msvc_path);
+  auto [is_defined, msvc_path] = get_msvc_installation_path(arena);
+  if (!is_defined) return {};
 
-    return Toolchain_Configuration {
-      .type              = Toolchain_Type_MSVC_X64,
-      .c_compiler_path   = cl_path,
-      .cpp_compiler_path = cl_path,
-      .linker_path       = link_path,
-      .archiver_path     = lib_path,
-    };
-  });
+  auto cl_path   = format_string(arena, "%\\bin\\Hostx64\\x64\\cl.exe",   msvc_path);
+  auto link_path = format_string(arena, "%\\bin\\Hostx64\\x64\\link.exe", msvc_path);
+  auto lib_path  = format_string(arena, "%\\bin\\Hostx64\\x64\\lib.exe",  msvc_path);
+
+  return Toolchain_Configuration {
+    .type              = Toolchain_Type_MSVC_X64,
+    .c_compiler_path   = cl_path,
+    .cpp_compiler_path = cl_path,
+    .linker_path       = link_path,
+    .archiver_path     = lib_path,
+  };
 }
 
 Option<Toolchain_Configuration> lookup_toolchain_by_type (Memory_Arena &arena, Toolchain_Type type) {
@@ -225,7 +227,7 @@ static Option<File_Path> lookup_windows_kits_from_registry (Memory_Arena &arena)
   HKEY hKey;
 
   DWORD buffer_size = MAX_PATH;
-  auto buffer = reserve_array(arena, buffer_size, alignof(char));
+  auto buffer = reinterpret_cast<char *>(reserve_memory(arena, buffer_size, alignof(char)));
 
   auto status = RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", "KitsRoot10",
                              RRF_RT_REG_SZ, NULL, (PVOID)buffer, &buffer_size);
@@ -256,7 +258,8 @@ static Option<Windows_SDK> find_windows_sdk (Memory_Arena &arena) {
   
   auto program_files_path = get_program_files_path(arena);
   auto sdks_folder        = make_file_path(arena, program_files_path, "Windows Kits", "10");
-  if (!check_directory_exists(sdks_folder)) return {};
+
+  if (!check_resource_exists(sdks_folder, Resource_Type::Directory)) return {};
 
   auto folder_query = format_string(arena, "%\\Include\\*", sdks_folder);
 
@@ -292,7 +295,7 @@ static Option<Windows_SDK> find_windows_sdk (Memory_Arena &arena) {
   } while (FindNextFile(search_handle, &data));
 
   return Windows_SDK {
-    .base_path = sdks_folder,
+    .base_path = move(sdks_folder),
     .version   = format_string(arena, "10.%.%.%", max_minor, max_revision, max_build),
   };
 }
@@ -308,7 +311,7 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
     auto value_size = GetEnvironmentVariable(name, nullptr, 0);
     if (!value_size) return {};
     
-    auto buffer = reserve_array(arena, value_size);
+    auto buffer = reinterpret_cast<char *>(reserve_memory(arena, value_size));
     if (!GetEnvironmentVariable(name, buffer, value_size)) return {};
 
     return Option(String(arena, buffer, value_size));
@@ -316,8 +319,8 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
 
   List<Env_Var> previous(arena);
 
-  get_current_value("INCLUDE").handle_value([&] (auto include_env_var) {
-    list_push(previous, Env_Var { String::copy("INCLUDE", arena), include_env_var });
+  get_current_value("INCLUDE").handle_value([&] (auto &include_env_var) {
+    list_push(previous, Env_Var { String::copy(arena, "INCLUDE"), String::copy(arena, String_View(include_env_var)) });
 
     auto base_win_sdk_include_folder_path = format_string(arena, "%\\Include\\%", sdk->base_path, sdk->version);
 
@@ -330,11 +333,11 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
     includes += format_string(arena, "%\\winrt",    base_win_sdk_include_folder_path);
     includes += include_env_var;
 
-    SetEnvironmentVariable("INCLUDE", build_string_with_separator(includes, ';'));
+    SetEnvironmentVariable("INCLUDE", build_string_with_separator(arena, includes, ';'));
   });
 
-  get_current_value("LIB").handle_value([&] (auto lib_env_var) {
-    list_push(previous, Env_Var { String::copy("LIB"), lib_env_var });
+  get_current_value("LIB").handle_value([&] (auto &lib_env_var) {
+    list_push(previous, Env_Var { String::copy(arena, "LIB"), String::copy(arena, String_View(lib_env_var)) });
 
     auto target_platform = String_View((architecture == Target_Arch_x86) ? "x86" : "x64");
     auto base_libpath_folder_path = format_string(arena, "%\\Lib\\%", sdk->base_path, sdk->version);
@@ -345,7 +348,7 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
     libpaths += format_string(arena, "%\\um\\%", base_libpath_folder_path, target_platform);
     libpaths += lib_env_var;
 
-    SetEnvironmentVariable("LIB", build_string_with_separator(libpaths, ';'));
+    SetEnvironmentVariable("LIB", build_string_with_separator(arena, libpaths, ';'));
   });
 
   return previous;

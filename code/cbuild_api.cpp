@@ -84,7 +84,7 @@ void register_action (Project *project, const char *name, Action_Type action) {
   require_non_empty(name);
 
   list_push(project->user_defined_commands, {
-    .name = String::copy(name, project->arena),
+    .name = String::copy(project->arena, name),
     .proc = action
   });
 }
@@ -102,7 +102,7 @@ void add_global_compiler_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.compiler, String::copy(option, project->arena));
+  list_push(project->project_options.compiler, String::copy(project->arena, option));
 }
 
 void add_global_archiver_option (Project *project, const char *option) {
@@ -110,7 +110,7 @@ void add_global_archiver_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.archiver, String::copy(option, project->arena));
+  list_push(project->project_options.archiver, String::copy(project->arena, option));
 }
 
 void add_global_linker_option (Project *project, const char *option) {
@@ -118,7 +118,7 @@ void add_global_linker_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.linker, String::copy(option, project->arena));
+  list_push(project->project_options.linker, String::copy(project->arena, option));
 }
 
 void add_global_include_search_path (Project *project, const char *path) {
@@ -130,10 +130,11 @@ void add_global_include_search_path (Project *project, const char *path) {
 
   const auto file_path = make_file_path(project->arena, path_view);
 
-  auto absolute_path = get_absolute_path(project->arena, file_path);
-  if (!absolute_path) panic("Couldn't resolve the provided path '%', error details: %", file_path, absolute_path.status);
+  auto [has_failed, error, absolute_path] = get_absolute_path(project->arena, file_path);
+  if (has_failed) panic("Couldn't resolve the provided path '%', error code: %, details: %\n",
+                        file_path, error, retrieve_system_error_message(project->arena, error));
 
-  list_push(project->project_options.include_paths, absolute_path.take());
+  list_push(project->project_options.include_paths, move(absolute_path));
 }
 
 static Target * create_target (Project *project, Target::Type type, const char *_name) {
@@ -141,7 +142,7 @@ static Target * create_target (Project *project, Target::Type type, const char *
   require_non_null(_name);
   require_non_empty(_name);
 
-  auto name = String::copy(_name, project->arena);
+  auto name = String::copy(project->arena, _name);
   if (name.length > Target::Max_Name_Limit) 
     panic("Target's name length is limited to % symbols. If your case requires a "
           "longer target name, please submit an issue on the project's Github page\n",
@@ -270,7 +271,7 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
 
 static void add_options (Memory_Arena &arena, List<String> &list, const String_View &values) {
   for (auto value: iterator::split(values, ' ')) {
-    list_push(list, String::copy(value, arena));
+    list_push(list, String::copy(arena, value));
   }
 }
 
@@ -351,7 +352,7 @@ void link_with_library (Target *target, const char *library_name) {
   require_non_empty(library_name);
   
   auto &arena = target->project->arena;
-  list_push(target->link_libraries, String::copy(library_name, arena));
+  list_push(target->link_libraries, String::copy(arena, library_name));
 }
 
 void add_target_hook (Target *target, Hook_Type type, Hook_Func func) {

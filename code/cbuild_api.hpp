@@ -97,7 +97,7 @@ struct Project {
       arena                 { make_sub_arena(global, megabytes(2)) },
       //toolchain           { default_toolchain },
       user_defined_commands { global },
-      external_name         { move(String::copy(name, global)) },
+      external_name         { move(String::copy(global, name)) },
       is_external           { _is_external },
       project_root          { move(root) },
       output_location_path  { move(_output_location) },

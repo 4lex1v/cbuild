@@ -69,7 +69,7 @@ struct Target_Tracker {
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
-    return arena.reserve(size, alignof(Target_Tracker));
+    return reserve_memory(arena, size, alignof(Target_Tracker));
   }
 };
 
@@ -124,7 +124,7 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
 
   List<File_Path> include_directories(arena);
   {
-    auto [tag, error, parent_folder] = get_parent_folder_path(source_file);
+    auto [tag, error, parent_folder] = get_parent_folder_path(arena, source_file.path);
     if (tag) [[likely]] {
       if (parent_folder) list_push(include_directories, parent_folder.take());  
       else {
@@ -139,7 +139,7 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
             source_file.path, error);
     }
     
-    for (auto path: extra_include_paths) list_push_copy(include_directories, path);
+    for (auto &path: extra_include_paths) list_push_copy(include_directories, path);
   };
 
   bool chain_has_updates = false;
@@ -158,7 +158,7 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
     File_Path resolved_path;
     for (auto &prefix: include_directories) {
       auto full_path = make_file_path(arena, prefix, include_value);
-      if (auto [tag, _, result] = check_file_exists(full_path); !tag || result) continue;
+      if (auto [tag, _, result] = check_resource_exists(full_path, Resource_Type::File); !tag || result) continue;
 
       resolved_path = move(full_path);
 
@@ -178,7 +178,7 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
       continue;
     }
 
-    auto dependency_file = open_file(resolved_path).take("Couldn't open included header file for scanning.");
+    auto dependency_file = open_file(arena, resolved_path).take("Couldn't open included header file for scanning.");
     defer { close_file(dependency_file); };
     
     auto chain_scan_result = scan_dependency_chains(arena, dependency_file, extra_include_paths);
@@ -221,7 +221,7 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
 
   List<File_Path> include_directories;
   {
-    auto [tag, error, parent_folder] = get_parent_folder_path(source_file);
+    auto [tag, error, parent_folder] = get_parent_folder_path(local, source_file.path);
     if (tag) [[likely]] {
       if (parent_folder) list_push(include_directories, parent_folder.take());  
       else {
@@ -236,7 +236,7 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
             source_file.path, error);
     }
     
-    for (auto path: extra_include_paths) list_push_copy(include_directories, path);
+    for (auto &path: extra_include_paths) list_push_copy(include_directories, path);
   };
 
   bool chain_has_updates = false;
@@ -253,9 +253,9 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
     auto inner_local = local;
     
     File_Path resolved_path;
-    for (auto prefix: include_directories) {
+    for (auto &prefix: include_directories) {
       auto full_path = make_file_path(inner_local, prefix, include_value.get());
-      if (auto [tag, _, result] = check_file_exists(full_path); !tag || result) continue;
+      if (auto [tag, _, result] = check_resource_exists(full_path, Resource_Type::File); !tag || result) continue;
 
       resolved_path = move(full_path);
 
@@ -276,7 +276,7 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
       continue;
     }
 
-    auto dependency_file = open_file(resolved_path).take("Couldn't open included header file for scanning.");
+    auto dependency_file = open_file(inner_local, resolved_path).take("Couldn't open included header file for scanning.");
     defer { close_file(dependency_file); };
     
     auto chain_scan_result = scan_dependency_chains(inner_local, dependency_file, extra_include_paths);
@@ -304,9 +304,9 @@ static bool is_win32 () {
   return platform_type == Platform::Win32;
 }
 
-static void schedule_downstream_linkage (const Target &target, const Closure<void (Target_Tracker &)> &update_tracker) {
+static void schedule_downstream_linkage (const Target &target, const Invocable<void, Target_Tracker &> auto &update_tracker) {
   for (auto downstream: target.required_by) {
-    auto downstream_tracker = downstream->tracker;
+    auto downstream_tracker = downstream->build_context.tracker;
 
     // In targetted builds, target may not have an associated tracker, thus we skip these
     if (downstream_tracker == nullptr) continue;
@@ -377,16 +377,16 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
     switch (target.type) {
       case Target::Type::Static_Library: {
         builder += String_View(project.toolchain.archiver_path);
-        builder += project.global_options.archiver;
+        builder += project.project_options.archiver;
         builder += target.options.archiver;
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_file_name(path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
         }
 
         for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->tracker->link_status) == Target_Link_Status::Success);
+          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
 
           builder += make_file_path(arena, out_folder_path,
                                     format_string(arena, "%.%", lib->name, platform_static_library_extension_name));
@@ -400,12 +400,12 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       case Target::Type::Shared_Library: {
         builder += String_View(project.toolchain.linker_path);
         builder += is_win32() ? String_View("/dll") : String_View("-shared");
-        builder += project.global_options.linker;
+        builder += project.project_options.linker;
         builder += target.options.linker;
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_file_name(path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
         }
       
         for (auto lib: target.depends_on) {
@@ -424,16 +424,16 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       };
       case Target::Type::Executable: {
         builder += String_View(project.toolchain.linker_path);
-        builder += project.global_options.linker;
+        builder += project.project_options.linker;
         builder += target.options.linker;
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_file_name(path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
         }
 
         for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->tracker->link_status) == Target_Link_Status::Success);
+          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
         
           const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
           if (!is_win32()) {
@@ -454,7 +454,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       };
     };
 
-    auto link_command = build_string_with_separator(builder, ' ');
+    auto link_command = build_string_with_separator(arena, builder, ' ');
 
     auto [tag, error, _return] = run_system_command(arena, link_command);
     link_result = (!tag || _return.status_code != 0) ? Link_Result::Failed : Link_Result::Success;
