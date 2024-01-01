@@ -10,6 +10,7 @@
 #include "anyfin/platform/console.hpp"
 #include "anyfin/platform/files.hpp"
 #include "anyfin/platform/shared_library.hpp"
+#include "anyfin/platform/commands.hpp"
 
 #include "generated.h"
 

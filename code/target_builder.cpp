@@ -13,6 +13,8 @@
 #include "anyfin/platform/concurrent.hpp"
 #include "anyfin/platform/platform.hpp"
 #include "anyfin/platform/threads.hpp"
+#include "anyfin/platform/commands.hpp"
+#include "anyfin/platform/files.hpp"
 
 #include "arrays.hpp"
 #include "cbuild_api.hpp"
@@ -81,6 +83,7 @@ struct Build_Task {
   Target_Tracker *tracker;
 
   File file;
+  // TODO: Check if I still need this flag?
   bool dependencies_updated;
 };
 
@@ -409,7 +412,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
         }
       
         for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->tracker->link_status) == Target_Link_Status::Success);
+          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
         
           builder += make_file_path(arena, out_folder_path,
                                     format_string(arena, "%.%", lib->name, platform_static_library_extension_name));
@@ -487,17 +490,18 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   const auto &project   = *target.project;
   const auto &toolchain = project.toolchain;
 
-  auto target_info      = reinterpret_cast<Registry::Target_Info *>(target.info);
-  auto target_last_info = reinterpret_cast<Registry::Target_Info *>(target.last_info);
+  auto target_info      = reinterpret_cast<Registry::Target_Info *>(target.build_context.info);
+  auto target_last_info = reinterpret_cast<Registry::Target_Info *>(target.build_context.last_info);
 
   auto file_id   = *get_file_id(file);
   auto timestamp = *get_last_update_timestamp(file);
 
   auto target_object_folder = get_target_object_folder_path(arena, target);
-  auto object_file_path     = make_file_path(arena, target_object_folder, format_string(arena, "%.%", *get_file_name(file.path), platform_object_extension_name));
+  auto object_file_path     = make_file_path(arena, target_object_folder,
+                                             format_string(arena, "%.%", *get_resource_name(arena, file.path), platform_object_extension_name));
 
   bool should_rebuild = true;
-  if (!project.rebuild_required && !dependencies_updated && target.last_info) {
+  if (!project.rebuild_required && !dependencies_updated && target.build_context.last_info) {
     auto &records = registry.records;
 
     auto section      = records.files + target_last_info->files_offset;
@@ -510,7 +514,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
       auto record_index     = target_last_info->files_offset + index;
       auto record_timestamp = records.file_records[record_index].timestamp;
 
-      auto [tag, _, exists] = check_file_exists(object_file_path);
+      auto [tag, _, exists] = check_resource_exists(object_file_path, Resource_Type::File);
 
       should_rebuild = (timestamp != record_timestamp) || (!tag || !exists);
     }
@@ -526,10 +530,10 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 
     String_Builder builder { arena };
     builder += String_View(is_cpp_file ? project.toolchain.cpp_compiler_path : project.toolchain.c_compiler_path);
-    builder += project.global_options.compiler;
+    builder += project.project_options.compiler;
     builder += target.options.compiler;
 
-    for (auto &path: project.global_options.include_paths) {
+    for (auto &path: project.project_options.include_paths) {
       builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
     }
 
@@ -540,15 +544,16 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     if (is_msvc(toolchain)) builder += format_string(arena, R"(/c "%" /Fo"%")",  file.path, object_file_path);
     else                    builder += format_string(arena, R"(-c "%" -o "%")",  file.path, object_file_path);
 
-    auto compilation_command = build_string_with_separator(builder, ' ');
+    auto compilation_command = build_string_with_separator(arena, builder, ' ');
 
-    auto [tag, error, _return] = run_system_command(arena, compilation_command);
-    auto [status, output] = _return;
+    auto [has_failed, error, status] = run_system_command(arena, compilation_command);
+    static_assert(false, "Need to add error handling here");
+    auto &[output, return_code] = status;
 
+    if (!return_code) print("%\n", status);
     if (output)  print("%\n", output);
-    if (!status) print("%\n", status);
 
-    file_compilation_status = (status == 0) ? File_Compile_Status::Success : File_Compile_Status::Failed;
+    file_compilation_status = (!return_code) ? File_Compile_Status::Success : File_Compile_Status::Failed;
   }
   else {
     atomic_fetch_add(tracker.skipped_counter, 1);
@@ -590,7 +595,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   if (!needs_linking) {
     // If no files were compiled, check that the binary exists
     auto output_file_path = get_output_file_path_for_target(arena, target);
-    needs_linking = !check_file_exists(output_file_path); 
+    needs_linking = !check_resource_exists(output_file_path, Resource_Type::File); 
   }
 
   tracker.needs_linking = needs_linking;
@@ -673,7 +678,7 @@ static auto create_task_system (Memory_Arena &arena, const Project &project, con
 }
 
 struct Build_Plan {
-  using Targets_List = List<Target_Tracker *, Memory_Arena>;
+  using Targets_List = List<Target_Tracker *>;
 
   Targets_List selected_targets;
   Targets_List ignored_targets;
@@ -784,7 +789,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         auto local = arena;
 
         List<File_Path> include_paths(local);
-        for (auto path: project.global_options.include_paths) list_push_copy(include_paths, path);
+        for (auto path: project.project_options.include_paths) list_push_copy(include_paths, path);
         for (auto path: target->include_paths)                list_push_copy(include_paths, path);
 
         auto scan_result     = scan_file_dependencies(local, file, include_paths);

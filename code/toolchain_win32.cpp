@@ -14,6 +14,7 @@
 #include "anyfin/core/string_builder.hpp"
 
 #include "anyfin/platform/platform.hpp"
+#include "anyfin/platform/commands.hpp"
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"

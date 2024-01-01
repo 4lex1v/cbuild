@@ -28,7 +28,8 @@ enum struct CLI_Command {
   Dynamic
 };
 
-static Option<String_View> find_argument_value (const Slice<Startup_Argument>& args, const String_View& name) {
+static Option<String_View> find_argument_value (const Iterable<Startup_Argument> auto &args, const String_View& name) {
+//static Option<String_View> find_argument_value (const Slice<Startup_Argument>& args, const String_View& name) {
   for (auto arg: args) {
     if (arg.is_value()) continue;
     if (compare_strings(arg.key, name)) return String_View(arg.value);
@@ -37,7 +38,7 @@ static Option<String_View> find_argument_value (const Slice<Startup_Argument>& a
   return {};
 };
 
-static bool find_option_flag (const Slice<Startup_Argument>& args, const String_View& name) {
+static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const String_View& name) {
   for (auto arg: args) {
     if (arg.is_pair()) continue;
     if (compare_strings(arg.key, name)) return true;
