@@ -374,11 +374,11 @@ const char * get_target_name (const Target *target) {
 }
 
 // NOTE: CBuild interal API, not exported to the public
-const String_View & get_target_extension (const Target &target) {
+const String_View get_target_extension (const Target &target) {
   switch (target.type) {
-    case Target::Static_Library: return platform_static_library_extension_name;
-    case Target::Shared_Library: return platform_shared_library_extension_name;
-    case Target::Executable:     return platform_executable_extension_name;
+    case Target::Static_Library: return get_static_library_extension();
+    case Target::Shared_Library: return get_shared_library_extension();
+    case Target::Executable:     return get_executable_extension();
   }
 }
 

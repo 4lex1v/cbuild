@@ -7,7 +7,7 @@
 #include "anyfin/core/strings.hpp"
 #include "anyfin/core/prelude.hpp"
 
-#include "anyfin/platform/files.hpp"
+#include "anyfin/platform/file_system.hpp"
 
 #include "cbuild_api_template.hpp"
 #include "cbuild_api_experimental.hpp"
@@ -197,5 +197,5 @@ struct Target {
 
 const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
 
-const String_View & get_target_extension (const Target &target);
+const String_View get_target_extension (const Target &target);
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target);

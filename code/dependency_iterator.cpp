@@ -3,8 +3,6 @@
 
 #include "anyfin/core/result.hpp"
 
-#include "anyfin/platform/files.hpp"
-
 #include "dependency_iterator.hpp"
 
 static const char* skip_to_any_symbol (const char* str, size_t size, const char* symbols) {

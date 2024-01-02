@@ -8,7 +8,7 @@
 #include "anyfin/core/strings.hpp"
 
 #include "anyfin/platform/console.hpp"
-#include "anyfin/platform/files.hpp"
+#include "anyfin/platform/file_system.hpp"
 #include "anyfin/platform/shared_library.hpp"
 #include "anyfin/platform/commands.hpp"
 
@@ -132,7 +132,7 @@ static void build_project_configuration (
 
   using enum File_System_Flags;
 
-  auto project_obj_file_name = format_string(arena, "%.%", project_name, platform_object_extension_name);
+  auto project_obj_file_name = format_string(arena, "%.%", project_name, get_object_extension());
   auto project_obj_file_path = make_file_path(arena, workspace.project_output_directory_path, project_obj_file_name);
 
   {
@@ -178,7 +178,7 @@ static void build_project_configuration (
 #ifdef PLATFORM_WIN32
     {
       auto cbuild_import_path = make_file_path(local, workspace.project_output_directory_path,
-                                                format_string(local, "cbuild.%", platform_static_library_extension_name));
+                                               format_string(local, "cbuild.%", get_static_library_extension()));
 
       auto export_file = open_file(arena, cbuild_import_path, Write_Access | Create_Missing)
         .take("Couldn't create export file to write data to.\n");
@@ -313,7 +313,7 @@ Project load_project (
     workspace = Workspace { move(project_output_directory), move(project_tag_file) };
   }
 
-  auto shared_library_file_name  = format_string(arena, "%.%", project_name, platform_shared_library_extension_name);
+  auto shared_library_file_name  = format_string(arena, "%.%", project_name, get_shared_library_extension());
   auto project_library_file_path = make_file_path(arena, workspace.project_output_directory_path, shared_library_file_name);
   if (!check_resource_exists(project_library_file_path, Resource_Type::File)) {
     auto toolchain = discover_toolchain(arena)

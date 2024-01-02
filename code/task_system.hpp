@@ -8,7 +8,6 @@
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/seq.hpp"
 
-#include "anyfin/platform/files.hpp"
 #include "anyfin/platform/concurrent.hpp"
 #include "anyfin/platform/platform.hpp"
 #include "anyfin/platform/threads.hpp"
@@ -43,11 +42,6 @@ struct Build_Queue {
       tasks_queue     { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
     {}
 
-  ~Build_Queue () {
-    for (auto &node: this->tasks_queue) node.task.~T();
-    free_memory(this->allocator, this->tasks_queue.elements);
-  }
-
   bool push_task (T &&task) {
     using enum Memory_Order;
   
@@ -74,7 +68,6 @@ struct Build_Queue {
 
     node->task = move(task);
     atomic_store<Release>(node->sequence_number, index + 1);
-
 
     return true;
   }
@@ -109,6 +102,12 @@ struct Build_Queue {
   }
 };
 
+template <typename T>
+static void destroy (Build_Queue<T> &queue) {
+  for (auto &node: queue.tasks_queue) node.task.~T();
+  free_memory(queue.allocator, queue.tasks_queue.elements);
+}
+
 /*
   Task system is designed to support concurrent execution with ability to execute tasks on the main thread as well, avoiding
   wasted CPU potential.
@@ -116,21 +115,21 @@ struct Build_Queue {
 template <typename T, typename BC>
 struct Task_System {
   using Queue   = Build_Queue<T>;
-  using Handler = void (*) (BC &, T &);
+  using Handler = void (*) (Task_System<T, BC> &, BC &, T &);
 
   Queue         queue;
   Slice<Thread> builders;
   Semaphore     semaphore;
 
-  Handler handler;
+  Handler func;
 
   abool terminating = false;
 
-  Task_System (Allocator auto &allocator, const usize queue_size, const usize builders_count, Handler &&func)
+  Task_System (Allocator auto &allocator, const usize queue_size, const usize builders_count, Handler &&_func)
     : queue     { allocator, queue_size },
       builders  { reserve_array<Thread>(allocator, builders_count) },
       semaphore { create_semaphore().take("Failed to create a semaphore resource for the build queue system") },
-      handler   { func }
+      func      { _func }
     {
       for (auto &builder: builders) {
         builder = *spawn_thread([this] () {
@@ -147,19 +146,6 @@ struct Task_System {
       }
     }
 
-  ~Task_System () {
-    destroy_semaphore(this->tasks_available);
-
-    atomic_store<Memory_Order::Release>(this->terminating, true);
-    
-    // TODO: This shows that current approach has some flaws as the task system shouldn't do this
-    // to unblock threads, either it should own the semaphore, which transitively means that the
-    // queue shouldn't be a separate entity.
-    increment_semaphore(this->semaphore, this->builders.count);
-
-    this->queue.~Queue();
-  }
-
   bool has_unfinished_tasks () {
     auto submitted = atomic_load(this->semaphore);
     auto completed = atomic_load(this->semaphore);
@@ -174,7 +160,7 @@ struct Task_System {
   */
   void execute_task (BC &context) {
     pop_task(this->queue).handle_value([&, this] (auto task) {
-      this->handle(context, task);
+      this->func(context, task);
 
       // TODO: This feels slightly out of place
       atomic_fetch_add(queue.tasks_completed, 1);
@@ -188,5 +174,17 @@ struct Task_System {
   }
 };
 
+template <typename T, typename BC>
+static void destroy (Task_System<T, BC> &system) {
+  destroy_semaphore(system.tasks_available);
 
+  atomic_store<Memory_Order::Release>(system.terminating, true);
+    
+  // TODO: This shows that current approach has some flaws as the task system shouldn't do this
+  // to unblock threads, either it should own the semaphore, which transitively means that the
+  // queue shouldn't be a separate entity.
+  increment_semaphore(system.semaphore, system.builders.count);
+
+  destroy(system.queue);
+}
 

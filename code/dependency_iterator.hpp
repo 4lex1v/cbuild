@@ -7,7 +7,7 @@
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/strings.hpp"
 
-#include "anyfin/platform/files.hpp"
+#include "anyfin/platform/file_system.hpp"
 
 #include "cbuild.hpp"
 

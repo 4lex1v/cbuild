@@ -14,7 +14,7 @@
 #include "anyfin/platform/platform.hpp"
 #include "anyfin/platform/threads.hpp"
 #include "anyfin/platform/commands.hpp"
-#include "anyfin/platform/files.hpp"
+#include "anyfin/platform/file_system.hpp"
 
 #include "arrays.hpp"
 #include "cbuild_api.hpp"
@@ -301,10 +301,6 @@ static bool is_msvc (const Toolchain_Configuration &config) {
   return is_msvc(config.type);
 }
 
-static bool is_win32 () {
-  return platform_type == Platform::Win32;
-}
-
 static void schedule_downstream_linkage (const Target &target, const Invocable<void, Target_Tracker &> auto &update_tracker) {
   for (auto downstream: target.required_by) {
     auto downstream_tracker = downstream->build_context.tracker;
@@ -383,14 +379,14 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
         }
 
         for (auto lib: target.depends_on) {
           assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
 
           builder += make_file_path(arena, out_folder_path,
-                                    format_string(arena, "%.%", lib->name, platform_static_library_extension_name));
+                                    format_string(arena, "%.%", lib->name, get_static_library_extension()));
         }
 
         if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
@@ -406,14 +402,14 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
         }
       
         for (auto lib: target.depends_on) {
           assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
         
           builder += make_file_path(arena, out_folder_path,
-                                    format_string(arena, "%.%", lib->name, platform_static_library_extension_name));
+                                    format_string(arena, "%.%", lib->name, get_static_library_extension()));
         }
 
         builder += target.link_libraries;
@@ -430,7 +426,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), platform_object_extension_name));
+                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
         }
 
         for (auto lib: target.depends_on) {
@@ -496,7 +492,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 
   auto target_object_folder = get_target_object_folder_path(arena, target);
   auto object_file_path     = make_file_path(arena, target_object_folder,
-                                             format_string(arena, "%.%", *get_resource_name(arena, file.path), platform_object_extension_name));
+                                             format_string(arena, "%.%", *get_resource_name(arena, file.path), get_object_extension()));
 
   bool should_rebuild = true;
   if (!project.rebuild_required && !dependencies_updated && target.build_context.last_info) {
@@ -545,11 +541,12 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
 
     auto [has_failed, error, status] = run_system_command(arena, compilation_command);
-    static_assert(false, "Need to add error handling here");
+    if (has_failed) panic("File compilation failed with a system error: %, command: %", error, compilation_command);
+
     auto &[output, return_code] = status;
 
-    if (!return_code) print("%\n", status);
-    if (output)  print("%\n", output);
+    if (!return_code) panic("File compilation failed with status: %, command: %\n", return_code, compilation_command);
+    if (output)       print("%\n", output);
 
     file_compilation_status = (!return_code) ? File_Compile_Status::Success : File_Compile_Status::Failed;
   }
@@ -759,7 +756,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   auto task_system = create_task_system(arena, project, config);
 
-  chain_status_cache = reserve_memory<Chain_Status>(arena, max_supported_files_count);
+  chain_status_cache = Slice(reserve_memory<Chain_Status>(arena, max_supported_files_count), max_supported_files_count);
 
   auto build_plan = prepare_build_plan(arena, project, config);
 
@@ -772,9 +769,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
       continue;
     }
 
-    create_directory(get_target_object_folder_path(arena, *target))
+    create_resource(get_target_object_folder_path(arena, *target), Resource_Type::Directory)
       .expect(format_string(arena, "Couldn't create a build output directory for the target '%'", target->name));
 
+    /*
     bool should_build_target = (target->tracker != nullptr);
 
     for (auto file_path: target->files) {
@@ -802,12 +800,15 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         });
       }
     }
+    */
   }
+
 
   /*
     For the targets that won't be build, copy whatever information is in the registry right now into the update set.
     Not doing this, would cause the registry to be overwritten with whatever was saved in the update set.
   */
+  /*
   for (auto target: build_plan.skipped_targets) {
     auto last_info = reinterpret_cast<Registry::Target_Info *>(target->last_info);
     if (last_info == nullptr) continue;
@@ -824,7 +825,9 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
     *info = *last_info;
   }
+  */
 
+  /*
   while (build_queue.has_unfinished_tasks()) builders.execute_task(arena);
 
   if (registry_enabled) flush_registry(&registry, &update_set);
@@ -843,5 +846,8 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
       trap("Building target '%' finished with errors", tracker->target->name);
     }
   }
+  */
+
+  return 0;
 }
 
