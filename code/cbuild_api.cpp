@@ -1,6 +1,8 @@
 
 #include "anyfin/base.hpp"
 
+#include "anyfin/core/allocator.hpp"
+
 #include "anyfin/platform/console.hpp"
 
 #include "cbuild.hpp"
@@ -165,7 +167,7 @@ static Target * create_target (Project *project, Target::Type type, const char *
     }
   }
 
-  auto target = reserve_struct<Target>(project->arena, *project, type, move(name));
+  auto target = new (project->arena) Target(*project, type, move(name));
 
   list_push_copy(project->targets, target);
 

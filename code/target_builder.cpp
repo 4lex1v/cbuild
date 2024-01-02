@@ -79,12 +79,10 @@ struct Build_Task {
   enum struct Type: u32 { Uninit, Compile, Link };
   using enum Type;
 
-  Type            type;
+  Type type;
+  bool dependencies_updated; // TODO: Check if I still need this flag?
   Target_Tracker *tracker;
-
   File file;
-  // TODO: Check if I still need this flag?
-  bool dependencies_updated;
 };
 
 static File_Path out_folder_path;
@@ -700,7 +698,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
     return plan;
   }
 
-  List<Target *, Memory_Arena> build_list(arena);
+  List<Target *> build_list(arena);
   auto add_build_target = [&] (Target *target) {
     auto fixpoint = [&] (Target *target, auto &thunk) -> void {
       for (auto upstream: target->depends_on)
@@ -730,27 +728,24 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
     add_build_target(target);
   }
 
-  auto trackers = reserve_array<Target_Tracker *>(arena, build_list.count);
+  auto trackers = reserve_memory<Target_Tracker *>(arena, build_list.count);
   for (usize idx = 0; auto target: build_list) {
-    auto tracker = push_struct<Target_Tracker>(arena, target, project.rebuild_required);
-
-    trackers[idx++] = tracker;
-    target->tracker = tracker;
+    trackers[idx++] = new (arena) Target_Tracker(target);
   }
 
   return plan;
 }
 
 u32 build_project (Memory_Arena &arena, const Project &project, Build_Config config) {
-  using enum Open_File_Flags;
+  using enum File_System_Flags;
 
   if (is_empty(project.targets)) return 0;
 
   out_folder_path    = make_file_path(arena, project.output_location_path, "out");
   object_folder_path = make_file_path(arena, project.output_location_path, "obj");
 
-  create_directory(out_folder_path).expect();
-  create_directory(object_folder_path).expect();
+  create_resource(out_folder_path,    Resource_Type::Directory).expect();
+  create_resource(object_folder_path, Resource_Type::Directory).expect();
 
   registry_enabled = !project.registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
   if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
@@ -764,11 +759,13 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   auto task_system = create_task_system(arena, project, config);
 
-  chain_status_cache = reserve_array<Chain_Status>(arena, max_supported_files_count);
+  chain_status_cache = reserve_memory<Chain_Status>(arena, max_supported_files_count);
 
   auto build_plan = prepare_build_plan(arena, project, config);
 
-  for (auto target: build_plan.selected_targets) { // TODO: This should follow a build plan
+  for (auto tracker: build_plan.selected_targets) { // TODO: This should follow a build plan
+    auto target = tracker->target;
+
     if (target->files.count == 0) {
       print("Target '%' doesn't have any input files and will be skipped\n", target->name);
 

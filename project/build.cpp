@@ -107,21 +107,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   add_global_include_search_path(project, ".");
 
-  auto anyfin = add_static_library(project, "anyfin");
-  {
-    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/assert_win32.cpp");
-    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/memory_win32.cpp");
-    add_source_file(anyfin, "libs/anyfin/anyfin/core/win32/trap_win32.cpp");
-    //add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/console_win32.cpp");
-    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/runtime_win32.cpp");
-    //add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/files_win32.cpp");
-    add_source_file(anyfin, "libs/anyfin/anyfin/platform/win32/timers_win32.cpp");
-
-    add_compiler_options(anyfin, "-fno-exceptions -mno-stack-arg-probe -nostdlib -nostdlib++ -nostdinc++");
-
-    add_include_search_path(anyfin, "libs/anyfin");
-  }
-
   // auto cbuild = add_executable(project, "cbuild");
   // {
   //   add_all_sources_from_directory(cbuild, "code", "cpp", false);
@@ -149,7 +134,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     // char exports_option[256] = "/def:";
     // snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
     // add_linker_option(cbuild, exports_option);
-    link_with(cbuild, anyfin, "kernel32.lib", "advapi32.lib", "winmm.lib");
+    link_with(cbuild, "kernel32.lib", "advapi32.lib", "winmm.lib");
   }
 
   // auto rdump = add_executable(project, "rdump");

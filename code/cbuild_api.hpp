@@ -189,6 +189,10 @@ struct Target {
         .linker   { project->arena }
       }
     {}
+
+  void * operator new (usize size, Memory_Arena &arena) {
+    return reserve_memory(arena, sizeof(Target), alignof(Target));
+  }
 };
 
 const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);

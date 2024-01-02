@@ -28,9 +28,7 @@ typedef bool project_func (const Arguments *args, Project &project);
 static const u32 api_version = (API_VERSION);
 
 void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Configuration_Type config_file_type) {
-  Scope_Allocator allocator { arena };
-
-  auto project_directory_path = make_file_path(allocator, working_directory, "project");
+  auto project_directory_path = make_file_path(arena, working_directory, "project");
   create_resource(project_directory_path, Resource_Type::Directory).expect();
 
   auto build_file_name = (config_file_type == Configuration_Type::C) ? String_View("build.c") : String_View("build.cpp");
@@ -172,8 +170,8 @@ static void build_project_configuration (
     /*
       Linking project configuration into a shared library.
     */
-    Scope_Allocator local   { arena };
-    String_Builder  builder { local };
+    Memory_Arena   local   { arena };
+    String_Builder builder { local };
 
     builder += String_View(toolchain.linker_path);
 
