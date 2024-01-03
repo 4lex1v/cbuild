@@ -6,7 +6,6 @@
 #include "anyfin/core/arrays.hpp"
 #include "anyfin/core/list.hpp"
 #include "anyfin/core/result.hpp"
-#include "anyfin/core/seq.hpp"
 
 #include "anyfin/platform/concurrent.hpp"
 #include "anyfin/platform/platform.hpp"
@@ -15,7 +14,7 @@
 #include "cbuild.hpp"
 
 template <typename T>
-struct Build_Queue {
+struct Task_Queue {
   struct Node {
     static_assert(sizeof(T) <= CACHE_LINE_SIZE - sizeof(as32));
     
@@ -29,7 +28,7 @@ struct Build_Queue {
 
   Allocator_View allocator;
 
-  Slice<Node> tasks_queue;
+  Array<Node> tasks_queue;
 
   cas64 write_index = 0;
   cas64 read_index  = 0;
@@ -37,7 +36,7 @@ struct Build_Queue {
   cau32 tasks_submitted = 0;
   cau32 tasks_completed = 0;
 
-  Build_Queue (Allocator auto &_allocator, const usize queue_size)
+  Task_Queue (Allocator auto &_allocator, const usize queue_size)
     : allocator       { _allocator },
       tasks_queue     { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
     {}
@@ -103,7 +102,7 @@ struct Build_Queue {
 };
 
 template <typename T>
-static void destroy (Build_Queue<T> &queue) {
+static void destroy (Task_Queue<T> &queue) {
   for (auto &node: queue.tasks_queue) node.task.~T();
   free_memory(queue.allocator, queue.tasks_queue.elements);
 }
@@ -114,11 +113,11 @@ static void destroy (Build_Queue<T> &queue) {
 */
 template <typename T, typename BC>
 struct Task_System {
-  using Queue   = Build_Queue<T>;
+  using Queue   = Task_Queue<T>;
   using Handler = void (*) (Task_System<T, BC> &, BC &, T &);
 
   Queue         queue;
-  Slice<Thread> builders;
+  Array<Thread> builders;
   Semaphore     semaphore;
 
   Handler func;
@@ -130,21 +129,23 @@ struct Task_System {
       builders  { reserve_array<Thread>(allocator, builders_count) },
       semaphore { create_semaphore().take("Failed to create a semaphore resource for the build queue system") },
       func      { _func }
-    {
-      for (auto &builder: builders) {
-        builder = *spawn_thread([this] () {
-          BC context {};
-
-          while (true) {
-            wait_for_semaphore_signal(queue.tasks_available);
-
-            if (atomic_load<Memory_Order::Acquire>(this->terminating)) break;
-
-            this->execute_task(context);
-          }
-        }); 
-      }
+  {
+    for (auto &builder: builders) {
+      builder = *spawn_thread(task_system_loop, this); 
     }
+  }
+
+  static void task_system_loop (Task_System<T, BC> *system) {
+    BC context {};
+
+    while (true) {
+      wait_for_semaphore_signal(system->semaphore);
+
+      if (atomic_load<Memory_Order::Acquire>(system->terminating)) break;
+
+      system->execute_task(context);
+    }
+  }
 
   bool has_unfinished_tasks () {
     auto submitted = atomic_load(this->semaphore);
@@ -159,16 +160,19 @@ struct Task_System {
     `execute_task` could be called by the main thread and executed on the main thread respectively.
   */
   void execute_task (BC &context) {
-    pop_task(this->queue).handle_value([&, this] (auto task) {
-      this->func(context, task);
+    auto option = this->queue.pop_task();
+    if (!option) return;
 
-      // TODO: This feels slightly out of place
-      atomic_fetch_add(queue.tasks_completed, 1);
-    });
+    auto task = option.take();
+
+    this->func(*this, context, task);
+
+    // TODO: This feels slightly out of place
+    atomic_fetch_add(queue.tasks_completed, 1);
   }
 
   void add_task (T &&task) {
-    this->queue.push(move(task));
+    this->queue.push_task(move(task));
 
     increment_semaphore(this->semaphore);
   }

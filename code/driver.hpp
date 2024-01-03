@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "anyfin/core/slice.hpp"
+
 #include "cbuild.hpp"
 
 struct CLI_Flags {

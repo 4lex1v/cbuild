@@ -274,8 +274,7 @@ static Option<Windows_SDK> find_windows_sdk (Memory_Arena &arena) {
   String path;
   do {
     if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-      if ((strcmp(data.cFileName, ".")  == 0) ||
-          (strcmp(data.cFileName, "..") == 0)) continue;
+      if (data.cFileName[0] == '.') continue;
 
       /*
         According to the SDK naming scheme it always starts with 10. for Win10+ and the same still holds for Win11.
@@ -325,31 +324,39 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
 
     auto base_win_sdk_include_folder_path = format_string(arena, "%\\Include\\%", sdk->base_path, sdk->version);
 
-    String_Builder includes { arena };
-    includes += format_string(arena, "%\\include",  *msvc);
-    includes += format_string(arena, "%\\cppwinrt", base_win_sdk_include_folder_path);
-    includes += format_string(arena, "%\\shared",   base_win_sdk_include_folder_path);
-    includes += format_string(arena, "%\\ucrt",     base_win_sdk_include_folder_path);
-    includes += format_string(arena, "%\\um",       base_win_sdk_include_folder_path);
-    includes += format_string(arena, "%\\winrt",    base_win_sdk_include_folder_path);
-    includes += include_env_var;
+    auto local = arena;
 
-    SetEnvironmentVariable("INCLUDE", build_string_with_separator(arena, includes, ';'));
+    String_Builder includes { local };
+    {
+      includes += format_string(local, "%\\include",  *msvc);
+      includes += format_string(local, "%\\cppwinrt", base_win_sdk_include_folder_path);
+      includes += format_string(local, "%\\shared",   base_win_sdk_include_folder_path);
+      includes += format_string(local, "%\\ucrt",     base_win_sdk_include_folder_path);
+      includes += format_string(local, "%\\um",       base_win_sdk_include_folder_path);
+      includes += format_string(local, "%\\winrt",    base_win_sdk_include_folder_path);
+      includes += include_env_var;
+    }
+
+    SetEnvironmentVariable("INCLUDE", build_string_with_separator(local, includes, ';'));
   });
 
   get_current_value("LIB").handle_value([&] (auto &lib_env_var) {
     list_push(previous, Env_Var { String::copy(arena, "LIB"), String::copy(arena, String_View(lib_env_var)) });
 
-    auto target_platform = String_View((architecture == Target_Arch_x86) ? "x86" : "x64");
+    auto target_platform          = String_View((architecture == Target_Arch_x86) ? "x86" : "x64");
     auto base_libpath_folder_path = format_string(arena, "%\\Lib\\%", sdk->base_path, sdk->version);
 
-    String_Builder libpaths { arena };
-    libpaths += format_string(arena, "%\\lib\\%", *msvc, target_platform);
-    libpaths += format_string(arena, "%\\ucrt\\%", base_libpath_folder_path, target_platform);
-    libpaths += format_string(arena, "%\\um\\%", base_libpath_folder_path, target_platform);
-    libpaths += lib_env_var;
+    auto local = arena;
 
-    SetEnvironmentVariable("LIB", build_string_with_separator(arena, libpaths, ';'));
+    String_Builder libpaths { local };
+    {
+      libpaths += format_string(local, "%\\lib\\%", *msvc, target_platform);
+      libpaths += format_string(local, "%\\ucrt\\%", base_libpath_folder_path, target_platform);
+      libpaths += format_string(local, "%\\um\\%", base_libpath_folder_path, target_platform);
+      libpaths += lib_env_var;
+    }
+
+    SetEnvironmentVariable("LIB", build_string_with_separator(local, libpaths, ';'));
   });
 
   return previous;

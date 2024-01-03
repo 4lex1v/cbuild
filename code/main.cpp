@@ -1,12 +1,12 @@
 
 #include "anyfin/core/arena.hpp"
-#include "anyfin/core/lifecycle.hpp"
 #include "anyfin/core/memory.hpp"
 #include "anyfin/core/option.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/seq.hpp"
 #include "anyfin/core/strings.hpp"
 
+#include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/console.hpp"
 #include "anyfin/platform/timers.hpp"
 
@@ -50,7 +50,7 @@ struct Build_Command {
   Build_Config config;
   Slice<Startup_Argument> build_arguments;
 
-  static Build_Command parse (const Slice<Startup_Argument>& command_arguments) {
+  static Build_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
     Build_Command command;
 
     find_argument_value(command_arguments, "builders")
@@ -105,7 +105,7 @@ struct Build_Command {
 struct Init_Command {
   Configuration_Type type;
 
-  static Init_Command parse (const Slice<Startup_Argument>& command_arguments) {
+  static Init_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
     Init_Command command;
 
     find_argument_value(command_arguments, "type")
@@ -122,8 +122,8 @@ struct Init_Command {
 struct Clean_Command {
   bool all;
 
-  static Clean_Command parse (const Slice<Startup_Argument>& command_arguments) {
-    return Clean_Command{
+  static Clean_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
+    return Clean_Command {
       .all = find_option_flag(command_arguments, "all"),
     };
   }
@@ -185,88 +185,94 @@ Commands:
     Prints the help message.
 )help";
 
-namespace {
+static void print_usage () {
+  print("%\n", help_message);
+}
 
-  void print_usage () {
-    print("%\n", help_message);
-  }
+/*
+  Global flags are the very first argument values passed to the CBuild executable that go before all other options.
+*/
+static void parse_global_flags (Slice<Startup_Argument> &args) {
+  if (is_empty(args)) return;
+  
+  struct {
+    char short_name;
+    const char* name;
+    bool* flag;
+  } table [] {
+    {'s', "silence", &global_flags.silenced},
+  };
 
-  /*
-    Global flags are the very first argument values passed to the CBuild executable that go before all other options.
-   */
-  void parse_global_flags (Slice<Startup_Argument>& args) {
-    struct {
-      char short_name;
-      const char* name;
-      bool* flag;
-    } table[] {
-      {'s', "silence", &global_flags.silenced},
-    };
+  while (true) {
+    auto &arg = *args;
+    
+    if (arg.is_value())    return;
+    if (arg.key[0] != '-') return; // It's required that flags start with -- or -, for full- or short- name
 
-    while (true) {
-      auto arg = *args++;
+    if (arg.key.length < 2) panic("Incomplete flag value passed");
 
-      if (arg.is_value()) return;
-      if (arg.key[0] != '-') return; // It's required that flags start with -- or -, for full- or short- name
-
-      if (arg.key.length < 2) panic("Incomplete flag value passed");
-
-      if (arg.key[1] != '-') {
-        // Parsing a chain a single character switches, similar to how most Unix tools can group flags, e.g `tar -zcvf myfile.tgz .`
-        for (int idx = 1; idx < arg.key.length; idx++) {
-          bool* flag = nullptr;
-          for (auto& option: table) {
-            if (option.short_name == arg.key[idx]) {
-              flag = option.flag;
-              break;
-            }
-          }
-
-          if (flag == nullptr) panic("Flag '-%' is not supported", arg.key[idx]);
-          if (*flag) print("Flag -% is a duplicated and has no affect\n", arg.key[idx]);
-
-          *flag = true;
-        }
-      } else {
-        if (arg.key.length < 3) panic("Incomplete flag value passed");
-
+    if (arg.key[1] != '-') {
+      // Parsing a chain a single character switches, similar to how most Unix tools can group flags, e.g `tar -zcvf myfile.tgz .`
+      for (int idx = 1; idx < arg.key.length; idx++) {
         bool* flag = nullptr;
         for (auto& option: table) {
-          if (!compare_strings(arg.key + 2, String_View(option.name))) {
-            // offset first 2 --
+          if (option.short_name == arg.key[idx]) {
             flag = option.flag;
             break;
           }
         }
 
-        if (flag == nullptr) panic("Flag '%' is not supported", arg.key);
-        if (*flag) print("Flag % is a duplicated and has no affect\n", arg.key);
+        if (flag == nullptr) panic("Flag '-%' is not supported", arg.key[idx]);
+        if (*flag)           print("Flag -% is a duplicated and has no affect\n", arg.key[idx]);
 
         *flag = true;
       }
+    } else {
+      if (arg.key.length < 3) panic("Incomplete flag value passed");
+
+      bool* flag = nullptr;
+      for (auto& option: table) {
+        if (!compare_strings(arg.key + 2, String_View(option.name))) {
+          // offset first 2 --
+          flag = option.flag;
+          break;
+        }
+      }
+
+      if (flag == nullptr) panic("Flag '%' is not supported", arg.key);
+      if (*flag) print("Flag % is a duplicated and has no affect\n", arg.key);
+
+      *flag = true;
     }
+
+    args++;
   }
+}
 
-  CLI_Command parse_command (Slice<Startup_Argument>& args) {
-    assert(args[0].is_value());
+static CLI_Command parse_command (Slice<Startup_Argument> &args) {
+  if (is_empty(args)) return CLI_Command::Help;
 
-    const auto command_name = (*args++).key;
+  const auto arg = *args++;
+  assert(arg.is_value());
 
-    if (compare_strings(command_name, "init"))    return CLI_Command::Init;
-    if (compare_strings(command_name, "build"))   return CLI_Command::Build;
-    if (compare_strings(command_name, "clean"))   return CLI_Command::Clean;
-    if (compare_strings(command_name, "update"))  return CLI_Command::Update;
-    if (compare_strings(command_name, "version")) return CLI_Command::Version;
-    if (compare_strings(command_name, "help"))    return CLI_Command::Help;
+  const auto command_name = arg.key;
 
-    return CLI_Command::Dynamic;
-  }
+  if (compare_strings(command_name, "init"))    return CLI_Command::Init;
+  if (compare_strings(command_name, "build"))   return CLI_Command::Build;
+  if (compare_strings(command_name, "clean"))   return CLI_Command::Clean;
+  if (compare_strings(command_name, "update"))  return CLI_Command::Update;
+  if (compare_strings(command_name, "version")) return CLI_Command::Version;
+  if (compare_strings(command_name, "help"))    return CLI_Command::Help;
 
-} // namespace
+  return CLI_Command::Dynamic;
+}
 
-u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
+int mainCRTStartup () {
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
     
+  auto args        = get_startup_args(arena);
+  auto args_cursor = slice(args);
+
   bool silence_report = false;
   auto start_stamp = get_timer_value();
   defer {
@@ -277,8 +283,8 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
     }
   };
 
-  parse_global_flags(args);
-  auto command_type = parse_command(args);
+  parse_global_flags(args_cursor);
+  auto command_type = parse_command(args_cursor);
 
   if (!global_flags.silenced || command_type == CLI_Command::Version) {
 #ifdef DEV_BUILD
@@ -297,7 +303,7 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
   if (!global_flags.silenced) print("Working directory: %\n", working_directory_path);
 
   if (command_type == CLI_Command::Init) {
-    auto command = Init_Command::parse(args);
+    auto command = Init_Command::parse(args_cursor);
     init_workspace(arena, working_directory_path, command.type);
     return 0;
   }
@@ -308,8 +314,8 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
   }
 
   if (command_type == CLI_Command::Clean) {
-    auto command = Clean_Command::parse(args);
-    cleanup_workspace(command.all);
+    auto command = Clean_Command::parse(args_cursor);
+    cleanup_workspace(arena, command.all);
     return 0;
   }
 
@@ -319,11 +325,11 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
     return 0;
   }
 
-  auto project = load_project(arena, "project", working_directory_path, working_directory_path, args);
+  auto project = load_project(arena, "project", working_directory_path, working_directory_path, args_cursor);
 
   if (command_type == CLI_Command::Build) {
-    auto command = Build_Command::parse(args);
-    return build_project(arena, project, command);
+    auto command = Build_Command::parse(args_cursor);
+    return build_project(arena, project, command.config);
   }
 
   assert(command_type == CLI_Command::Dynamic);
@@ -334,7 +340,7 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
   //   String command_name = argv[1];
   //   for (auto cmd: project.user_defined_commands) {
   //     if (compare_strings(cmd.name, command_name)) {
-  //       auto status_code = cmd.proc(&args);
+  //       auto status_code = cmd.proc(&args_cursor);
   //       if (status_code == 0) exit_status = Status_Code::Success;
   //       else {
   //         exit_status.value = Status_Code::User_Command_Error;
@@ -346,4 +352,40 @@ u32 Fin::Core::app_entry (Slice<Startup_Argument> args) {
   //   }
 
   return 0;
+}
+
+extern "C" {
+
+#pragma function(memset)
+void * memset (void *destination, int value, size_t count) {
+  auto storage = reinterpret_cast<u8 *>(destination);
+  for (size_t idx = 0; idx < count; idx++) {
+    storage[idx] = static_cast<u8>(value);
+  }
+
+  return destination;
+}
+
+#pragma function(memcpy)
+void * memcpy (void *destination, const void *source, size_t count) {
+  auto from = reinterpret_cast<const u8 *>(source);
+  auto to   = reinterpret_cast<u8 *>(destination);
+  for (size_t idx = 0; idx < count; idx++) {
+    to[idx] = from[idx];
+  }
+
+  return destination;
+}
+
+// #pragma function(memcpy)
+// int memcpy_s (void *const destination, unsigned __int64, void const *const source, unsigned __int64 count) {
+//   auto from = reinterpret_cast<const u8 *>(source);
+//   auto to   = reinterpret_cast<u8 *>(destination);
+//   for (size_t idx = 0; idx < count; idx++) {
+//     to[idx] = from[idx];
+//   }
+
+//   return 0;
+// }
+
 }

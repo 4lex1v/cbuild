@@ -3,8 +3,8 @@
 
 #include "anyfin/core/arena.hpp"
 #include "anyfin/core/slice.hpp"
-#include "anyfin/core/lifecycle.hpp"
 
+#include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/file_system.hpp"
 
 #include "cbuild.hpp"
@@ -21,7 +21,7 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
 /*
   Cleanup current workspace build files.
  */
-void cleanup_workspace (bool full_cleanup);
+void cleanup_workspace (Memory_Arena &arena, bool full_cleanup);
 
 /*
   Load project configuration.

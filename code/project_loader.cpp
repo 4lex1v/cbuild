@@ -256,7 +256,7 @@ struct Project_Registry {
 
 Project load_project (
   Memory_Arena                  &arena,
-  String                        project_name,
+  const String_View             &project_name,
   const File_Path               &working_directory,
   const File_Path               &workspace_directory,
   const Slice<Startup_Argument> &args) {

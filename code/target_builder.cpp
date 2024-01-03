@@ -140,7 +140,8 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
             source_file.path, error);
     }
     
-    for (auto &path: extra_include_paths) list_push_copy(include_directories, path);
+    for (auto &path: extra_include_paths)
+      list_push(include_directories, String::copy(arena, path));
   };
 
   bool chain_has_updates = false;
@@ -237,7 +238,8 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
             source_file.path, error);
     }
     
-    for (auto &path: extra_include_paths) list_push_copy(include_directories, path);
+    for (auto &path: extra_include_paths)
+      list_push(include_directories, String::copy(local, path));
   };
 
   bool chain_has_updates = false;
@@ -432,7 +434,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
         for (auto lib: target.depends_on) {
           assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
         
-          const char *lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
+          String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
           if (!is_win32()) {
             if (lib->type == Target::Type::Static_Library) lib_extension = "a";
             else                                           lib_extension = "so";

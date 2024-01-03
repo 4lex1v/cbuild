@@ -3,6 +3,7 @@
 
 #include "anyfin/core/allocator.hpp"
 
+#include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/console.hpp"
 
 #include "cbuild.hpp"
