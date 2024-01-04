@@ -11,7 +11,7 @@ Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path
   using enum File_System_Flags;
 
   auto registry_file =
-    open_file(arena, registry_file_path, Write_Access | Create_Missing)
+    open_file(String::copy(arena, registry_file_path), Write_Access | Create_Missing)
       .take("Couldn't open the file");
 
   auto file_size =

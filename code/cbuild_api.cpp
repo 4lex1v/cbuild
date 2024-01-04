@@ -41,10 +41,10 @@ bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Co
   require_non_null(project);
   require_non_null(out_configuration);
 
-  auto lookup_result = lookup_toolchain_by_type(project->arena, type);
-  if (!lookup_result) return false;
+  auto [found, config] = lookup_toolchain_by_type(project->arena, type);
+  if (!found) return false;
 
-  *out_configuration = *lookup_result;
+  *out_configuration = config;
 
   return true;
 }
@@ -69,10 +69,10 @@ void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) {
 void set_toolchain (Project *project, Toolchain_Type type) {
   require_non_null(project);
 
-  auto lookup_result = lookup_toolchain_by_type(project->arena, type);
-  if (!lookup_result) panic("FATAL ERROR: Requested toolchain wasn't found on the system.\n");
+  auto [found, toolchain] = lookup_toolchain_by_type(project->arena, type);
+  if (!found) panic("FATAL ERROR: Requested toolchain wasn't found on the system.\n");
   
-  overwrite_toolchain(project, *lookup_result);
+  overwrite_toolchain(project, toolchain);
 }
 
 void disable_registry (Project *project) {

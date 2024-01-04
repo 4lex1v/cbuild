@@ -4,6 +4,7 @@
 #include "anyfin/base.hpp"
 
 #include "anyfin/core/atomics.hpp"
+#include "anyfin/core/slice.hpp"
 
 #include "cbuild_api.hpp"
 
@@ -42,7 +43,7 @@ struct Registry {
     u32  aligned_max_files_count;
   };
 
-  File         registry_file;
+  File  registry_file;
   File_Mapping registry_file_mapping;
 
   struct {
@@ -58,6 +59,10 @@ struct Registry {
   } records;
 };
 
+static Slice<u64> get_dependencies (Registry &registry) {
+  return Slice(registry.records.dependencies, registry.records.header.dependencies_count);
+}
+
 struct Update_Set {
   u8 *buffer;
 
@@ -71,6 +76,10 @@ struct Update_Set {
   u64 *dependencies;
   Registry::Record *dependency_records;
 };
+
+static Slice<u64> get_dependencies (Update_Set &set) {
+  return Slice(set.dependencies, set.header->dependencies_count);
+}
 
 Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path);
 

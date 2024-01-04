@@ -1,30 +1,24 @@
 
 #include "anyfin/base.hpp"
 
-#include "anyfin/core/arrays.hpp"
 #include "anyfin/core/atomics.hpp"
 #include "anyfin/core/list.hpp"
 #include "anyfin/core/math.hpp"
 #include "anyfin/core/result.hpp"
-#include "anyfin/core/seq.hpp"
 #include "anyfin/core/string_builder.hpp"
 
 #include "anyfin/platform/console.hpp"
-#include "anyfin/platform/concurrent.hpp"
 #include "anyfin/platform/platform.hpp"
-#include "anyfin/platform/threads.hpp"
 #include "anyfin/platform/commands.hpp"
 #include "anyfin/platform/file_system.hpp"
 
-#include "arrays.hpp"
 #include "cbuild_api.hpp"
 #include "dependency_iterator.hpp"
 #include "driver.hpp"
-#include "project_loader.hpp"
 #include "registry.hpp"
 #include "task_system.hpp"
 #include "target_builder.hpp"
-#include "toolchain.hpp"
+#include "toolbox.hpp"
 
 extern CLI_Flags global_flags;
 
@@ -106,18 +100,14 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
 
   auto file_id = *get_file_id(source_file);
 
-  usize index = 0;
-
-  if (usize count = update_set.header->dependencies_count;
-      find_offset(&index, update_set.dependencies, count, file_id)) {
-    return chain_status_cache[index];
+  if (auto result = find_offset(get_dependencies(update_set), file_id); result) {
+    return chain_status_cache[result.get()];
   }
-  else {
-    index = update_set.header->dependencies_count++;
 
-    update_set.dependencies[index] = file_id;
-    chain_status_cache[index]      = Chain_Status::Checking;
-  }
+  const usize index = update_set.header->dependencies_count++;
+
+  update_set.dependencies[index] = file_id;
+  chain_status_cache[index]      = Chain_Status::Checking;
 
   assert(chain_status_cache[index] == Chain_Status::Checking);
 
@@ -180,7 +170,9 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
       continue;
     }
 
-    auto dependency_file = open_file(arena, resolved_path).take("Couldn't open included header file for scanning.");
+    auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
+    if (open_failed) panic("Couldn't open included header file for scanning due to an error: %", error);
+
     defer { close_file(dependency_file); };
     
     auto chain_scan_result = scan_dependency_chains(arena, dependency_file, extra_include_paths);
@@ -192,20 +184,21 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
   }
 
   auto timestamp = *get_last_update_timestamp(source_file);
-  if (usize offset = 0, count = records.header.dependencies_count;
+
+  {
+    // Attempt to find the offset for the given file_id if the chain has no updates.
+    auto [offset_found, offset] = !chain_has_updates ? find_offset(get_dependencies(registry), file_id) : opt_none;
+    if (offset_found) {
+      auto &record = records.dependency_records[offset];
+      chain_has_updates = (timestamp != record.timestamp);
+    }
+    else {
       /*
-        If we know that this chain has updates, there's no need to spend time on checking the record.
-       */
-      (chain_has_updates == false) && find_offset(&offset, records.dependencies, count, file_id)) {
-    auto &record = records.dependency_records[offset];
-    chain_has_updates = chain_has_updates || (timestamp != record.timestamp);
-  }
-  else {
-    /*
-      In this path, it means that there's no record of this dependency file and we see this for the first time.
-      This case forces a rebuild of the original source file.
-     */
-    chain_has_updates = true;
+        If the chain already has updates or the file_id is not found in the records, it implies that this is a new dependency.
+        This requires a rebuild of the source file, hence we set chain_has_updates to true.
+      */
+      chain_has_updates = true;
+    }
   }
 
   auto status = chain_has_updates ? Checked_Has_Updates : Checked_No_Updates;
@@ -279,7 +272,8 @@ static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_fil
       continue;
     }
 
-    auto dependency_file = open_file(inner_local, resolved_path).take("Couldn't open included header file for scanning.");
+    auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
+    if (open_failed) panic("Couldn't open included header file for scanning due to an error: %", error);
     defer { close_file(dependency_file); };
     
     auto chain_scan_result = scan_dependency_chains(inner_local, dependency_file, extra_include_paths);
@@ -503,9 +497,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     auto section      = records.files + target_last_info->files_offset;
     auto section_size = target_last_info->files_count.value;
 
-    usize index;
-    bool record_found = find_offset(&index, section, section_size, file_id);
-
+    auto [record_found, index] = find_offset(Slice(section, section_size), file_id);
     if (record_found) {
       auto record_index     = target_last_info->files_offset + index;
       auto record_timestamp = records.file_records[record_index].timestamp;
@@ -602,21 +594,20 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 }
 
 struct Target_Builder_Context {
-  Memory_Region region;
-  Memory_Arena  arena;
+  Memory_Arena arena;
 
   /*
     NOTE:
       This constructor will be called on a dedicated thread
    */
-  Target_Builder_Context ()
-    : region { reserve_virtual_memory(megabytes(1)) },
-      arena  { region.memory, region.size }
-  {}
+  Target_Builder_Context (): arena { reserve_virtual_memory(megabytes(1)) } {}
 
-  ~Target_Builder_Context () {
-    free_virtual_memory(this->region);
-  }
+  /*
+    This version would only be used for a short period of time on the main thread,
+    while it executes some of the tasks itself. In this context it's fine to use a local
+    copy of the arena.
+   */
+  Target_Builder_Context (Memory_Arena _arena): arena { _arena } {}
 };
 
 using Build_System = Task_System<Build_Task, Target_Builder_Context>;
@@ -660,7 +651,7 @@ static u32 number_of_extra_builders_to_spawn (const Build_Config &config) {
           count, cpu_count, cpu_count);
   }
 
-  count = clamp(count, 1, cpu_count);
+  count = clamp<u32>(count, 1, cpu_count);
 
   // This number specifies only the count of extra threads in addition to the main thread
   return count - 1;
@@ -678,11 +669,11 @@ struct Build_Plan {
   using Targets_List = List<Target_Tracker *>;
 
   Targets_List selected_targets;
-  Targets_List ignored_targets;
+  Targets_List skipped_targets;
 
   Build_Plan (Memory_Arena &arena)
     : selected_targets { arena },
-      ignored_targets  { arena }
+      skipped_targets  { arena }
   {}
 };
 
@@ -774,48 +765,45 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     create_resource(get_target_object_folder_path(arena, *target), Resource_Type::Directory)
       .expect(format_string(arena, "Couldn't create a build output directory for the target '%'", target->name));
 
-    /*
-    bool should_build_target = (target->tracker != nullptr);
+    bool should_build_target = (target->build_context.tracker != nullptr);
 
-    for (auto file_path: target->files) {
-      auto file = open_file(file_path)
-        .take("Couldn't open target's file");
+    for (auto &&file_path: target->files) {
+      auto [open_failed, error, file] = open_file(move(file_path));
+      if (open_failed) panic("Couldn't open target's file due to an error: %", error);
 
       auto dependencies_updated = true;
-      if (context.registry_enabled) {
+      if (registry_enabled) {
         auto local = arena;
 
         List<File_Path> include_paths(local);
-        for (auto path: project.project_options.include_paths) list_push_copy(include_paths, path);
-        for (auto path: target->include_paths)                list_push_copy(include_paths, path);
+        for (auto &path: project.project_options.include_paths) list_push(include_paths, String::copy(local, path));
+        for (auto &path: target->include_paths)                 list_push(include_paths, String::copy(local, path));
 
-        auto scan_result     = scan_file_dependencies(local, file, include_paths);
-        dependencies_updated = !scan_result.status || scan_result.value;
+        dependencies_updated = scan_file_dependencies(local, file, include_paths);
       }
 
       if (should_build_target) {
-        task_system.add_task({
+        task_system.add_task(Build_Task {
           .type    = Build_Task::Compile,
-          .tracker = target->tracker,
-          .file    = file,
           .dependencies_updated = dependencies_updated,
+          .tracker = target->build_context.tracker,
+          .file    = move(file),
         });
       }
     }
-    */
   }
-
 
   /*
     For the targets that won't be build, copy whatever information is in the registry right now into the update set.
     Not doing this, would cause the registry to be overwritten with whatever was saved in the update set.
   */
-  /*
-  for (auto target: build_plan.skipped_targets) {
-    auto last_info = reinterpret_cast<Registry::Target_Info *>(target->last_info);
-    if (last_info == nullptr) continue;
+  for (auto tracker: build_plan.skipped_targets) {
+    auto target = tracker->target;
 
-    auto info = reinterpret_cast<Registry::Target_Info *>(target->info);
+    auto last_info = reinterpret_cast<Registry::Target_Info *>(target->build_context.last_info);
+    if (!last_info) continue;
+
+    auto info = reinterpret_cast<Registry::Target_Info *>(target->build_context.info);
 
     copy_memory(update_set.files + last_info->files_offset,
                 registry.records.files + last_info->files_offset,
@@ -827,28 +815,28 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
     *info = *last_info;
   }
-  */
 
-  /*
-  while (build_queue.has_unfinished_tasks()) builders.execute_task(arena);
+  auto main_thread_local_context = Target_Builder_Context(arena);
+  while (task_system.has_unfinished_tasks())
+    task_system.execute_task(main_thread_local_context);
 
-  if (registry_enabled) flush_registry(&registry, &update_set);
+  if (registry_enabled) flush_registry(registry, update_set);
 
-  for (auto tracker: build_plan) {
-    fassert(tracker->compile_status.value != Target_Compile_Status::Compiling,
-            "INVALID STATE: Target '%' is still waiting for one or more files to be built",
-            tracker->target->name);
+  for (auto tracker: build_plan.selected_targets) {
+    assert_msg(tracker->compile_status.value != Target_Compile_Status::Compiling,
+               format_string(arena,
+                             "INVALID STATE: Target '%' is still waiting for one or more files to be built",
+                             tracker->target->name));
 
-    fassert(tracker->link_status.value != Target_Link_Status::Waiting,
-            "INVALID STATE: Target '%' is still waiting on one or more of its dependencies",
-            tracker->target->name);
+    assert_msg(tracker->link_status.value != Target_Link_Status::Waiting,
+               format_string(arena, "INVALID STATE: Target '%' is still waiting on one or more of its dependencies",
+                             tracker->target->name));
 
     if ((tracker->compile_status.value != Target_Compile_Status::Success) ||
         (tracker->link_status.value    != Target_Link_Status::Success)) {
-      trap("Building target '%' finished with errors", tracker->target->name);
+      panic("Building target '%' finished with errors", tracker->target->name);
     }
   }
-  */
 
   return 0;
 }

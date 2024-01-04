@@ -8,8 +8,7 @@
 #include "anyfin/platform/file_system.hpp"
 
 #include "cbuild.hpp"
-
-struct Project;
+#include "cbuild_api.hpp"
 
 enum struct Configuration_Type { C, Cpp };
 

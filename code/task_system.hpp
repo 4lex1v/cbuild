@@ -148,8 +148,8 @@ struct Task_System {
   }
 
   bool has_unfinished_tasks () {
-    auto submitted = atomic_load(this->semaphore);
-    auto completed = atomic_load(this->semaphore);
+    auto submitted = atomic_load(this->queue.tasks_submitted);
+    auto completed = atomic_load(this->queue.tasks_completed);
 
     assert(submitted <= completed);
 

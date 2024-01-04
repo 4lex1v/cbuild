@@ -57,7 +57,7 @@ static void split_version (const char* version, int* major, int* minor, int* pat
 // Without linking with CRT, local static variables are not supported
 static Option<File_Path> msvc_installation_path;
 static Option<String_View> get_msvc_installation_path (Memory_Arena &arena) {
-  if (msvc_installation_path) return Option(String_View(*msvc_installation_path));
+  if (msvc_installation_path) return String_View(msvc_installation_path.get());
 
   auto program_files_path = get_program_files_path(arena);
 
@@ -77,8 +77,7 @@ static Option<String_View> get_msvc_installation_path (Memory_Arena &arena) {
   String path;
   do {
     if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-      if ((strcmp(data.cFileName, ".")  == 0) ||
-          (strcmp(data.cFileName, "..") == 0)) continue;
+      if (data.cFileName[0] == '.') continue;
 
       split_version(data.cFileName, &major, &minor, &patch);
 
@@ -100,7 +99,7 @@ static Option<String_View> get_msvc_installation_path (Memory_Arena &arena) {
 
   msvc_installation_path = Option(move(path));
 
-  return Option(String_View(*msvc_installation_path));
+  return String_View(msvc_installation_path.get());
 }
 
 static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena, bool force_clang = false) {
@@ -279,7 +278,7 @@ static Option<Windows_SDK> find_windows_sdk (Memory_Arena &arena) {
       /*
         According to the SDK naming scheme it always starts with 10. for Win10+ and the same still holds for Win11.
        */
-      assert(strcmp(data.cFileName, "10.") != 0);
+      assert(compare_strings(String_View(data.cFileName), "10.") != 0);
 
       int minor = 0, revision = 0, build = 0;
       split_version(data.cFileName + 3, &minor, &revision, &build);
@@ -301,11 +300,11 @@ static Option<Windows_SDK> find_windows_sdk (Memory_Arena &arena) {
 }
 
 List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architecture) {
-  auto sdk = find_windows_sdk(arena);
-  if (!sdk) return {};
+  auto [sdk_found, sdk] = find_windows_sdk(arena);
+  if (!sdk_found) return {};
 
-  auto msvc = get_msvc_installation_path(arena);
-  if (!msvc) return {};
+  auto [msvc_found, msvc] = get_msvc_installation_path(arena);
+  if (!msvc_found) return {};
 
   auto get_current_value = [&arena] (const char *name) -> Option<String> {
     auto value_size = GetEnvironmentVariable(name, nullptr, 0);
@@ -322,13 +321,13 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
   get_current_value("INCLUDE").handle_value([&] (auto &include_env_var) {
     list_push(previous, Env_Var { String::copy(arena, "INCLUDE"), String::copy(arena, String_View(include_env_var)) });
 
-    auto base_win_sdk_include_folder_path = format_string(arena, "%\\Include\\%", sdk->base_path, sdk->version);
+    auto base_win_sdk_include_folder_path = format_string(arena, "%\\Include\\%", sdk.base_path, sdk.version);
 
     auto local = arena;
 
     String_Builder includes { local };
     {
-      includes += format_string(local, "%\\include",  *msvc);
+      includes += format_string(local, "%\\include",  msvc);
       includes += format_string(local, "%\\cppwinrt", base_win_sdk_include_folder_path);
       includes += format_string(local, "%\\shared",   base_win_sdk_include_folder_path);
       includes += format_string(local, "%\\ucrt",     base_win_sdk_include_folder_path);
@@ -344,13 +343,13 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
     list_push(previous, Env_Var { String::copy(arena, "LIB"), String::copy(arena, String_View(lib_env_var)) });
 
     auto target_platform          = String_View((architecture == Target_Arch_x86) ? "x86" : "x64");
-    auto base_libpath_folder_path = format_string(arena, "%\\Lib\\%", sdk->base_path, sdk->version);
+    auto base_libpath_folder_path = format_string(arena, "%\\Lib\\%", sdk.base_path, sdk.version);
 
     auto local = arena;
 
     String_Builder libpaths { local };
     {
-      libpaths += format_string(local, "%\\lib\\%", *msvc, target_platform);
+      libpaths += format_string(local, "%\\lib\\%", msvc, target_platform);
       libpaths += format_string(local, "%\\ucrt\\%", base_libpath_folder_path, target_platform);
       libpaths += format_string(local, "%\\um\\%", base_libpath_folder_path, target_platform);
       libpaths += lib_env_var;

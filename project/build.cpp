@@ -134,7 +134,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     // char exports_option[256] = "/def:";
     // snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
     // add_linker_option(cbuild, exports_option);
-    link_with(cbuild, "kernel32.lib", "advapi32.lib", "winmm.lib");
+    link_with(cbuild, "kernel32.lib", "advapi32.lib", "shell32.lib", "winmm.lib");
   }
 
   // auto rdump = add_executable(project, "rdump");

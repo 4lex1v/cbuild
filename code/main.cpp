@@ -3,7 +3,6 @@
 #include "anyfin/core/memory.hpp"
 #include "anyfin/core/option.hpp"
 #include "anyfin/core/result.hpp"
-#include "anyfin/core/seq.hpp"
 #include "anyfin/core/strings.hpp"
 
 #include "anyfin/platform/startup.hpp"
@@ -11,7 +10,6 @@
 #include "anyfin/platform/timers.hpp"
 
 #include "cbuild.hpp"
-#include "cbuild_api.hpp"
 #include "driver.hpp"
 #include "project_loader.hpp"
 #include "target_builder.hpp"
@@ -203,50 +201,60 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
     {'s', "silence", &global_flags.silenced},
   };
 
-  while (true) {
-    auto &arg = *args;
-    
-    if (arg.is_value())    return;
-    if (arg.key[0] != '-') return; // It's required that flags start with -- or -, for full- or short- name
+  usize parsed_flags = 0;
+  for (auto& arg : args) {
+    /*
+      Global flags should always come before other input arguments. If we see a token that doesn't start with a dash,
+      that's not a global flag and should be parsed at a later stage.
+     */
+    if (arg.key[0] != '-') break;
 
+    /*
+      Flags should always be prefixed with a single or double dash, thus in the shortest case it should at least be of
+      length 2, if it's not there's something wrong.
+     */
     if (arg.key.length < 2) panic("Incomplete flag value passed");
 
     if (arg.key[1] != '-') {
-      // Parsing a chain a single character switches, similar to how most Unix tools can group flags, e.g `tar -zcvf myfile.tgz .`
+      // Parsing single character switches
       for (int idx = 1; idx < arg.key.length; idx++) {
-        bool* flag = nullptr;
-        for (auto& option: table) {
+        bool found = false;
+        for (auto& option : table) {
           if (option.short_name == arg.key[idx]) {
-            flag = option.flag;
+            if (*option.flag) print("Flag -%c is duplicated and has no effect\n", arg.key[idx]);
+
+            *option.flag = true;
+            found        = true;
+
             break;
           }
         }
 
-        if (flag == nullptr) panic("Flag '-%' is not supported", arg.key[idx]);
-        if (*flag)           print("Flag -% is a duplicated and has no affect\n", arg.key[idx]);
-
-        *flag = true;
+        if (!found) panic("Flag '-%c' is not supported", arg.key[idx]);
       }
     } else {
+      // Parsing long name flags
       if (arg.key.length < 3) panic("Incomplete flag value passed");
 
-      bool* flag = nullptr;
-      for (auto& option: table) {
+      bool found = false;
+      for (auto& option : table) {
         if (!compare_strings(arg.key + 2, String_View(option.name))) {
-          // offset first 2 --
-          flag = option.flag;
+          if (*option.flag) print("Flag %s is duplicated and has no effect\n", arg.key);
+
+          *option.flag = true;
+          found        = true;
+
           break;
         }
       }
 
-      if (flag == nullptr) panic("Flag '%' is not supported", arg.key);
-      if (*flag) print("Flag % is a duplicated and has no affect\n", arg.key);
-
-      *flag = true;
+      if (!found) panic("Flag '%s' is not supported", arg.key);
     }
 
-    args++;
+    parsed_flags += 1;
   }
+
+  args += parsed_flags;
 }
 
 static CLI_Command parse_command (Slice<Startup_Argument> &args) {
@@ -376,16 +384,5 @@ void * memcpy (void *destination, const void *source, size_t count) {
 
   return destination;
 }
-
-// #pragma function(memcpy)
-// int memcpy_s (void *const destination, unsigned __int64, void const *const source, unsigned __int64 count) {
-//   auto from = reinterpret_cast<const u8 *>(source);
-//   auto to   = reinterpret_cast<u8 *>(destination);
-//   for (size_t idx = 0; idx < count; idx++) {
-//     to[idx] = from[idx];
-//   }
-
-//   return 0;
-// }
 
 }

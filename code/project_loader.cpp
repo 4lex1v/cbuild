@@ -42,34 +42,35 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
   auto code_directory_path = make_file_path(arena, working_directory, "code");
   create_resource(code_directory_path, Resource_Type::Directory).expect();
 
+  const auto generate_file = [&arena] <usize N> (File_Path &&path, const u8 (&data)[N]) {
+    using enum File_System_Flags;
+
+    auto path_view = String_View(path);
+    auto [open_failed, error, file] = open_file(move(path), Write_Access | Create_Missing);
+    if (open_failed) panic("Failed to open file '%' for writing due to an error: %", path_view, error);
+
+    write_buffer_to_file(file, Slice(data, N))
+      .expect(format_string(arena, "Failed to write data into the file '%'", file.path));
+
+     close_file(file).expect(format_string(arena, "Failed to close file '%'", file.path));
+  };
+
   auto cbuild_h_path     = make_file_path(arena, project_directory_path, "cbuild.h");
   auto cbuild_exp_h_path = make_file_path(arena, project_directory_path, "cbuild_experimental.h");
   auto main_path         = make_file_path(arena, code_directory_path,    "main.cpp");
 
-  const auto generate_file = [&arena] <usize N> (const File_Path &path, const u8 (&data)[N]) {
-    using enum File_System_Flags;
-
-    auto file = open_file(arena, path, Write_Access | Create_Missing)
-      .take(format_string(arena, "Failed to open file '%' for writing.", path));
-
-    write_buffer_to_file(file, Slice(data, N))
-      .expect(format_string(arena, "Failed to write data into the file '%'", path));
-
-     close_file(file).expect(format_string(arena, "Failed to close file '%'", path));
-  };
-
-  generate_file(cbuild_h_path,     cbuild_api_content);
-  generate_file(cbuild_exp_h_path, cbuild_experimental_api_content);
-  generate_file(build_file_path,   build_template_content);
-  generate_file(main_path,         main_cpp_content);
+  generate_file(move(cbuild_h_path),     cbuild_api_content);
+  generate_file(move(cbuild_exp_h_path), cbuild_experimental_api_content);
+  generate_file(move(build_file_path),   build_template_content);
+  generate_file(move(main_path),         main_cpp_content);
 
   print("Project initialized\n");
 }
 
 void cleanup_workspace (Memory_Arena &arena, bool full_cleanup) {
-  delete_resource(make_file_path(arena, ".cbuild", "build"), Resource_Type::Directory).expect();
+  delete_resource(arena, make_file_path(arena, ".cbuild", "build"), Resource_Type::Directory).expect();
   if (full_cleanup) {
-    delete_resource(make_file_path(arena, ".cbuild", "project"), Resource_Type::Directory).expect();
+    delete_resource(arena, make_file_path(arena, ".cbuild", "project"), Resource_Type::Directory).expect();
   }
 }
 
@@ -180,13 +181,12 @@ static void build_project_configuration (
       auto cbuild_import_path = make_file_path(local, workspace.project_output_directory_path,
                                                format_string(local, "cbuild.%", get_static_library_extension()));
 
-      auto export_file = open_file(arena, cbuild_import_path, Write_Access | Create_Missing)
-        .take("Couldn't create export file to write data to.\n");
+      auto [open_failed, error, export_file] = open_file(move(cbuild_import_path), Write_Access | Create_Missing);
+      if (open_failed) panic("Couldn't create export file to write data to due to an error: %.\n", error);
+      defer { close_file(export_file); };
 
       write_buffer_to_file(export_file, cbuild_lib_content)
         .expect("Failed to write win32 export data into a file.\n");
-
-      close_file(export_file);
 
       builder += format_string(local,
                                "/nologo /dll /debug:full /defaultlib:libcmt /export:cbuild_api_version /export:setup_project \"%\\*.obj\" \"%\" /out:\"%\"",
@@ -295,9 +295,8 @@ Project load_project (
      If the project was rebuilt, update configuration's timestamp in the tags file.
    */
 
-  auto build_file = open_file(arena, build_file_path)
-    .take("Failed to open project's configuration file.");
-
+  auto [open_failed, error, build_file] = open_file(move(build_file_path));
+  if (open_failed) panic("Failed to open project's configuration file due to an error: %", error);
   defer { close_file(build_file); };
 
   auto build_file_timestamp = get_last_update_timestamp(build_file)
@@ -320,7 +319,7 @@ Project load_project (
       .get("Failed to find any suitable toolchain on the host machine to "
            "build & load the project's configuration file.\n");
 
-    build_project_configuration(arena, workspace, project_name, build_file_path, project_library_file_path, toolchain);
+    build_project_configuration(arena, workspace, project_name, build_file.path, project_library_file_path, toolchain);
   }
 
   Project project {
@@ -381,15 +380,15 @@ void update_cbuild_api_file (Memory_Arena &arena, const File_Path &working_direc
   for (auto &[file_name, data]: input) {
     using enum File_System_Flags;
 
-    auto file_path = make_file_path(arena, working_directory, "project", file_name);
+    auto file_path      = make_file_path(arena, working_directory, "project", file_name);
+    auto file_path_view = String_View(file_path);
 
-    auto file = open_file(arena, file_path, Write_Access | Create_Missing)
-      .take(format_string(arena, "Couldn't open file %", file_path));
+    auto [open_failed, error, file] = open_file(move(file_path), Write_Access | Create_Missing);
+    if (open_failed) panic("Couldn't open file % due to an error: %.\n", file_path_view, error);
 
     write_buffer_to_file(file, data)
-      .expect("Failed to write data to the generated header file");
+      .expect("Failed to write data to the generated header file.\n");
 
-    close_file(file).expect("Failed to close the generate header file's handle");
+    close_file(file).expect("Failed to close the generate header file's handle.\n");
   }
-
 }
