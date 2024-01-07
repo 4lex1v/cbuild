@@ -286,7 +286,8 @@ int mainCRTStartup () {
   defer {
     if (!silence_report) {
       auto end_stamp = get_timer_value();
-      auto elapsed = get_elapsed_millis(get_timer_frequency(), start_stamp, end_stamp);
+      auto elapsed   = get_elapsed_millis(get_timer_frequency(), start_stamp, end_stamp);
+
       print("Finished in: %ms\n", elapsed);
     }
   };
@@ -307,7 +308,7 @@ int mainCRTStartup () {
     }
   }
 
-  auto working_directory_path = *get_working_directory_path(arena);
+  auto working_directory_path = *get_working_directory(arena);
   if (!global_flags.silenced) print("Working directory: %\n", working_directory_path);
 
   if (command_type == CLI_Command::Init) {

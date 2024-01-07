@@ -1,4 +1,4 @@
--std=c++20
+-std=c++2b
 -DPLATFORM_WIN32
 -DPLATFORM_X64
 -DVERSION=\"00000000\"

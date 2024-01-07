@@ -427,7 +427,7 @@ Project_Ref * register_external_project (Project *project, const Arguments *args
 
   // auto sub_project = push_struct<Project>(arena, arena, external_name, sub_project_path, project->toolchain);
 
-  // auto working_directory = *get_working_directory_path(arena);
+  // auto working_directory = *get_working_directory(arena);
 
   // auto status = load_project(arena, args, working_directory, sub_project);
   // if (!status) {

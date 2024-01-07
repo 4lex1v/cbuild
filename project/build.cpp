@@ -94,10 +94,11 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   char versions[256];
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
-  add_global_compiler_options(project, "-std=c++20",
+  add_global_compiler_options(project, "-std=c++2b",
                               versions,
                               "-DPLATFORM_X64 -DPLATFORM_WIN32",
-                              "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths");
+                              "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
+                              "-Wno-vla-cxx-extension");
 
   if (is_debug) add_global_compiler_option(project, "-O0 -DDEV_BUILD -g -gcodeview");
   else          add_global_compiler_option(project, "-O3");
@@ -128,7 +129,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/registry.cpp");
     add_source_file(cbuild, "code/target_builder.cpp");
 
-    add_compiler_options(cbuild, "-fno-exceptions -mno-stack-arg-probe -nostdlib -nostdlib++ -nostdinc++");
+    add_compiler_options(cbuild, "-fno-exceptions -nostdlib -nostdlib++ -nostdinc++");
     add_include_search_path(cbuild, "libs/anyfin");
 
     // char exports_option[256] = "/def:";
@@ -145,12 +146,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   //   link_with(rdump, "kernel32.lib", "advapi32.lib");
   // }
 
-  // auto tests = add_executable(project, "tests");
-  // {
-  //   add_all_sources_from_directory(tests, "tests", "cpp", false);
-  //   add_source_files(tests, "code/platform_win32.cpp", "code/cbuild_api.cpp", "code/toolchain_win32.cpp", "code/strings.cpp");
-  //   link_with(tests, "kernel32.lib", "advapi32.lib");
-  // }
+  auto tests = add_executable(project, "tests");
+  {
+    add_all_sources_from_directory(tests, "tests", "cpp", false);
+    add_source_files(tests, "code/cbuild_api.cpp", "code/toolchain_win32.cpp");
+
+    add_include_search_path(tests, "libs/anyfin");
+
+    link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib");
+  }
 
   // if (config == "release") {
   //   char release_folder[128];

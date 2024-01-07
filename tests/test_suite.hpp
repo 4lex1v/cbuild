@@ -1,59 +1,60 @@
 
 #include <initializer_list>
 
-#include "code/arena.hpp"
-#include "code/base.hpp"
-#include "code/result.hpp"
-#include "code/runtime.hpp"
+#include "anyfin/base.hpp"
+
+#include "anyfin/core/arena.hpp"
+#include "anyfin/core/result.hpp"
+#include "anyfin/core/callsite.hpp"
+
+#include "anyfin/platform/commands.hpp"
+#include "anyfin/platform/file_system.hpp"
+#include "anyfin/platform/console.hpp"
+
+using namespace Fin::Core;
+using namespace Fin::Platform;
 
 struct Test_Failed_Exception {
-  enum Type_Tag {
-    Execution,
-    General,
-    Equality
-  };
+  enum Type_Tag { Execution, General, Equality };
 
   Type_Tag tag;
 
-  const char *filename;
-  u32         line;
-  const char *message;
+  Callsite_Info callsite;
+  String_View   message;
 
-  String expr;
-  String expr_lhs;
-  String expr_lhs_value;
-  String expr_rhs;
-  String expr_rhs_value;
-  String details;
+  String_View expr;
+  String_View expr_lhs;
+  String_View expr_lhs_value;
+  String_View expr_rhs;
+  String_View expr_rhs_value;
+  String_View details;
 };
 
 #define require_success(EXPR) require(capture_status(EXPR) == Status_Code::Success)
 
-#define require(EXPR)                                 \
-  if (!static_cast<bool>(EXPR))                                \
-    throw Test_Failed_Exception {                     \
-      .tag      = Test_Failed_Exception::General,     \
-      .filename = __FILE__,                           \
-      .line     = static_cast<u32>(__LINE__),         \
-      .expr     = #EXPR,                              \
-    }                                                 \
+#define require(EXPR)                             \
+  if (!static_cast<bool>(EXPR))                   \
+    throw Test_Failed_Exception {                 \
+      .tag      = Test_Failed_Exception::General, \
+      .callsite = Callsite_Info(),                \
+      .expr     = #EXPR,                          \
+    }                                             \
 
-#define require_eq(EXPR_LHS, EXPR_RHS)                            \
-  {                                                               \
-    const auto lhs_value = (EXPR_LHS);              \
-    const auto rhs_value = (EXPR_RHS);              \
-    if (lhs_value != rhs_value) {                                 \
-      throw Test_Failed_Exception {                          \
-        .tag      = Test_Failed_Exception::Equality,              \
-        .filename = __FILE__,                                     \
-        .line     = static_cast<u32>(__LINE__),                   \
+#define require_eq(EXPR_LHS, EXPR_RHS)                              \
+  {                                                                 \
+    const auto lhs_value = (EXPR_LHS);                              \
+    const auto rhs_value = (EXPR_RHS);                              \
+    if (lhs_value != rhs_value) {                                   \
+      throw Test_Failed_Exception {                                 \
+        .tag      = Test_Failed_Exception::Equality,                \
+        .callsite = Callsite_Info(),                                \
         .expr     = stringify(EXPR_LHS) " == " stringify(EXPR_RHS), \
-        .expr_lhs = #EXPR_LHS,                                    \
-        .expr_lhs_value = to_string(arena, lhs_value),            \
-        .expr_rhs = #EXPR_RHS,                                    \
-        .expr_rhs_value = to_string(arena, rhs_value),            \
-      };                                                          \
-    }                                                             \
+        .expr_lhs = #EXPR_LHS,                                      \
+        .expr_lhs_value = to_string(arena, lhs_value),              \
+        .expr_rhs = #EXPR_RHS,                                      \
+        .expr_rhs_value = to_string(arena, rhs_value),              \
+      };                                                            \
+    }                                                               \
   }
 
 #define require_lt(EXPR_LHS, EXPR_RHS)                            \
@@ -77,7 +78,7 @@ struct Test_Failed_Exception {
 struct Test_Case {
   typedef void (*Case_Step)(Memory_Arena *arena);
 
-  String name;
+  String_View name;
 
   Case_Step case_code;
   Case_Step before;
@@ -98,18 +99,18 @@ struct Test_Case {
 struct Test_Suite_Runner {
   mutable Memory_Arena arena;
 
-  String suite_filter;
-  String case_filter;
+  String_View suite_filter;
+  String_View case_filter;
 
-  List<String> failed_suites;
+  List<String_View> failed_suites;
 
   template <const usize N>
-  void run (const String &suite_name, const Test_Case (&cases)[N]) {
-    if (suite_filter.is_empty() || compare_strings(suite_filter, suite_name)) {
-      print(&this->arena, "Suite: %\n", suite_name);
+  void run (const String_View &suite_name, const Test_Case (&cases)[N]) {
+    if (is_empty(suite_filter) || compare_strings(suite_filter, suite_name)) {
+      print("Suite: %\n", suite_name);
 
       for (auto &test_case: cases) {
-        if (case_filter.is_empty() || compare_strings(case_filter, test_case.name)) {
+        if (is_empty(case_filter) || compare_strings(case_filter, test_case.name)) {
           enum struct Status {
             Success,
             Setup_Failed,
@@ -123,12 +124,12 @@ struct Test_Suite_Runner {
             auto offset = arena.offset;
             defer { arena.offset = offset; };
 
-            print(&arena, "  - %\n", test_case.name);
+            print("  - %\n", test_case.name);
 
             if (test_case.before) {
               try { test_case.before(&arena); }
               catch (const Test_Failed_Exception &error) {
-                print(&arena, "    CASE SETUP FAILED\n");
+                print("    CASE SETUP FAILED\n");
                 status = Status::Setup_Failed;
               }
             }
@@ -137,37 +138,38 @@ struct Test_Suite_Runner {
               try { test_case.case_code(&arena); }
               catch (const Test_Failed_Exception &error) {
                 status = Status::Case_Failed;
+
+                auto filename = String_View(error.callsite.file);
+                auto function = String_View(error.callsite.function);
+                auto line     = error.callsite.line;
+
                 switch (error.tag) {
                   case Test_Failed_Exception::General: {
-                    print(&arena,
-                          "   Status:\tFailed\n"
+                    print("   Status:\tFailed\n"
                           "   Position:\t[%:%]\n"
                           "   Expression:\t%\n",
-                          error.filename, error.line, error.expr);
+                          filename, line, error.expr);
 
                     break;
                   }
                   case Test_Failed_Exception::Equality: {
-                    print(&arena,
-                          "   Status:\tFailed\n"
+                    print("   Status:\tFailed\n"
                           "   Position:\t[%:%]\n"
                           "   Expression:\t%,\n"
                           "\t\twhere\n"
                           "\t\t    % = '%'\n"
                           "\t\t    % = '%'\n",
-                          error.filename, error.line, error.expr,
+                          filename, line, error.expr,
                           error.expr_lhs, error.expr_lhs_value,
                           error.expr_rhs, error.expr_rhs_value);
 
                     break;
                   }
                   case Test_Failed_Exception::Execution: {
-                    print(&arena,
-                          "   Status:\tFailed\n"
+                    print("   Status:\tFailed\n"
                           "   Position:\t[%:%]\n"
                           "   Details:\t%\n",
-                          error.filename, error.line,
-                          error.details);
+                          filename, line, error.details);
 
                     break;
                   }
@@ -178,14 +180,13 @@ struct Test_Suite_Runner {
             if (status != Status::Setup_Failed && test_case.after) {
               try { test_case.after(&arena); }
               catch (const Test_Failed_Exception &error) {
-                print(&arena, "    CASE CLEANUP FAILED\n");
+                print("    CASE CLEANUP FAILED\n");
                 status = Status::Cleanup_Failed;
               }
             }
           }
 
-          if (status != Status::Success)
-            add(&arena, &failed_suites, copy_string(&arena, test_case.name));
+          if (status != Status::Success) list_push_copy(failed_suites, test_case.name);
         }
       }
     }
@@ -193,14 +194,15 @@ struct Test_Suite_Runner {
 
   int report () const {
     if (failed_suites.count == 0) {
-      print(&arena, "\nSUCCESS");
+      print("\nSUCCESS");
       return 0;
     }
 
-    print(&arena, "\n\nFAILED (%): ", failed_suites.count);
-    for (auto &name: failed_suites) print(&arena, "%, ", name);
-    print(&arena, "\n");
+    print("\n\nFAILED (%): ", failed_suites.count);
+    for (auto &name: failed_suites) print("%, ", name);
+    print("\n");
 
     return 1;
   }
 };
+

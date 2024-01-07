@@ -68,10 +68,8 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
 }
 
 void cleanup_workspace (Memory_Arena &arena, bool full_cleanup) {
-  delete_resource(arena, make_file_path(arena, ".cbuild", "build"), Resource_Type::Directory).expect();
-  if (full_cleanup) {
-    delete_resource(arena, make_file_path(arena, ".cbuild", "project"), Resource_Type::Directory).expect();
-  }
+  delete_directory(make_file_path(arena, ".cbuild", "build")).expect();
+  if (full_cleanup) delete_directory(make_file_path(arena, ".cbuild", "project")).expect();
 }
 
 static inline void load_project_from_library (

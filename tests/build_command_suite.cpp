@@ -1,7 +1,5 @@
 
-#include "code/base.hpp"
-#include "code/platform.hpp"
-#include "code/runtime.hpp"
+#include <cstring>
 
 #include "test_suite.hpp"
 
@@ -9,52 +7,49 @@ extern File_Path working_directory; // Path to the root directory where the 'ver
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 extern File_Path binary_path;       // Executable under test
 
-static void setup_workspace (Memory_Arena *arena) {
-  if (check_directory_exists(&workspace)) delete_directory(workspace);
-  create_directory(&workspace);
+static void setup_workspace (Memory_Arena &arena) {
+  if (check_directory_exists(workspace)) delete_directory(workspace);
+  create_directory(workspace);
   set_working_directory(workspace);
 }
 
-static void setup_testbed (Memory_Arena *arena) {
-  if (check_directory_exists(&workspace)) delete_directory(workspace);
-  create_directory(&workspace);
+static void setup_testbed (Memory_Arena &arena) {
+  if (check_directory_exists(workspace)) delete_directory(workspace);
+  create_directory(workspace);
 
-  auto testbed_path = *make_file_path(arena, working_directory, "tests", "testbed");
-  copy_directory_content(arena, testbed_path, workspace);
+  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
+  copy_directory(testbed_path, workspace);
 
   set_working_directory(workspace);
 }
 
-static void cleanup_workspace (Memory_Arena *arena) {
+static void cleanup_workspace (Memory_Arena &arena) {
   set_working_directory(working_directory);
   delete_directory(workspace);
 }
 
-static void build_init_project_tests (Memory_Arena *arena) {
-  auto init_command = format_string(arena, "% init", binary_path);
+static void build_init_project_tests (Memory_Arena &arena) {
+  auto init_command    = format_string(arena, "% init", binary_path);
   auto init_cmd_result = run_system_command(arena, init_command);
-  require(init_cmd_result.status == Status_Code::Success);
+  require(init_cmd_result);
 
-  auto build_command = format_string(arena, "% build", binary_path);
-  auto [status, output] = run_system_command(arena, build_command);
-  if (!status) print(arena, "%\n", output);
-
-  require(status == Status_Code::Success);
+  auto build_command    = format_string(arena, "% build", binary_path);
+  auto build_cmd_result = run_system_command(arena, build_command);
+  require(build_cmd_result);
 
   auto output_folder = make_file_path(arena, ".cbuild");
-  require(check_directory_exists(&output_folder));
+  require(check_directory_exists(output_folder));
 
-  auto produced_binary_path = make_file_path(arena, *output_folder, "build", "out", "main.exe");
-  require(check_file_exists(&produced_binary_path));
+  auto produced_binary_path = make_file_path(arena, output_folder, "build", "out", "main.exe");
+  require(check_file_exists(produced_binary_path));
 
   auto run_command = format_string(arena, "%", produced_binary_path);
-  auto result = run_system_command(arena, run_command);
-  if (!result.status) print(arena, "%\n", result.output);
-  require(result.status == Status_Code::Success);
-  require(strstr(result.output, "Thank you for trying cbuild!"));
+  auto cmd_result = run_system_command(arena, run_command);
+  require(cmd_result);
+  require(strstr(cmd_result.value, "Thank you for trying cbuild!"));
 }
 
-static String build_testbed (Memory_Arena *arena, const String &extra_arguments = {}) {
+static String build_testbed (Memory_Arena &arena, const String &extra_arguments = {}) {
   auto build_command = format_string(arena, "% build %", binary_path, extra_arguments);
   auto [status, output] = run_system_command(arena, build_command);
   if (!status) print(arena, "%\n", output);
@@ -116,15 +111,15 @@ static void count_lines_starting_with (String output, const String &start_with, 
   require(count == expected_count);
 }
 
-static void build_testbed_tests (Memory_Arena *arena) {
+static void build_testbed_tests (Memory_Arena &arena) {
   const char *toolchains [] { "msvc_x86", "msvc_x64", "llvm", "llvm_cl" };
   const char *configs    [] { "debug", "release" };
 
-  auto cbuild_output_folder = *make_file_path(arena, ".cbuild");
+  auto cbuild_output_folder = make_file_path(arena, ".cbuild");
 
   for (auto toolchain: toolchains) {
     for (auto config: configs) {
-      auto local = *arena;
+      auto local = &arena;
 
       auto command = format_string(&local, "% build toolchain=% config=%", binary_path, toolchain, config);
       auto result = run_system_command(&local, command);
@@ -160,7 +155,7 @@ static void build_testbed_tests (Memory_Arena *arena) {
 
       count_lines_starting_with(result.output, "Building file", 9);
 
-      require(check_directory_exists(&cbuild_output_folder));
+      require(check_directory_exists(cbuild_output_folder));
 
       validate_binary1(arena);
       validate_binary2(arena);
@@ -170,7 +165,7 @@ static void build_testbed_tests (Memory_Arena *arena) {
   }
 }
 
-static void build_registry_tests (Memory_Arena *arena) {
+static void build_registry_tests (Memory_Arena &arena) {
   auto executable_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
 
   auto output = build_testbed(arena);
@@ -201,7 +196,7 @@ static void build_registry_tests (Memory_Arena *arena) {
   }
 }
 
-static void build_changes_tests (Memory_Arena *arena) {
+static void build_changes_tests (Memory_Arena &arena) {
   auto output = build_testbed(arena);
   count_lines_starting_with(output, "Building file", 9);
 
@@ -217,8 +212,8 @@ void library2 () {
 }
 )lib";
 
-  auto old_library_path = *make_file_path(arena, "code", "library2", "library2.cpp");
-  auto new_library_path = *make_file_path(arena, "code", "library2", "new_library2.cpp");
+  auto old_library_path = make_file_path(arena, "code", "library2", "library2.cpp");
+  auto new_library_path = make_file_path(arena, "code", "library2", "new_library2.cpp");
 
   delete_file(old_library_path);
 
@@ -273,14 +268,14 @@ void library2 () {
   }
 }
 
-static void build_errors_tests (Memory_Arena *arena) {
+static void build_errors_tests (Memory_Arena &arena) {
   auto output = build_testbed(arena);
   count_lines_starting_with(output, "Building file", 9);
 
   validate_binary1(arena);
   validate_binary2(arena);
 
-  auto file_path = *make_file_path(arena, "code", "dynamic1", "dynamic1.cpp");
+  auto file_path = make_file_path(arena, "code", "dynamic1", "dynamic1.cpp");
   auto file      = open_file(&file_path);
   auto mapping   = *map_file_into_memory(&file);
 
@@ -314,8 +309,8 @@ void library2 () {
 }
 )lib";
 
-  auto old_library_path = *make_file_path(arena, "code", "library2", "library2.cpp");
-  auto new_library_path = *make_file_path(arena, "code", "library2", "new_library2.cpp");
+  auto old_library_path = make_file_path(arena, "code", "library2", "library2.cpp");
+  auto new_library_path = make_file_path(arena, "code", "library2", "new_library2.cpp");
 
   delete_file(old_library_path);
 
@@ -372,7 +367,7 @@ EXPORT_SYMBOL void dynamic1 () {
   }
 }
 
-static void test_modify_file (Memory_Arena *arena, const File_Path *file_path) {
+static void test_modify_file (Memory_Arena &arena, const File_Path *file_path) {
   auto file      = open_file(file_path, Open_File_Flags::Request_Write_Access); require(file.status);
   auto mapping   = map_file_into_memory(&file); require(mapping.status);
 
@@ -389,7 +384,7 @@ static void test_modify_file (Memory_Arena *arena, const File_Path *file_path) {
   close_file(&file);
 }
 
-static void build_project_tests (Memory_Arena *arena) {
+static void build_project_tests (Memory_Arena &arena) {
   auto output = build_testbed(arena);
   count_lines_starting_with(output, "Building file", 9);
   count_lines_starting_with(output, "Linking target", 9);
@@ -417,7 +412,7 @@ static void build_project_tests (Memory_Arena *arena) {
   }
 }
 
-static void build_cache_tests (Memory_Arena *arena) {
+static void build_cache_tests (Memory_Arena &arena) {
   build_testbed(arena, "cache=off");
   validate_binary1(arena);
   validate_binary2(arena);
@@ -450,7 +445,7 @@ static void build_cache_tests (Memory_Arena *arena) {
   validate_binary2(arena);
 }
 
-static void build_targets_tests (Memory_Arena *arena) {
+static void build_targets_tests (Memory_Arena &arena) {
   auto output = build_testbed(arena, "targets=library1");
   count_lines_starting_with(output, "Building file",  1); // library1
   count_lines_starting_with(output, "Linking target", 1); // library1

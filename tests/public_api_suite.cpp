@@ -1,7 +1,4 @@
 
-#include "code/base.hpp"
-#include "code/platform.hpp"
-#include "code/runtime.hpp"
 #include "code/cbuild_api.hpp"
 #include "code/toolchain.hpp"
 
@@ -12,8 +9,6 @@
 
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
-
-Config_Crash_Handler crash_handler_hook;
 
 static void test_configuration_failure (u32 exit_code) {
   require(false);
@@ -33,13 +28,13 @@ static bool ensure_list_content (const List<E> &list, T&&... _values) {
   return true;
 }
 
-static void setup_workspace (Memory_Arena *arena) {
-  crash_handler_hook = test_configuration_failure;
+static void setup_workspace (Memory_Arena &arena) {
+  set_crash_handler(test_configuration_failure);
 
-  if (check_directory_exists(&workspace)) delete_directory(workspace);
-  create_directory(&workspace);
+  if (check_directory_exists(workspace)) delete_directory(workspace);
+  create_directory(workspace);
 
-  auto testbed_path = *make_file_path(arena, working_directory, "tests", "testbed");
+  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
   copy_directory_content(arena, testbed_path, workspace);
 
   set_working_directory(workspace);
@@ -133,7 +128,7 @@ static void output_location_test (Memory_Arena *arena) {
 
   require(project.output_location_path.is_empty());
 
-  String path = "somewhere/somehow/something";
+  String_View path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
   require(compare_strings(project.output_location_path, path));
