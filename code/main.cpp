@@ -4,6 +4,7 @@
 #include "anyfin/core/option.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/strings.hpp"
+//#include "anyfin/core/c_runtime_compat.hpp"
 
 #include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/console.hpp"
@@ -202,7 +203,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
   };
 
   usize parsed_flags = 0;
-  for (auto& arg : args) {
+  for (auto &arg: args) {
     /*
       Global flags should always come before other input arguments. If we see a token that doesn't start with a dash,
       that's not a global flag and should be parsed at a later stage.
@@ -260,7 +261,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
 static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   if (is_empty(args)) return CLI_Command::Help;
 
-  const auto arg = *args++;
+  auto arg = *args++;
   assert(arg.is_value());
 
   const auto command_name = arg.key;
@@ -363,27 +364,3 @@ int mainCRTStartup () {
   return 0;
 }
 
-extern "C" {
-
-#pragma function(memset)
-void * memset (void *destination, int value, size_t count) {
-  auto storage = reinterpret_cast<u8 *>(destination);
-  for (size_t idx = 0; idx < count; idx++) {
-    storage[idx] = static_cast<u8>(value);
-  }
-
-  return destination;
-}
-
-#pragma function(memcpy)
-void * memcpy (void *destination, const void *source, size_t count) {
-  auto from = reinterpret_cast<const u8 *>(source);
-  auto to   = reinterpret_cast<u8 *>(destination);
-  for (size_t idx = 0; idx < count; idx++) {
-    to[idx] = from[idx];
-  }
-
-  return destination;
-}
-
-}

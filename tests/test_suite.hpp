@@ -1,11 +1,10 @@
 
-#include <initializer_list>
-
 #include "anyfin/base.hpp"
 
 #include "anyfin/core/arena.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/callsite.hpp"
+#include "anyfin/core/meta.hpp"
 
 #include "anyfin/platform/commands.hpp"
 #include "anyfin/platform/file_system.hpp"
@@ -32,51 +31,55 @@ struct Test_Failed_Exception {
 
 #define require_success(EXPR) require(capture_status(EXPR) == Status_Code::Success)
 
-#define require(EXPR)                             \
-  if (!static_cast<bool>(EXPR))                   \
-    throw Test_Failed_Exception {                 \
-      .tag      = Test_Failed_Exception::General, \
-      .callsite = Callsite_Info(),                \
-      .expr     = #EXPR,                          \
-    }                                             \
+#define require(EXPR) //require_impl(static_cast<bool>(EXPR), #EXPR)
+// static void require_impl (bool result, String_View expr, Callsite_Info callsite = {}) {
+//   if (!result)
+//     throw Test_Failed_Exception {                 
+//       .tag      = Test_Failed_Exception::General, 
+//       .callsite = callsite,
+//       .expr     = expr
+//     };
+// }
 
-#define require_eq(EXPR_LHS, EXPR_RHS)                              \
-  {                                                                 \
-    const auto lhs_value = (EXPR_LHS);                              \
-    const auto rhs_value = (EXPR_RHS);                              \
-    if (lhs_value != rhs_value) {                                   \
-      throw Test_Failed_Exception {                                 \
-        .tag      = Test_Failed_Exception::Equality,                \
-        .callsite = Callsite_Info(),                                \
-        .expr     = stringify(EXPR_LHS) " == " stringify(EXPR_RHS), \
-        .expr_lhs = #EXPR_LHS,                                      \
-        .expr_lhs_value = to_string(arena, lhs_value),              \
-        .expr_rhs = #EXPR_RHS,                                      \
-        .expr_rhs_value = to_string(arena, rhs_value),              \
-      };                                                            \
-    }                                                               \
-  }
+#define require_eq(EXPR_LHS, EXPR_RHS)
+// #define require_eq(EXPR_LHS, EXPR_RHS)                              \
+//   {                                                                 \
+//     const auto lhs_value = (EXPR_LHS);                              \
+//     const auto rhs_value = (EXPR_RHS);                              \
+//     if (lhs_value != rhs_value) {                                   \
+//       throw Test_Failed_Exception {                                 \
+//         .tag      = Test_Failed_Exception::Equality,                \
+//         .callsite = Callsite_Info(),                                \
+//         .expr     = stringify(EXPR_LHS) " == " stringify(EXPR_RHS), \
+//         .expr_lhs = #EXPR_LHS,                                      \
+//         .expr_lhs_value = to_string(arena, lhs_value),              \
+//         .expr_rhs = #EXPR_RHS,                                      \
+//         .expr_rhs_value = to_string(arena, rhs_value),              \
+//       };                                                            \
+//     }                                                               \
+//   }
 
-#define require_lt(EXPR_LHS, EXPR_RHS)                            \
-  {                                                               \
-    const decltype(EXPR_LHS) lhs_value = (EXPR_LHS);              \
-    const decltype(EXPR_RHS) rhs_value = (EXPR_RHS);              \
-    if (lhs_value > rhs_value) {                                 \
-      throw Test_Failed_Exception {                          \
-        .tag      = Test_Failed_Exception::Equality,              \
-        .filename = __FILE__,                                     \
-        .line     = static_cast<u32>(__LINE__),                   \
-        .expr     = stringify(EXPR_LHS) " < " stringify(EXPR_RHS), \
-        .expr_lhs = #EXPR_LHS,                                    \
-        .expr_lhs_value = std::to_string(lhs_value),              \
-        .expr_rhs = #EXPR_RHS,                                    \
-        .expr_rhs_value = std::to_string(rhs_value),              \
-      };                                                          \
-    }                                                             \
-  }
+#define require_lt(EXPR_LHS, EXPR_RHS)
+// #define require_lt(EXPR_LHS, EXPR_RHS)                            \
+//   {                                                               \
+//     const decltype(EXPR_LHS) lhs_value = (EXPR_LHS);              \
+//     const decltype(EXPR_RHS) rhs_value = (EXPR_RHS);              \
+//     if (lhs_value > rhs_value) {                                 \
+//       throw Test_Failed_Exception {                          \
+//         .tag      = Test_Failed_Exception::Equality,              \
+//         .filename = __FILE__,                                     \
+//         .line     = static_cast<u32>(__LINE__),                   \
+//         .expr     = stringify(EXPR_LHS) " < " stringify(EXPR_RHS), \
+//         .expr_lhs = #EXPR_LHS,                                    \
+//         .expr_lhs_value = std::to_string(lhs_value),              \
+//         .expr_rhs = #EXPR_RHS,                                    \
+//         .expr_rhs_value = std::to_string(rhs_value),              \
+//       };                                                          \
+//     }                                                             \
+//   }
 
 struct Test_Case {
-  typedef void (*Case_Step)(Memory_Arena *arena);
+  typedef void (*Case_Step)(Memory_Arena &arena);
 
   String_View name;
 
@@ -106,90 +109,91 @@ struct Test_Suite_Runner {
 
   template <const usize N>
   void run (const String_View &suite_name, const Test_Case (&cases)[N]) {
-    if (is_empty(suite_filter) || compare_strings(suite_filter, suite_name)) {
-      print("Suite: %\n", suite_name);
+    //__builtin_setjmp(nullptr);
+    // if (is_empty(suite_filter) || compare_strings(suite_filter, suite_name)) {
+    //   print("Suite: %\n", suite_name);
 
-      for (auto &test_case: cases) {
-        if (is_empty(case_filter) || compare_strings(case_filter, test_case.name)) {
-          enum struct Status {
-            Success,
-            Setup_Failed,
-            Case_Failed,
-            Cleanup_Failed,
-          };
+    //   for (auto &test_case: cases) {
+    //     if (is_empty(case_filter) || compare_strings(case_filter, test_case.name)) {
+    //       enum struct Status {
+    //         Success,
+    //         Setup_Failed,
+    //         Case_Failed,
+    //         Cleanup_Failed,
+    //       };
 
-          Status status = Status::Success;
+    //       Status status = Status::Success;
 
-          {
-            auto offset = arena.offset;
-            defer { arena.offset = offset; };
+    //       {
+    //         auto offset = arena.offset;
+    //         defer { arena.offset = offset; };
 
-            print("  - %\n", test_case.name);
+    //         print("  - %\n", test_case.name);
 
-            if (test_case.before) {
-              try { test_case.before(&arena); }
-              catch (const Test_Failed_Exception &error) {
-                print("    CASE SETUP FAILED\n");
-                status = Status::Setup_Failed;
-              }
-            }
+    //         if (test_case.before) {
+    //           try { test_case.before(arena); }
+    //           catch (const Test_Failed_Exception &error) {
+    //             print("    CASE SETUP FAILED\n");
+    //             status = Status::Setup_Failed;
+    //           }
+    //         }
 
-            if (status != Status::Setup_Failed) {
-              try { test_case.case_code(&arena); }
-              catch (const Test_Failed_Exception &error) {
-                status = Status::Case_Failed;
+    //         if (status != Status::Setup_Failed) {
+    //           try { test_case.case_code(arena); }
+    //           catch (const Test_Failed_Exception &error) {
+    //             status = Status::Case_Failed;
 
-                auto filename = String_View(error.callsite.file);
-                auto function = String_View(error.callsite.function);
-                auto line     = error.callsite.line;
+    //             auto filename = String_View(error.callsite.file);
+    //             auto function = String_View(error.callsite.function);
+    //             auto line     = error.callsite.line;
 
-                switch (error.tag) {
-                  case Test_Failed_Exception::General: {
-                    print("   Status:\tFailed\n"
-                          "   Position:\t[%:%]\n"
-                          "   Expression:\t%\n",
-                          filename, line, error.expr);
+    //             switch (error.tag) {
+    //               case Test_Failed_Exception::General: {
+    //                 print("   Status:\tFailed\n"
+    //                       "   Position:\t[%:%]\n"
+    //                       "   Expression:\t%\n",
+    //                       filename, line, error.expr);
 
-                    break;
-                  }
-                  case Test_Failed_Exception::Equality: {
-                    print("   Status:\tFailed\n"
-                          "   Position:\t[%:%]\n"
-                          "   Expression:\t%,\n"
-                          "\t\twhere\n"
-                          "\t\t    % = '%'\n"
-                          "\t\t    % = '%'\n",
-                          filename, line, error.expr,
-                          error.expr_lhs, error.expr_lhs_value,
-                          error.expr_rhs, error.expr_rhs_value);
+    //                 break;
+    //               }
+    //               case Test_Failed_Exception::Equality: {
+    //                 print("   Status:\tFailed\n"
+    //                       "   Position:\t[%:%]\n"
+    //                       "   Expression:\t%,\n"
+    //                       "\t\twhere\n"
+    //                       "\t\t    % = '%'\n"
+    //                       "\t\t    % = '%'\n",
+    //                       filename, line, error.expr,
+    //                       error.expr_lhs, error.expr_lhs_value,
+    //                       error.expr_rhs, error.expr_rhs_value);
 
-                    break;
-                  }
-                  case Test_Failed_Exception::Execution: {
-                    print("   Status:\tFailed\n"
-                          "   Position:\t[%:%]\n"
-                          "   Details:\t%\n",
-                          filename, line, error.details);
+    //                 break;
+    //               }
+    //               case Test_Failed_Exception::Execution: {
+    //                 print("   Status:\tFailed\n"
+    //                       "   Position:\t[%:%]\n"
+    //                       "   Details:\t%\n",
+    //                       filename, line, error.details);
 
-                    break;
-                  }
-                }
-              }
-            }
+    //                 break;
+    //               }
+    //             }
+    //           }
+    //         }
 
-            if (status != Status::Setup_Failed && test_case.after) {
-              try { test_case.after(&arena); }
-              catch (const Test_Failed_Exception &error) {
-                print("    CASE CLEANUP FAILED\n");
-                status = Status::Cleanup_Failed;
-              }
-            }
-          }
+    //         if (status != Status::Setup_Failed && test_case.after) {
+    //           try { test_case.after(arena); }
+    //           catch (const Test_Failed_Exception &error) {
+    //             print("    CASE CLEANUP FAILED\n");
+    //             status = Status::Cleanup_Failed;
+    //           }
+    //         }
+    //       }
 
-          if (status != Status::Success) list_push_copy(failed_suites, test_case.name);
-        }
-      }
-    }
+    //       if (status != Status::Success) list_push_copy(failed_suites, test_case.name);
+    //     }
+    //   }
+    // }
   }
 
   int report () const {

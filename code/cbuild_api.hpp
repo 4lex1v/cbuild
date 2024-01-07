@@ -88,7 +88,7 @@ struct Project {
   } hooks;
 
   Project (Memory_Arena &global,
-           const String_View &name,
+           String_View name,
            File_Path root,
            File_Path _output_location,
            const bool _is_external = false)

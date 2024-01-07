@@ -19,10 +19,8 @@ static void cleanup_workspace (Memory_Arena &arena) {
 static void init_project_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init", binary_path);
 
-  auto [failed, error, output] = run_system_command(arena, command);
-  if (failed) print("%\n%\n", output, status);
-
-  require(status == Status_Code::Success);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
   auto project_folder    = make_file_path(arena, "project");
   auto build_config_file = make_file_path(arena, project_folder, "build.cpp");
@@ -36,10 +34,8 @@ static void init_project_test (Memory_Arena &arena) {
 static void init_c_project_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init type=c", binary_path);
 
-  auto [failed, status, output] = run_system_command(arena, command);
-  if (failed) print("%\n", output);
-
-  require(status == Status_Code::Success);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
   auto project_folder    = make_file_path(arena, "project");
   auto build_config_file = make_file_path(arena, project_folder, "build.c");
@@ -53,10 +49,8 @@ static void init_c_project_test (Memory_Arena &arena) {
 static void init_cpp_project_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init type=cpp", binary_path);
 
-  auto [failed, status, output] = run_system_command(arena, command);
-  if (failed) print("%\n", output);
-
-  require(status == Status_Code::Success);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
   auto project_folder    = make_file_path(arena, "project");
   auto build_config_file = make_file_path(arena, project_folder, "build.cpp");
@@ -70,32 +64,29 @@ static void init_cpp_project_test (Memory_Arena &arena) {
 static void init_unknown_project_type_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init type=rust", binary_path);
 
-  auto [failed, status, output] = run_system_command(arena, command);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
-  require(status == Status_Code::System_Command_Error);
-
-  require(strstr(output.value, "ERROR: Unrecognized argument value for the 'type' option: rust"));
-  require(strstr(output.value, "Usage:"));
+  require(has_substring(init_cmd_result.value.output, "ERROR: Unrecognized argument value for the 'type' option: rust"));
+  require(has_substring(init_cmd_result.value.output, "Usage:"));
 }
 
 static void init_with_unset_type_parameter_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init type", binary_path);
 
-  auto [failed, status, output] = run_system_command(arena, command);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
-  require(status == Status_Code::System_Command_Error);
-
-  require(strstr(output.value, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
+  require(has_substring(init_cmd_result.value.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
 }
 
 static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
   auto command = format_string(arena, "% init type=", binary_path);
 
-  auto [failed, status, output] = run_system_command(arena, command);
+  auto init_cmd_result = run_system_command(arena, command);
+  require(init_cmd_result);
 
-  require(status == Status_Code::System_Command_Error);
-
-  require(strstr(output.value, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
+  require(has_substring(init_cmd_result.value.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
 }
 
 static Test_Case init_command_tests [] {

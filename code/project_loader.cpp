@@ -42,14 +42,14 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
   auto code_directory_path = make_file_path(arena, working_directory, "code");
   create_resource(code_directory_path, Resource_Type::Directory).expect();
 
-  const auto generate_file = [&arena] <usize N> (File_Path &&path, const u8 (&data)[N]) {
+  const auto generate_file = [&arena] (File_Path &&path, String_View data) {
     using enum File_System_Flags;
 
     auto path_view = String_View(path);
     auto [open_failed, error, file] = open_file(move(path), Write_Access | Create_Missing);
     if (open_failed) panic("Failed to open file '%' for writing due to an error: %", path_view, error);
 
-    write_buffer_to_file(file, Slice(data, N))
+    write_buffer_to_file(file, data)
       .expect(format_string(arena, "Failed to write data into the file '%'", file.path));
 
      close_file(file).expect(format_string(arena, "Failed to close file '%'", file.path));
@@ -370,7 +370,7 @@ Project load_project (
 }
 
 void update_cbuild_api_file (Memory_Arena &arena, const File_Path &working_directory) {
-  struct { String_View file_name; Slice<const u8> data; } input[] {
+  struct { String_View file_name; String_View data; } input[] {
     { "cbuild.h",              cbuild_api_content },
     { "cbuild_experimental.h", cbuild_experimental_api_content }
   };

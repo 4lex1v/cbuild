@@ -172,7 +172,7 @@ void flush_registry (Registry &registry, const Update_Set &update_set) {
 
   auto flush_buffer_size = usize(records + count) - usize(update_set.buffer);
 
-  write_buffer_to_file(registry.registry_file, Slice((const u8 *)update_set.buffer, flush_buffer_size));
+  write_buffer_to_file(registry.registry_file, String_View(update_set.buffer, flush_buffer_size));
 
   close_file(registry.registry_file);
 }

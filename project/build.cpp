@@ -98,7 +98,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
                               versions,
                               "-DPLATFORM_X64 -DPLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
-                              "-Wno-vla-cxx-extension");
+                              "-fno-exceptions -nostdlib -nostdlib++ -nostdinc++");
+  add_global_include_search_path(project, "libs/anyfin");
 
   if (is_debug) add_global_compiler_option(project, "-O0 -DDEV_BUILD -g -gcodeview");
   else          add_global_compiler_option(project, "-O3");
@@ -128,14 +129,23 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/dependency_iterator.cpp");
     add_source_file(cbuild, "code/registry.cpp");
     add_source_file(cbuild, "code/target_builder.cpp");
-
-    add_compiler_options(cbuild, "-fno-exceptions -nostdlib -nostdlib++ -nostdinc++");
-    add_include_search_path(cbuild, "libs/anyfin");
+    add_source_file(cbuild, "code/c_runtime_compat.cpp");
 
     // char exports_option[256] = "/def:";
     // snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
     // add_linker_option(cbuild, exports_option);
     link_with(cbuild, "kernel32.lib", "advapi32.lib", "shell32.lib", "winmm.lib");
+  }
+
+  auto tests = add_executable(project, "tests");
+  {
+    add_all_sources_from_directory(tests, "tests", "cpp", false);
+    add_source_files(tests,
+                     "code/cbuild_api.cpp",
+                     "code/toolchain_win32.cpp",
+                     "code/c_runtime_compat.cpp");
+
+    link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib");
   }
 
   // auto rdump = add_executable(project, "rdump");
@@ -145,16 +155,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   //   add_compiler_options(cbuild, "-fno-exceptions");
   //   link_with(rdump, "kernel32.lib", "advapi32.lib");
   // }
-
-  auto tests = add_executable(project, "tests");
-  {
-    add_all_sources_from_directory(tests, "tests", "cpp", false);
-    add_source_files(tests, "code/cbuild_api.cpp", "code/toolchain_win32.cpp");
-
-    add_include_search_path(tests, "libs/anyfin");
-
-    link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib");
-  }
 
   // if (config == "release") {
   //   char release_folder[128];

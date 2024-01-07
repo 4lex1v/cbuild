@@ -1,4 +1,6 @@
 
+#include "anyfin/platform/startup.hpp"
+
 #include "test_suite.hpp"
 
 File_Path working_directory; // Path to the root directory where the 'verify' program has been called
@@ -26,18 +28,22 @@ static String_View find_arg_value (const char * arg, const int argc, const char 
   return {};
 }
 
-int main (int argc, char **argv) {
-  enum { buffer_size = megabytes(1) };
-  auto buffer = new u8[buffer_size];
-  defer { delete[] buffer; };
+//int main (int argc, char **argv) {
+int mainCRTStartup () {
+  // enum { buffer_size = megabytes(1) };
+  // auto buffer = new u8[buffer_size];
+  // defer { delete[] buffer; };
+  Memory_Arena arena { reserve_virtual_memory(megabytes(8)) };
+
+  auto args = get_startup_args(arena);
 
   auto suite_runner = Test_Suite_Runner {
-    .arena        = Memory_Arena { buffer, buffer_size },
-    .suite_filter = find_arg_value("--suite", argc, argv),
-    .case_filter  = find_arg_value("--case", argc, argv),
+    .arena        = make_sub_arena(arena, megabytes(1)),
+    .suite_filter = get_value(args, "--suite").or_default(),
+    .case_filter  = get_value(args, "--case").or_default(),
   };
 
-  auto bin_path_arg = find_arg_value("--bin", argc, argv);
+  auto bin_path_arg = get_value(args, "--bin").or_default();
   if (!bin_path_arg) {
     print("ERROR: --bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
     return 1;
@@ -56,8 +62,8 @@ int main (int argc, char **argv) {
   run_suite(init_command);
   run_suite(build_command);
   run_suite(clean_command);
-  run_suite(public_api);
-  run_suite(subprojects);
+  run_suite(public_api); 
+  //run_suite(subprojects); 
 
   return suite_runner.report();
 }

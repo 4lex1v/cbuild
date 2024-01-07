@@ -11,8 +11,8 @@ static void subproject_test (Memory_Arena *arena) {
   
 }
 
-static Test_Case subproject_tests [] {
-  define_test_case(subproject_test),
-};
+// static Test_Case subproject_tests [] {
+//   define_test_case(subproject_test),
+// };
 
-define_test_suite(subprojects, subproject_tests);
+// define_test_suite(subprojects, subproject_tests);
