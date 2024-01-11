@@ -224,7 +224,7 @@ static void build_errors_tests (Memory_Arena &arena) {
     close_file(file);
   };
 
-  auto correct_file_content = reserve_memory(arena, mapping.size + 1);
+  auto correct_file_content = reserve(arena, mapping.size + 1);
   copy_memory(correct_file_content, mapping.memory, mapping.size);
   correct_file_content[mapping.size] = '\0';
 
@@ -316,7 +316,7 @@ static void test_modify_file (Memory_Arena &arena, File_Path file_path) {
     close_file(file);
   };
 
-  auto file_content = reserve_memory(arena, mapping.size + 2);
+  auto file_content = reserve(arena, mapping.size + 2);
   copy_memory(file_content, mapping.memory, mapping.size);
   file_content[mapping.size] = ' ';
   file_content[mapping.size + 1] = '\0';
@@ -426,7 +426,7 @@ static Test_Case build_command_tests [] {
   define_test_case_ex(build_testbed_tests,      setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_registry_tests,     setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_changes_tests,      setup_testbed,   cleanup_workspace),
-  // define_test_case_ex(build_errors_tests,       setup_testbed,   cleanup_workspace),
+  define_test_case_ex(build_errors_tests,       setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_project_tests,      setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_cache_tests,        setup_testbed,   cleanup_workspace),
   define_test_case_ex(build_targets_tests,      setup_testbed,   cleanup_workspace),

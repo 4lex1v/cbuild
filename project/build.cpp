@@ -99,6 +99,14 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
                               "-DPLATFORM_X64 -DPLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
                               "-fno-exceptions -nostdlib -nostdlib++ -nostdinc++");
+  //add_global_compiler_options(project, "-H");
+
+  // add_global_compiler_options(project,
+  //                             "-Wpedantic -Wall",
+  //                             "-Wno-unused-variable -Wno-unused-function",
+  //                             // TODO: These issues should be addressed
+  //                             "-Wno-zero-length-array");
+
   add_global_include_search_path(project, "libs/anyfin");
 
   if (is_debug) add_global_compiler_option(project, "-O0 -DDEV_BUILD -g -gcodeview");

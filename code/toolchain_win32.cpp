@@ -1,7 +1,5 @@
 
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include "anyfin/core/win32.hpp"
 #include <shellapi.h>
 
 #include "anyfin/base.hpp"
@@ -24,7 +22,7 @@ static File_Path get_program_files_path (Memory_Arena &arena) {
   auto env_value_reservation_size = GetEnvironmentVariable("ProgramFiles(x86)", nullptr, 0);
   if (env_value_reservation_size == 0) panic("Couldn't load ProgramFiles(x86) path from Windows' registry.");
 
-  auto env_value_buffer = reinterpret_cast<char *>(reserve_memory(arena, env_value_reservation_size));
+  auto env_value_buffer = reinterpret_cast<char *>(reserve(arena, env_value_reservation_size));
   if (!GetEnvironmentVariable("ProgramFiles(x86)", env_value_buffer, env_value_reservation_size))
     panic("Couldn't load ProgramFiles(x86) path from Windows' registry.");
 
@@ -227,7 +225,7 @@ static Option<File_Path> lookup_windows_kits_from_registry (Memory_Arena &arena)
   HKEY hKey;
 
   DWORD buffer_size = MAX_PATH;
-  auto buffer = reinterpret_cast<char *>(reserve_memory(arena, buffer_size, alignof(char)));
+  auto buffer = reinterpret_cast<char *>(reserve(arena, buffer_size, alignof(char)));
 
   auto status = RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots", "KitsRoot10",
                              RRF_RT_REG_SZ, NULL, (PVOID)buffer, &buffer_size);
@@ -310,7 +308,7 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
     auto value_size = GetEnvironmentVariable(name, nullptr, 0);
     if (!value_size) return {};
     
-    auto buffer = reinterpret_cast<char *>(reserve_memory(arena, value_size));
+    auto buffer = reinterpret_cast<char *>(reserve(arena, value_size));
     if (!GetEnvironmentVariable(name, buffer, value_size)) return {};
 
     return Option(String(arena, buffer, value_size));

@@ -4,7 +4,7 @@
 #include "anyfin/base.hpp"
 
 #include "anyfin/core/arena.hpp"
-#include "anyfin/core/strings.hpp"
+#include "anyfin/core/format.hpp"
 #include "anyfin/core/trap.hpp"
 
 namespace Fin {

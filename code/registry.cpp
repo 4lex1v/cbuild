@@ -114,7 +114,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
 
   auto reservation_size = buffer_cursor - update_set_buffer;
   {
-    auto reservation = reserve_memory(arena, reservation_size, 32);
+    auto reservation = reserve(arena, reservation_size, 32);
     if (reservation == nullptr) panic("Not enough memory to allocate buffer for registry update set");
 
     assert((void*)reservation == (void*)update_set_buffer);

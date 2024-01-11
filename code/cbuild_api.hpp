@@ -191,7 +191,7 @@ struct Target {
     {}
 
   void * operator new (usize size, Memory_Arena &arena) {
-    return reserve_memory(arena, sizeof(Target), alignof(Target));
+    return reserve(arena, sizeof(Target), alignof(Target));
   }
 };
 

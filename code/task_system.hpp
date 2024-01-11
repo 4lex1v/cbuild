@@ -104,7 +104,7 @@ struct Task_Queue {
 template <typename T>
 static void destroy (Task_Queue<T> &queue) {
   for (auto &node: queue.tasks_queue) node.task.~T();
-  free_memory(queue.allocator, queue.tasks_queue.elements);
+  free(queue.allocator, queue.tasks_queue.elements);
 }
 
 /*

@@ -65,7 +65,7 @@ struct Target_Tracker {
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
-    return reserve_memory(arena, size, alignof(Target_Tracker));
+    return reserve(arena, size, alignof(Target_Tracker));
   }
 };
 
@@ -329,7 +329,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
   const auto &target  = *tracker.target;
   const auto &project = *target.project;
 
-  Target_Compile_Status target_compilation_status = atomic_load(tracker.compile_status);
+  auto target_compilation_status = atomic_load(tracker.compile_status);
   if (target_compilation_status == Target_Compile_Status::Compiling) return;
 
   /*
@@ -718,7 +718,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
     add_build_target(target);
   }
 
-  auto trackers = reserve_memory<Target_Tracker *>(arena, build_list.count);
+  auto trackers = reserve<Target_Tracker *>(arena, build_list.count);
   for (usize idx = 0; auto target: build_list) {
     trackers[idx++] = new (arena) Target_Tracker(target);
   }
@@ -749,7 +749,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   auto task_system = create_task_system(arena, project, config);
 
-  chain_status_cache = Slice(reserve_memory<Chain_Status>(arena, max_supported_files_count), max_supported_files_count);
+  chain_status_cache = Slice(reserve<Chain_Status>(arena, max_supported_files_count), max_supported_files_count);
 
   auto build_plan = prepare_build_plan(arena, project, config);
 

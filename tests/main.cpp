@@ -30,22 +30,19 @@ static String_View find_arg_value (const char * arg, const int argc, const char 
 
 //int main (int argc, char **argv) {
 int mainCRTStartup () {
-  // enum { buffer_size = megabytes(1) };
-  // auto buffer = new u8[buffer_size];
-  // defer { delete[] buffer; };
   Memory_Arena arena { reserve_virtual_memory(megabytes(8)) };
 
   auto args = get_startup_args(arena);
 
   auto suite_runner = Test_Suite_Runner {
     .arena        = make_sub_arena(arena, megabytes(1)),
-    .suite_filter = get_value(args, "--suite").or_default(),
-    .case_filter  = get_value(args, "--case").or_default(),
+    .suite_filter = get_value(args, "suite").or_default(),
+    .case_filter  = get_value(args, "case").or_default(),
   };
 
-  auto bin_path_arg = get_value(args, "--bin").or_default();
+  auto bin_path_arg = get_value(args, "bin").or_default();
   if (!bin_path_arg) {
-    print("ERROR: --bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
+    print("ERROR: bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
     return 1;
   }
 

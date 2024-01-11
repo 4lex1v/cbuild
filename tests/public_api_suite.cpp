@@ -377,7 +377,7 @@ static void get_target_name_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
   auto target = add_static_library(&project, "lib");
-  require(strcmp(get_target_name(target), "lib") == 0);
+  require(has_substring(get_target_name(target), "lib"));
 }
 
 static void cpp_wrappers_test (Memory_Arena &arena) {

@@ -4,7 +4,6 @@
 #include "anyfin/core/option.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/strings.hpp"
-//#include "anyfin/core/c_runtime_compat.hpp"
 
 #include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/console.hpp"
