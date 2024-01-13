@@ -105,7 +105,7 @@ void add_global_compiler_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.compiler, String::copy(project->arena, option));
+  list_push(project->compiler, String::copy(project->arena, option));
 }
 
 void add_global_archiver_option (Project *project, const char *option) {
@@ -113,7 +113,7 @@ void add_global_archiver_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.archiver, String::copy(project->arena, option));
+  list_push(project->archiver, String::copy(project->arena, option));
 }
 
 void add_global_linker_option (Project *project, const char *option) {
@@ -121,7 +121,7 @@ void add_global_linker_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->project_options.linker, String::copy(project->arena, option));
+  list_push(project->linker, String::copy(project->arena, option));
 }
 
 void add_global_include_search_path (Project *project, const char *path) {
@@ -134,10 +134,9 @@ void add_global_include_search_path (Project *project, const char *path) {
   const auto file_path = make_file_path(project->arena, path_view);
 
   auto [has_failed, error, absolute_path] = get_absolute_path(project->arena, file_path);
-  if (has_failed) panic("Couldn't resolve the provided path '%', error code: %, details: %\n",
-                        file_path, error, retrieve_system_error_message(project->arena, error));
+  if (has_failed) panic("Couldn't resolve the provided path '%', error: %\n", file_path, error);
 
-  list_push(project->project_options.include_paths, move(absolute_path));
+  list_push(project->include_paths, move(absolute_path));
 }
 
 static Target * create_target (Project *project, Target::Type type, const char *_name) {
@@ -192,19 +191,18 @@ void add_source_file (Target *target, const char *path) {
   require_non_null(path);
   require_non_empty(path);
 
-  const auto path_view = String_View(path);
-  const auto file_path = make_file_path(target->project->arena, path_view);
+  const auto file_path = make_file_path(target->project.arena, path);
 
-  auto abs_file_path = get_absolute_path(target->project->arena, file_path)
-    .take(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
+  auto abs_file_path = get_absolute_path(target->project.arena, file_path)
+    .take(concat_string(target->project.global_arena, "Couldn't resolve the absolute path for the file ", file_path));
 
-  if (!check_resource_exists(abs_file_path, Resource_Type::File)) {
-    panic("File '%' wasn't found, please check the correctness of the specified path and that the file exists\n", *abs_file_path);
-  }
+  auto [has_failed, error, file_exists] = check_file_exists(abs_file_path);
+  if (has_failed)   panic("Couldn't validate file path % due to a system eror: %", abs_file_path, error);
+  if (!file_exists) panic("File '%' wasn't found, please check the correctness of the specified path and that the file exists\n", abs_file_path);
 
   list_push(target->files, move(abs_file_path));
 
-  target->project->total_files_count += 1;
+  target->project.total_files_count += 1;
 }
 
 void exclude_source_file (Target *target, const char *path) {
@@ -215,10 +213,10 @@ void exclude_source_file (Target *target, const char *path) {
   if (is_empty(target->files)) return;
 
   const auto path_view = String_View(path);
-  const auto file_path = make_file_path(target->project->arena, path_view);
+  const auto file_path = make_file_path(target->project.arena, path_view);
 
-  auto abs_file_path = get_absolute_path(target->project->arena, file_path)
-    .take(format_string(target->project->global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
+  auto abs_file_path = get_absolute_path(target->project.arena, file_path)
+    .take(format_string(target->project.global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
 
   auto removed = target->files.remove([&] (const File_Path &file) {
     return compare_strings(file, abs_file_path);
@@ -226,7 +224,7 @@ void exclude_source_file (Target *target, const char *path) {
 
   if (!removed) panic("File '%' not included for the target %\n", file_path, target->name);
 
-  target->project->total_files_count -= 1;
+  target->project.total_files_count -= 1;
 }
 
 void add_include_search_path (Target *target, const char *path) {
@@ -235,9 +233,9 @@ void add_include_search_path (Target *target, const char *path) {
   require_non_empty(path);
 
   const auto path_view = String_View(path);
-  const auto file_path = make_file_path(target->project->arena, path_view);
+  const auto file_path = make_file_path(target->project.arena, path_view);
 
-  auto include_path = get_absolute_path(target->project->arena, file_path);
+  auto include_path = get_absolute_path(target->project.arena, file_path);
   if (!include_path) panic("Couldn't resolve the path '%', error details: %", path_view, include_path.status);
   
   list_push(target->include_paths, include_path.take());
@@ -250,7 +248,7 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
   require_non_null(_extension);
   require_non_empty(_extension);
   
-  auto &arena = target->project->arena;
+  auto &arena = target->project.arena;
 
   const auto directory = make_file_path(arena, String_View(_directory));
   const auto extension = make_file_path(arena, String_View(_extension));
@@ -269,7 +267,7 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
 
   for (auto &file: files) list_push(target->files, move(file));
 
-  target->project->total_files_count += (target->files.count - existing_target_count);
+  target->project.total_files_count += (target->files.count - existing_target_count);
 }
 
 static void add_options (Memory_Arena &arena, List<String> &list, const String_View &values) {
@@ -289,8 +287,8 @@ void add_compiler_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
   
-  auto &arena = target->project->arena;
-  add_options(arena, target->options.compiler, String_View(option));
+  auto &arena = target->project.arena;
+  add_options(arena, target->compiler, String_View(option));
 }
 
 void remove_compiler_option (Target *target, const char *option) {
@@ -298,7 +296,7 @@ void remove_compiler_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->options.compiler, String_View(option));
+  remove_option(target->compiler, String_View(option));
 }
 
 void add_archiver_option (Target *target, const char *option) {
@@ -306,8 +304,8 @@ void add_archiver_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
   
-  auto &arena = target->project->arena;
-  add_options(arena, target->options.archiver, String_View(option));
+  auto &arena = target->project.arena;
+  add_options(arena, target->archiver, String_View(option));
 }
 
 void remove_archiver_option (Target *target, const char *option) {
@@ -315,7 +313,7 @@ void remove_archiver_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->options.archiver, String_View(option));
+  remove_option(target->archiver, String_View(option));
 }
 
 void add_linker_option (Target *target, const char *option) {
@@ -323,8 +321,8 @@ void add_linker_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  auto &arena = target->project->arena;
-  add_options(arena, target->options.linker, String_View(option));
+  auto &arena = target->project.arena;
+  add_options(arena, target->linker, String_View(option));
 }
 
 void remove_linker_option (Target *target, const char *option) {
@@ -332,14 +330,14 @@ void remove_linker_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->options.linker, String_View(option));
+  remove_option(target->linker, String_View(option));
 }
 
 void link_with_target (Target *target, Target *dependency) {
   require_non_null(target);
   require_non_null(dependency);
 
-  auto &arena = target->project->arena;
+  auto &arena = target->project.arena;
 
   if (target == dependency)
     panic("Invalid 'dependency' value passed to 'link_with_target': "
@@ -354,7 +352,7 @@ void link_with_library (Target *target, const char *library_name) {
   require_non_null(library_name);
   require_non_empty(library_name);
   
-  auto &arena = target->project->arena;
+  auto &arena = target->project.arena;
   list_push(target->link_libraries, String::copy(arena, library_name));
 }
 
@@ -385,15 +383,15 @@ const String_View get_target_extension (const Target &target) {
 
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target) {
   auto extension = get_target_extension(target);
-  return make_file_path(arena, target.project->output_location_path, "out",
+  return make_file_path(arena, target.project.output_location_path, "out",
                         format_string(arena, "%.%", target.name, extension));
 }
 
 const char * get_generated_binary_file_path (const Target *target) {
   require_non_null(target);
 
-  auto project = target->project;
-  auto path    = get_output_file_path_for_target(project->arena, *target);
+  auto &project = target->project;
+  auto path     = get_output_file_path_for_target(project.arena, *target);
 
   return path.value;
 }

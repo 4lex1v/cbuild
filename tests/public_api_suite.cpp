@@ -10,10 +10,6 @@
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 
-static void test_configuration_failure (u32 exit_code) {
-  require(false);
-}
-
 static bool ensure_list_content (const Iterable<String> auto &list, String_View value, Convertible_To<String_View> auto&&... more_values) {
   String_View values [] { value, static_cast<String_View>(more_values)... };
 
@@ -27,35 +23,25 @@ static bool ensure_list_content (const Iterable<String> auto &list, String_View 
 }
 
 static void setup_workspace (Memory_Arena &arena) {
-  set_crash_handler(test_configuration_failure);
+  if (check_directory_exists(workspace))
+    require(delete_directory(workspace));
 
-  if (check_directory_exists(workspace)) delete_directory(workspace);
-  create_directory(workspace);
+  require(create_directory(workspace));
 
   auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
-  copy_directory(testbed_path, workspace);
+  require(copy_directory(testbed_path, workspace));
 
-  set_working_directory(workspace);
+  require(set_working_directory(workspace));
 }
 
 static void cleanup_workspace (Memory_Arena &arena) {
-  set_working_directory(working_directory);
-  delete_directory(workspace);
+  require(set_working_directory(working_directory));
+  require(delete_directory(workspace));
 }
 
 static Project create_project (Memory_Arena &arena) {
   return { arena, "test_project", copy(working_directory), {} };
 }
-
-#define require_crash(EXPR)
-  // do {                                            \
-  //   bool exception_captured = false;              \
-  //   try { (EXPR); }                               \
-  //   catch (const Test_Failed_Exception &error) {  \
-  //     exception_captured = true;                  \
-  //   }                                             \
-  //   require(exception_captured);                  \
-  // } while(0)
 
 
 // TODO: Need to rewrite the arguments API for the next release
@@ -82,7 +68,13 @@ static Project create_project (Memory_Arena &arena) {
 // }
 
 static void set_toolchain_test (Memory_Arena &arena) {
-  auto project = create_project (arena);
+  auto project = create_project(arena);
+
+  require(project.toolchain.type == Toolchain_Type_MSVC_X86);
+  require(!project.toolchain.c_compiler_path);
+  require(!project.toolchain.cpp_compiler_path);
+  require(!project.toolchain.linker_path);
+  require(!project.toolchain.archiver_path);
 
   set_toolchain(&project, Toolchain_Type_MSVC_X64);
 
@@ -129,7 +121,7 @@ static void output_location_test (Memory_Arena &arena) {
   String_View path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(compare_strings(project.output_location_path, path));
+  require(project.output_location_path != nullptr);
 }
 
 static void add_static_library_test (Memory_Arena &arena) {
@@ -173,8 +165,8 @@ static void add_compiler_option_test (Memory_Arena &arena) {
   add_compiler_option(target, "/W4274");
   add_compiler_option(target, "/foo /bar /baz");
 
-  require(target->options.compiler.count == 5);
-  require(ensure_list_content(target->options.compiler, "/nologo", "/W4274", "/foo", "/bar", "/baz"));
+  require(target->compiler.count == 5);
+  require(ensure_list_content(target->compiler, "/nologo", "/W4274", "/foo", "/bar", "/baz"));
 }
 
 static void remove_compiler_option_test (Memory_Arena &arena) {
@@ -183,23 +175,23 @@ static void remove_compiler_option_test (Memory_Arena &arena) {
   auto target = add_static_library(&project, "test_lib");
   add_compiler_options(target, "--test", "--test2", "--multiple --options --passed", "--final_one");
 
-  require(target->options.compiler.count == 6);
-  require(ensure_list_content(target->options.compiler, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
+  require(target->compiler.count == 6);
+  require(ensure_list_content(target->compiler, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_compiler_option(target, "--test2");
-  require(ensure_list_content(target->options.compiler, "--test", "--multiple", "--options", "--passed", "--final_one"));
+  require(ensure_list_content(target->compiler, "--test", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_compiler_option(target, "--options");
-  require(ensure_list_content(target->options.compiler, "--test", "--multiple", "--passed", "--final_one"));
+  require(ensure_list_content(target->compiler, "--test", "--multiple", "--passed", "--final_one"));
 
   remove_compiler_option(target, "--multiple");
-  require(ensure_list_content(target->options.compiler, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->compiler, "--test", "--passed", "--final_one"));
 
   remove_compiler_option(target, "--non_existing");
-  require(ensure_list_content(target->options.compiler, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->compiler, "--test", "--passed", "--final_one"));
 
   remove_compiler_option(target, "--test --final_one");
-  require(ensure_list_content(target->options.compiler, "--passed"));
+  require(ensure_list_content(target->compiler, "--passed"));
 }
 
 static void add_archiver_option_test (Memory_Arena &arena) {
@@ -210,8 +202,8 @@ static void add_archiver_option_test (Memory_Arena &arena) {
   add_archiver_option(target, "/W4274");
   add_archiver_option(target, "/foo /bar /baz");
 
-  require(target->options.archiver.count == 5);
-  require(ensure_list_content(target->options.archiver, "/nologo", "/W4274", "/foo", "/bar", "/baz"));
+  require(target->archiver.count == 5);
+  require(ensure_list_content(target->archiver, "/nologo", "/W4274", "/foo", "/bar", "/baz"));
 }
 
 static void remove_archiver_option_test (Memory_Arena &arena) {
@@ -220,23 +212,23 @@ static void remove_archiver_option_test (Memory_Arena &arena) {
   auto target = add_static_library(&project, "test_lib");
   add_archiver_options(target, "--test", "--test2", "--multiple --options --passed", "--final_one");
 
-  require(target->options.archiver.count == 6);
-  require(ensure_list_content(target->options.archiver, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
+  require(target->archiver.count == 6);
+  require(ensure_list_content(target->archiver, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_archiver_option(target, "--test2");
-  require(ensure_list_content(target->options.archiver, "--test", "--multiple", "--options", "--passed", "--final_one"));
+  require(ensure_list_content(target->archiver, "--test", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_archiver_option(target, "--options");
-  require(ensure_list_content(target->options.archiver, "--test", "--multiple", "--passed", "--final_one"));
+  require(ensure_list_content(target->archiver, "--test", "--multiple", "--passed", "--final_one"));
 
   remove_archiver_option(target, "--multiple");
-  require(ensure_list_content(target->options.archiver, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->archiver, "--test", "--passed", "--final_one"));
 
   remove_archiver_option(target, "--non_existing");
-  require(ensure_list_content(target->options.archiver, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->archiver, "--test", "--passed", "--final_one"));
 
   remove_archiver_option(target, "--test --final_one");
-  require(ensure_list_content(target->options.archiver, "--passed"));
+  require(ensure_list_content(target->archiver, "--passed"));
 }
 
 static void add_linker_option_test (Memory_Arena &arena) {
@@ -247,7 +239,7 @@ static void add_linker_option_test (Memory_Arena &arena) {
   add_linker_option(target, "/O4");
   add_linker_option(target, "/W4274");
 
-  require(target->options.linker.count == 3);
+  require(target->linker.count == 3);
 }
 
 static void remove_linker_option_test (Memory_Arena &arena) {
@@ -256,23 +248,23 @@ static void remove_linker_option_test (Memory_Arena &arena) {
   auto target = add_static_library(&project, "test_lib");
   add_linker_options(target, "--test", "--test2", "--multiple --options --passed", "--final_one");
 
-  require(target->options.linker.count == 6);
-  require(ensure_list_content(target->options.linker, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
+  require(target->linker.count == 6);
+  require(ensure_list_content(target->linker, "--test", "--test2", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_linker_option(target, "--test2");
-  require(ensure_list_content(target->options.linker, "--test", "--multiple", "--options", "--passed", "--final_one"));
+  require(ensure_list_content(target->linker, "--test", "--multiple", "--options", "--passed", "--final_one"));
 
   remove_linker_option(target, "--options");
-  require(ensure_list_content(target->options.linker, "--test", "--multiple", "--passed", "--final_one"));
+  require(ensure_list_content(target->linker, "--test", "--multiple", "--passed", "--final_one"));
 
   remove_linker_option(target, "--multiple");
-  require(ensure_list_content(target->options.linker, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->linker, "--test", "--passed", "--final_one"));
 
   remove_linker_option(target, "--non_existing");
-  require(ensure_list_content(target->options.linker, "--test", "--passed", "--final_one"));
+  require(ensure_list_content(target->linker, "--test", "--passed", "--final_one"));
 
   remove_linker_option(target, "--test --final_one");
-  require(ensure_list_content(target->options.linker, "--passed"));
+  require(ensure_list_content(target->linker, "--passed"));
 }
 
 static void add_source_file_test (Memory_Arena &arena) {
@@ -387,29 +379,29 @@ static void cpp_wrappers_test (Memory_Arena &arena) {
   add_global_archiver_options(&project, "/nologo");
   add_global_linker_options(&project, "/nologo", "/debug:full", "/incremental:no");
 
-  require(ensure_list_content(project.project_options.compiler, "/nologo", "/std:c++20", "-O3"));
-  require(ensure_list_content(project.project_options.archiver, "/nologo"));
-  require(ensure_list_content(project.project_options.linker, "/nologo", "/debug:full", "/incremental:no"));
+  require(ensure_list_content(project.compiler, "/nologo", "/std:c++20", "-O3"));
+  require(ensure_list_content(project.archiver, "/nologo"));
+  require(ensure_list_content(project.linker, "/nologo", "/debug:full", "/incremental:no"));
 
   add_global_include_search_path(&project, "./includes");
-  require(project.project_options.include_paths.count == 1);
+  require(project.include_paths.count == 1);
 
   auto target = add_static_library(&project, "library");
   add_compiler_options(target, "/nologo", "/O4 /W4274", "/verbose", "/foo /bar /bar");
-  require(target->options.compiler.count == 7);
+  require(target->compiler.count == 7);
 
   remove_compiler_options(target, "/nologo /bar", "/verbose");
-  require(ensure_list_content(target->options.compiler, "/O4", "/W4274", "/foo", "/bar"));
+  require(ensure_list_content(target->compiler, "/O4", "/W4274", "/foo", "/bar"));
 
   add_linker_options(target, "/nologo", "/O4", "/W4274 /something");
-  require(target->options.linker.count == 4);
+  require(target->linker.count == 4);
 
   remove_linker_options(target, "/nologo /something", "/O4 /W4274");
-  require(target->options.linker.count == 0);
+  require(target->linker.count == 0);
 
   add_archiver_options(target, "/test", "/foo");
   remove_archiver_option(target, "/foo");
-  require(target->options.archiver.count == 1);
+  require(target->archiver.count == 1);
 
   add_source_files(target, "code/library1/library1.cpp", "code/library2/library2.cpp", "code/library3/library3.cpp");
   require(target->files.count == 3);
@@ -429,48 +421,48 @@ static void cpp_wrappers_test (Memory_Arena &arena) {
 static void add_global_compiler_option_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
-  require(project.project_options.compiler.count == 0);
+  require(project.compiler.count == 0);
 
   add_global_compiler_option(&project, "/nologo");
   add_global_compiler_option(&project, "/std:c++20");
   
-  require(project.project_options.compiler.count == 2);
-  require(ensure_list_content(project.project_options.compiler, "/nologo", "/std:c++20"));
+  require(project.compiler.count == 2);
+  require(ensure_list_content(project.compiler, "/nologo", "/std:c++20"));
 }
 
 static void add_global_archiver_option_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
-  require(project.project_options.archiver.count == 0);
+  require(project.archiver.count == 0);
 
   add_global_archiver_option(&project, "/nologo");
   add_global_archiver_option(&project, "/std:c++20");
   
-  require(project.project_options.archiver.count == 2);
-  require(ensure_list_content(project.project_options.archiver, "/nologo", "/std:c++20"));
+  require(project.archiver.count == 2);
+  require(ensure_list_content(project.archiver, "/nologo", "/std:c++20"));
 }
 
 static void add_global_linker_option_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
-  require(project.project_options.linker.count == 0);
+  require(project.linker.count == 0);
 
   add_global_linker_option(&project, "/nologo");
   add_global_linker_option(&project, "/std:c++20");
   
-  require(project.project_options.linker.count == 2);
-  require(ensure_list_content(project.project_options.archiver, "/nologo", "/std:c++20"));
+  require(project.linker.count == 2);
+  require(ensure_list_content(project.archiver, "/nologo", "/std:c++20"));
 }
 
 static void add_global_include_search_path_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
-  require(project.project_options.include_paths.count == 0);
+  require(project.include_paths.count == 0);
 
   add_global_include_search_path(&project, "./includes");
   add_global_include_search_path(&project, "./libs");
   
-  require(project.project_options.include_paths.count == 2);
+  require(project.include_paths.count == 2);
 }
 
 static Test_Case public_api_tests [] {

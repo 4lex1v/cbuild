@@ -6,19 +6,20 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(workspace)) delete_directory(workspace);
-  require(create_directory(workspace));
+  if (check_directory_exists(workspace).check())
+    require(delete_directory(workspace));
 
-  set_working_directory(workspace);
+  require(create_directory(workspace));
+  require(set_working_directory(workspace));
 }
 
 static void cleanup_workspace (Memory_Arena &arena) {
-  set_working_directory(working_directory);
-  delete_directory(workspace);
+  require(set_working_directory(working_directory));
+  require(delete_directory(workspace));
 }
 
 static void init_project_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init", binary_path);
+  auto command = concat_string(arena, binary_path, " init");
 
   auto init_cmd_result = run_system_command(arena, command);
   require(init_cmd_result);
@@ -33,7 +34,7 @@ static void init_project_test (Memory_Arena &arena) {
 }
 
 static void init_c_project_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init type=c", binary_path);
+  auto command = concat_string(arena, binary_path, " init type=c");
 
   auto init_cmd_result = run_system_command(arena, command);
   require(init_cmd_result);
@@ -48,7 +49,7 @@ static void init_c_project_test (Memory_Arena &arena) {
 }
 
 static void init_cpp_project_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init type=cpp", binary_path);
+  auto command = concat_string(arena, binary_path, " init type=cpp");
 
   auto init_cmd_result = run_system_command(arena, command);
   require(init_cmd_result);
@@ -63,31 +64,36 @@ static void init_cpp_project_test (Memory_Arena &arena) {
 }
 
 static void init_unknown_project_type_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init type=rust", binary_path);
+  auto command = concat_string(arena, binary_path, " init type=rust");
 
-  auto init_cmd_result = run_system_command(arena, command);
-  require(init_cmd_result);
+  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  require(!init_cmd_has_failed);
+  require(status.status_code != 0);
 
-  require(has_substring(init_cmd_result.value.output, "ERROR: Unrecognized argument value for the 'type' option: rust"));
-  require(has_substring(init_cmd_result.value.output, "Usage:"));
+  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: rust"),
+           concat_string(arena, "status.output = ", status.output));
 }
 
 static void init_with_unset_type_parameter_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init type", binary_path);
+  auto command = concat_string(arena, binary_path, " init type");
 
-  auto init_cmd_result = run_system_command(arena, command);
-  require(init_cmd_result);
+  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  require(!init_cmd_has_failed);
+  require(status.status_code != 0);
 
-  require(has_substring(init_cmd_result.value.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
+  frequire(has_substring(status.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"),
+           concat_string(arena, "status.output = ", status.output));
 }
 
 static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
-  auto command = format_string(arena, "% init type=", binary_path);
+  auto command = concat_string(arena, binary_path, " init type=");
 
-  auto init_cmd_result = run_system_command(arena, command);
-  require(init_cmd_result);
+  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  require(!init_cmd_has_failed);
+  require(status.status_code != 0);
 
-  require(has_substring(init_cmd_result.value.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
+  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: "),
+           concat_string(arena, "status.output = ", status.output));
 }
 
 static Test_Case init_command_tests [] {

@@ -174,7 +174,7 @@ Status_Code get_file_path_info (File_Path_Info *info, Memory_Arena *arena, const
 
   Memory_Arena local = *arena;
 
-  auto buffer = reserve(&local, MAX_PATH, alignof(char));
+  auto buffer = reserve(&local, MAX_PATH);
 
   char *file_name = nullptr;
   auto full_path_name_length = GetFullPathName(path, MAX_PATH, buffer, &file_name);
@@ -188,7 +188,7 @@ Status_Code get_file_path_info (File_Path_Info *info, Memory_Arena *arena, const
 
   char *secondary_buffer = buffer + full_path_name_length + 1;
   if (space_required > (MAX_PATH - (full_path_name_length + 1))) {
-    secondary_buffer = reserve(&local, space_required, alignof(char));
+    secondary_buffer = reserve(&local, space_required);
   }
 
   info->full_path        = buffer;

@@ -29,18 +29,26 @@ static const u32 api_version = (API_VERSION);
 
 void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Configuration_Type config_file_type) {
   auto project_directory_path = make_file_path(arena, working_directory, "project");
-  create_resource(project_directory_path, Resource_Type::Directory).expect();
+  create_directory(project_directory_path)
+    .expect([&] (auto error) -> String_View {
+      return concat_string(arena, "Couldn't create directory: ", project_directory_path, ", error: ", error);
+    });
+
+  auto code_directory_path = make_file_path(arena, working_directory, "code");
+  create_directory(code_directory_path)
+    .expect([&] (auto error) -> String_View {
+      return concat_string(arena, "Couldn't create directory: ", code_directory_path, ", error: ", error);
+    });
 
   auto build_file_name = (config_file_type == Configuration_Type::C) ? String_View("build.c") : String_View("build.cpp");
   auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
 
-  if (check_resource_exists(build_file_path, Resource_Type::File)) {
+  if (auto [has_failed, error, exists] = check_file_exists(build_file_path); has_failed)
+    trap(concat_string(arena, "System error occured while checking the project's folder: ", error));
+  else if (exists) {
     print("It looks like this workspace already has a project configuration file at %", build_file_path);
     return;
   }
-
-  auto code_directory_path = make_file_path(arena, working_directory, "code");
-  create_resource(code_directory_path, Resource_Type::Directory).expect();
 
   const auto generate_file = [&arena] (File_Path &&path, String_View data) {
     using enum File_System_Flags;
@@ -131,7 +139,7 @@ static void build_project_configuration (
 
   using enum File_System_Flags;
 
-  auto project_obj_file_name = format_string(arena, "%.%", project_name, get_object_extension());
+  auto project_obj_file_name = concat_string(arena, project_name, ".", get_object_extension());
   auto project_obj_file_path = make_file_path(arena, workspace.project_output_directory_path, project_obj_file_name);
 
   {
@@ -162,7 +170,7 @@ static void build_project_configuration (
     const auto &[output, return_code] = status;
 
     if (!return_code) panic("Command execution failed with, code: %, command: %\n", return_code, compilation_command);
-    if (output) console_print_message(format_string(local, "%\n", output));
+    if (output) print(concat_string(local, output, "\n"));
   }
 
   {
@@ -177,7 +185,7 @@ static void build_project_configuration (
 #ifdef PLATFORM_WIN32
     {
       auto cbuild_import_path = make_file_path(local, workspace.project_output_directory_path,
-                                               format_string(local, "cbuild.%", get_static_library_extension()));
+                                               concat_string(local, "cbuild.", get_static_library_extension()));
 
       auto [open_failed, error, export_file] = open_file(move(cbuild_import_path), Write_Access | Create_Missing);
       if (open_failed) panic("Couldn't create export file to write data to due to an error: %.\n", error);
@@ -200,33 +208,16 @@ static void build_project_configuration (
     const auto &[output, return_code] = status;
 
     if (!return_code) panic("Command execution failed with, code: %, command: %\n", return_code, linking_command);
-    if (output) console_print_message(format_string(local, "%\n", output));
+    if (output)       print(concat_string(local, output, "\n"));
   }
 }
 
-// Result<Project_Loader> create_project_loader (Memory_Arena *arena, File_Path cache_directory) {
-//   use(Status_Code);
-  
-//   auto cache_project_directory = make_file_path(arena, cache_directory, "project");
-//   if (!cache_project_directory_creation_status) 
-//   check_status(project_output_folder);
-//   check_status(create_directory(&project_output_folder));
-
-//   auto project_tag_file = make_file_path(arena, *project_output_folder, "tag");
-//   check_status(project_tag_file);
-
-//   return Project_Loader {
-//     .project_output_directory = project_output_folder,
-//     .project_tag_file         = project_tag_file,
-//   };
-// }
-
 static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &project_directory_path) {
-  String_View files[] { "build.cpp", "build.c" };
+  const String_View files[] { "build.cpp", "build.c" };
 
   for (auto build_file_name: files) {
     auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
-    if (check_resource_exists(build_file_path, Resource_Type::File)) return Option(move(build_file_path));
+    if (check_file_exists(build_file_path)) return Option(move(build_file_path));
   }
 
   return {};
@@ -279,7 +270,7 @@ Project load_project (
     // }
 
   auto build_file_path = discover_build_file(arena, workspace_directory)
-    .take(format_string(arena, "No project configuration at: %\n", workspace_directory));
+    .take(concat_string(arena, "No project configuration at: ", workspace_directory, "\n"));
 
   if (!global_flags.silenced) print("Configuration file: %\n", build_file_path);
 
@@ -310,7 +301,7 @@ Project load_project (
     workspace = Workspace { move(project_output_directory), move(project_tag_file) };
   }
 
-  auto shared_library_file_name  = format_string(arena, "%.%", project_name, get_shared_library_extension());
+  auto shared_library_file_name  = concat_string(arena, project_name, ".", get_shared_library_extension());
   auto project_library_file_path = make_file_path(arena, workspace.project_output_directory_path, shared_library_file_name);
   if (!check_resource_exists(project_library_file_path, Resource_Type::File)) {
     auto toolchain = discover_toolchain(arena)
@@ -326,8 +317,6 @@ Project load_project (
     String::copy(arena, workspace_directory),
     String::copy(arena, workspace.project_output_directory_path)
   };
-
-  // load_project_from_library(user_arguments, &project, project_library_file_path);
 
   create_resource(project.output_location_path, Resource_Type::Directory).expect();
 

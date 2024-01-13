@@ -1,4 +1,6 @@
 
+#define FIN_EMBED_STATE
+
 #include "anyfin/platform/startup.hpp"
 
 #include "test_suite.hpp"
@@ -12,6 +14,10 @@ File_Path binary_path;       // Executable under test
  */
 File_Path object_folder_path;
 File_Path out_folder_path;
+
+static void test_configuration_failure (u32 exit_code) {
+  require(false);
+}
 
 static int find_arg (const char * arg, const int argc, const char * const * const argv) {
   for (auto idx = 0; idx < argc; idx++) {
@@ -28,14 +34,15 @@ static String_View find_arg_value (const char * arg, const int argc, const char 
   return {};
 }
 
-//int main (int argc, char **argv) {
-int mainCRTStartup () {
+int main (int argc, char **argv) {
+  set_crash_handler(test_configuration_failure);
+
   Memory_Arena arena { reserve_virtual_memory(megabytes(8)) };
 
   auto args = get_startup_args(arena);
 
   auto suite_runner = Test_Suite_Runner {
-    .arena        = make_sub_arena(arena, megabytes(1)),
+    .arena        = make_sub_arena(arena, megabytes(6)),
     .suite_filter = get_value(args, "suite").or_default(),
     .case_filter  = get_value(args, "case").or_default(),
   };
@@ -52,14 +59,14 @@ int mainCRTStartup () {
 
   print("Verifying: %\n", binary_path);
 
-#define run_suite(SUITE_NAME)                                           \
+#define run_suite(SUITE_NAME)                                     \
   void tokenpaste(SUITE_NAME, _test_suite)(Test_Suite_Runner &);  \
   tokenpaste(SUITE_NAME, _test_suite)(suite_runner)
 
+  run_suite(public_api); 
   run_suite(init_command);
   run_suite(build_command);
   run_suite(clean_command);
-  run_suite(public_api); 
   //run_suite(subprojects); 
 
   return suite_runner.report();

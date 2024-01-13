@@ -98,7 +98,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
                               versions,
                               "-DPLATFORM_X64 -DPLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
-                              "-fno-exceptions -nostdlib -nostdlib++ -nostdinc++");
+                              "-nostdlib -nostdlib++ -nostdinc++");
   //add_global_compiler_options(project, "-H");
 
   // add_global_compiler_options(project,
@@ -139,6 +139,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/target_builder.cpp");
     add_source_file(cbuild, "code/c_runtime_compat.cpp");
 
+    add_compiler_options(cbuild, "-fno-exceptions");
+
     // char exports_option[256] = "/def:";
     // snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
     // add_linker_option(cbuild, exports_option);
@@ -150,10 +152,9 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_all_sources_from_directory(tests, "tests", "cpp", false);
     add_source_files(tests,
                      "code/cbuild_api.cpp",
-                     "code/toolchain_win32.cpp",
-                     "code/c_runtime_compat.cpp");
+                     "code/toolchain_win32.cpp");
 
-    link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib");
+    link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib", "libcmt.lib");
   }
 
   // auto rdump = add_executable(project, "rdump");

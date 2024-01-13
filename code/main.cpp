@@ -1,4 +1,6 @@
 
+#define FIN_EMBED_STATE
+
 #include "anyfin/core/arena.hpp"
 #include "anyfin/core/memory.hpp"
 #include "anyfin/core/option.hpp"
@@ -28,7 +30,11 @@ enum struct CLI_Command {
 
 static Option<String_View> find_argument_value (const Iterable<Startup_Argument> auto &args, const String_View& name) {
   for (auto arg: args) {
-    if (arg.is_value()) continue;
+    /*
+      Calling find_argument_value implicitly presumes the fact that we need a key-value setting. If it's a plain value
+      instead, that's deemed as invalid input.
+     */
+    if (arg.is_value()) panic("ERROR: Invalid option value for the key 'type', expected format: <key>=<value>");
     if (compare_strings(arg.key, name)) return String_View(arg.value);
   }
 
@@ -37,7 +43,11 @@ static Option<String_View> find_argument_value (const Iterable<Startup_Argument>
 
 static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const String_View& name) {
   for (auto arg: args) {
-    if (arg.is_pair()) continue;
+    /*
+      Calling find_option_flag implicitly presumes the fact that we need a singular key (flag) setting.
+      If it's a key-value pair instead, it's considered an input error.
+     */
+    if (arg.is_pair()) panic("ERROR: Unexpected input type of the '%' flag", name);
     if (compare_strings(arg.key, name)) return true;
   }
 
@@ -101,16 +111,16 @@ struct Build_Command {
 };
 
 struct Init_Command {
-  Configuration_Type type;
+  Configuration_Type type = Configuration_Type::Cpp;
 
   static Init_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
     Init_Command command;
 
     find_argument_value(command_arguments, "type")
         .handle_value([&command](auto value) {
-          if (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
-          else if (compare_strings(value, "c")) command.type = Configuration_Type::C;
-          else panic("Unrecognized argument value for the 'type' option: %", value);
+          if      (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
+          else if (compare_strings(value, "c"))   command.type = Configuration_Type::C;
+          else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);
         });
 
     return command;
@@ -201,7 +211,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
     {'s', "silence", &global_flags.silenced},
   };
 
-  usize parsed_flags = 0;
+  usize parsed_flags_count = 0;
   for (auto &arg: args) {
     /*
       Global flags should always come before other input arguments. If we see a token that doesn't start with a dash,
@@ -251,17 +261,23 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
       if (!found) panic("Flag '%s' is not supported", arg.key);
     }
 
-    parsed_flags += 1;
+    parsed_flags_count += 1;
   }
 
-  args += parsed_flags;
+  args += parsed_flags_count;
 }
 
 static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   if (is_empty(args)) return CLI_Command::Help;
 
-  auto arg = *args++;
-  assert(arg.is_value());
+  auto arg = *args;
+  if (!arg.is_value()) {
+    print("Command name is expected as the first argument, a %=% pair is found instead", arg.key, arg.value);
+    print_usage();
+    trap("");
+  }
+
+  args += 1;
 
   const auto command_name = arg.key;
 
@@ -276,6 +292,8 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
 }
 
 int mainCRTStartup () {
+  set_crash_handler(terminate);
+  
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
     
   auto args        = get_startup_args(arena);

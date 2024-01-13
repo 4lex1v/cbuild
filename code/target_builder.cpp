@@ -65,7 +65,7 @@ struct Target_Tracker {
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
-    return reserve(arena, size, alignof(Target_Tracker));
+    return reserve<Target_Tracker>(arena);
   }
 };
 
@@ -320,14 +320,14 @@ static File_Path get_target_object_folder_path (Memory_Arena &arena, const Targe
   if (!target.flags.external) [[likely]]
     return make_file_path(arena, object_folder_path, target.name);
   
-  return make_file_path(arena, object_folder_path, target.project->external_name, target.name);
+  return make_file_path(arena, object_folder_path, target.project.external_name, target.name);
 }
 
 static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
   using TLS = Target_Link_Status;
 
   const auto &target  = *tracker.target;
-  const auto &project = *target.project;
+  const auto &project = target.project;
 
   auto target_compilation_status = atomic_load(tracker.compile_status);
   if (target_compilation_status == Target_Compile_Status::Compiling) return;
@@ -367,22 +367,25 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
     String_Builder builder { arena };
 
+    const auto make_file_name = [&arena] (String_View name, String_View extension) {
+      return format_string(arena, "%.%", name, extension);
+    };
+
     switch (target.type) {
       case Target::Type::Static_Library: {
         builder += String_View(project.toolchain.archiver_path);
-        builder += project.project_options.archiver;
-        builder += target.options.archiver;
+        builder += project.archiver;
+        builder += target.archiver;
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
+                                    make_file_name(*get_resource_name(arena, path), get_object_extension()));
         }
 
         for (auto lib: target.depends_on) {
           assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
 
-          builder += make_file_path(arena, out_folder_path,
-                                    format_string(arena, "%.%", lib->name, get_static_library_extension()));
+          builder += make_file_path(arena, out_folder_path, make_file_name(lib->name, get_static_library_extension()));
         }
 
         if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
@@ -393,19 +396,17 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       case Target::Type::Shared_Library: {
         builder += String_View(project.toolchain.linker_path);
         builder += is_win32() ? String_View("/dll") : String_View("-shared");
-        builder += project.project_options.linker;
-        builder += target.options.linker;
+        builder += project.linker;
+        builder += target.linker;
 
         for (auto &path: target.files) {
-          builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
+          builder += make_file_path(arena, target_object_folder, make_file_name(*get_resource_name(arena, path), get_object_extension()));
         }
       
         for (auto lib: target.depends_on) {
           assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
         
-          builder += make_file_path(arena, out_folder_path,
-                                    format_string(arena, "%.%", lib->name, get_static_library_extension()));
+          builder += make_file_path(arena, make_file_name(lib->name, get_static_library_extension()));
         }
 
         builder += target.link_libraries;
@@ -417,12 +418,12 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       };
       case Target::Type::Executable: {
         builder += String_View(project.toolchain.linker_path);
-        builder += project.project_options.linker;
-        builder += target.options.linker;
+        builder += project.linker;
+        builder += target.linker;
 
         for (auto &path: target.files) {
           builder += make_file_path(arena, target_object_folder,
-                                    format_string(arena, "%.%", *get_resource_name(arena, path), get_object_extension()));
+                                    make_file_name(*get_resource_name(arena, path), get_object_extension()));
         }
 
         for (auto lib: target.depends_on) {
@@ -434,8 +435,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
             else                                           lib_extension = "so";
           }
         
-          builder += make_file_path(arena, out_folder_path,
-                                    format_string(arena, "%.%", lib->name, lib_extension));
+          builder += make_file_path(arena, out_folder_path, make_file_name(lib->name, lib_extension));
         }
 
         builder += target.link_libraries;
@@ -445,7 +445,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
         break;
       };
-    };
+    }
 
     auto link_command = build_string_with_separator(arena, builder, ' ');
 
@@ -477,7 +477,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 
 static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const File &file, const bool dependencies_updated) {
   const auto &target    = *tracker.target;
-  const auto &project   = *target.project;
+  const auto &project   = target.project;
   const auto &toolchain = project.toolchain;
 
   auto target_info      = reinterpret_cast<Registry::Target_Info *>(target.build_context.info);
@@ -518,10 +518,10 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 
     String_Builder builder { arena };
     builder += String_View(is_cpp_file ? project.toolchain.cpp_compiler_path : project.toolchain.c_compiler_path);
-    builder += project.project_options.compiler;
-    builder += target.options.compiler;
+    builder += project.compiler;
+    builder += target.compiler;
 
-    for (auto &path: project.project_options.include_paths) {
+    for (auto &path: project.include_paths) {
       builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
     }
 
@@ -776,8 +776,8 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         auto local = arena;
 
         List<File_Path> include_paths(local);
-        for (auto &path: project.project_options.include_paths) list_push(include_paths, String::copy(local, path));
-        for (auto &path: target->include_paths)                 list_push(include_paths, String::copy(local, path));
+        for (auto &path: project.include_paths) list_push(include_paths, String::copy(local, path));
+        for (auto &path: target->include_paths) list_push(include_paths, String::copy(local, path));
 
         dependencies_updated = scan_file_dependencies(local, file, include_paths);
       }

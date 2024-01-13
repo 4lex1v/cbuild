@@ -4,30 +4,14 @@
 #include "anyfin/core/arena.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/callsite.hpp"
-#include "anyfin/core/meta.hpp"
 
+#define WIN32_DEBUG_OUTPUT_ENABLE
+#include "anyfin/platform/console.hpp"
 #include "anyfin/platform/commands.hpp"
 #include "anyfin/platform/file_system.hpp"
-#include "anyfin/platform/console.hpp"
 
 using namespace Fin::Core;
 using namespace Fin::Platform;
-
-struct Case_Run_Result {
-  bool          error;
-  Callsite_Info callsite;
-  String_View   message;
-
-  // String_View expr;
-  // String_View expr_lhs;
-  // String_View expr_lhs_value;
-  // String_View expr_rhs;
-  // String_View expr_rhs_value;
-  // String_View details;
-};
-
-#define require_eq(EXPR_LHS, EXPR_RHS)
-#define require_lt(EXPR_LHS, EXPR_RHS)
 
 struct Test_Case {
   typedef void (*Case_Step)(Memory_Arena &arena);
@@ -50,87 +34,132 @@ struct Test_Case {
     runner.run(#NAME, CASES);                                     \
   }
 
-/*
-  TODO:
-    I'm not happy with this approach at all, but at this point don't have much time to iterate on this design,
-    need to focus on getting these tests up and running to continue with restoring cbuild's main functionality.
-    After that I'll refine the API to facilitate a better architecture and separation between the runner and
-    test cases.
- */
-static void *context[16];
-static Case_Run_Result result;
+struct Test_Errors {
+  struct System_Error {
+    Fin::Platform::System_Error error;
+    String_View context;
+    Callsite_Info callsite;
+  };
 
-template <typename S, typename T>
-static void require (const Fin::Core::Result<S, T> &_result, Callsite_Info _callsite = {}) {
-  if (!_result) {
-    print("Failed result value: %\n", _result.status);
+  struct Child_Process_Error {
+    u32 status_code;
+    String_View output;
+    String_View context;
+    Callsite_Info callsite;
+  };
 
-    result = Case_Run_Result {
-      .error    = true,
-      .callsite = _callsite
-    };
-    
-    __builtin_longjmp(context, 1);
-  }
+  struct Condition_Error {
+    String_View expression;
+    String_View context;
+    Callsite_Info callsite;
+  };
+};
+
+static void require_internal (const Fin::Platform::Result<System_Command_Status> &result,
+                              String_View expression,
+                              String_View context = "",
+                              Callsite_Info callsite = {}) {
+  auto &[has_failed, error, status] = result;
+  if (has_failed) throw Test_Errors::System_Error(error, context, callsite);
+  if (status.status_code != 0)
+    throw Test_Errors::Child_Process_Error(status.status_code, status.output, context, callsite);
 }
 
-static void require (bool check, Callsite_Info _callsite = {}) {
-  if (!check) {
-    result = Case_Run_Result {
-      .error    = true,
-      .callsite = _callsite
-    };
-    
-    __builtin_longjmp(context, 1);
-  }
+static void require_internal (bool result, String_View expression, String_View context = "", Callsite_Info callsite = {}) {
+  if (!result) throw Test_Errors::Condition_Error(expression, context, callsite);
 }
+
+#define require(EXPR) require_internal((EXPR), stringify(EXPR))
+#define frequire(EXPR, CONTEXT) require_internal((EXPR), stringify(EXPR), (CONTEXT))
+
+#define require_crash(EXPR)                     \
+  do {                                          \
+    bool exception_captured = false;            \
+    try { (EXPR); }                             \
+    catch (...) {                               \
+      exception_captured = true;                \
+    }                                           \
+    require(exception_captured);                \
+  } while(0)
 
 struct Test_Suite_Runner {
-  enum struct Status: u32 { Success, Setup_Failed, Case_Failed, Cleanup_Failed };
+  enum struct Status { Success, Setup_Failed, Case_Failed, Cleanup_Failed };
 
   mutable Memory_Arena arena;
 
   String_View suite_filter;
   String_View case_filter;
 
-  List<String_View> failed_suites;
+  List<String_View> failed_suites { arena };
 
   template <const usize N>
-  void run (String_View suite_name, const Test_Case (&cases)[N]) {
-    if (!is_empty(suite_filter) && !compare_strings(suite_filter, suite_name)) return;
-    print("Suite [%]\n", suite_name);
+  void run (const String_View &suite_name, const Test_Case (&cases)[N]) {
+    if (is_empty(suite_filter) || compare_strings(suite_filter, suite_name)) {
+      print("Suite: %\n", suite_name);
 
-    for (auto &test_case: cases) {
-      if (!is_empty(case_filter) && !compare_strings(case_filter, test_case.name)) return;
-      print("Case [%]", test_case.name);
+      for (auto &test_case: cases) {
+        if (is_empty(case_filter) || compare_strings(case_filter, test_case.name)) {
 
-      auto local = arena;
+          Status status = Status::Success;
 
-      if (!__builtin_setjmp(context)) {
-        if (test_case.before) test_case.before(arena);
-        test_case.case_code(arena);
-        if (test_case.after) test_case.after(arena);
+          {
+            auto offset = arena.offset;
+            defer { arena.offset = offset; };
 
-        print(": SUCCESS\n");
-      }
-      else {
-        print(" -> failed\n");
+            print("  - %\n", test_case.name);
+
+            if (test_case.before) {
+              try { test_case.before(arena); }
+              catch (...) {
+                print("    CASE SETUP FAILED\n");
+                status = Status::Setup_Failed;
+              }
+            }
+
+            if (status != Status::Setup_Failed) {
+              try {
+                test_case.case_code(arena);
+              }
+              catch (const Test_Errors::System_Error &error) {
+                status = Status::Case_Failed;
+                print("   Status:\tSYSTEM_ERROR\n"
+                      "   Position:\t[%:%]\n"
+                      "   System Error:\t%\n",
+                      error.callsite.file, error.callsite.line, error.error);
+                if (error.context) print("\tContext:\t%\n", error.context);
+              }
+              catch (const Test_Errors::Child_Process_Error &error) {
+                status = Status::Case_Failed;
+                print("   Status:\tCHILD_PROCESS_ERROR\n"
+                      "   Position:\t[%:%]\n"
+                      "   Return Code:\t%\n",
+                      error.callsite.file, error.callsite.line, error.status_code);
+                if (error.output) print("   Output:\t%\n", error.output);
+                if (error.context) print("\tContext:\t%\n", error.context);
+              }
+              catch (const Test_Errors::Condition_Error &error) {
+                status = Status::Case_Failed;
+                print("\tStatus:\tCONDITION\n"
+                      "\tPosition:\t[%:%]\n"
+                      "\tExpression:\t%,\n",
+                      error.callsite.file, error.callsite.line, error.expression);
+                if (error.context) print("\tContext:\t%\n", error.context);
+              }
+            }
+
+            if (status != Status::Setup_Failed && test_case.after) {
+              try { test_case.after(arena); }
+              catch (...) {
+                print("    CASE CLEANUP FAILED\n");
+                status = Status::Cleanup_Failed;
+              }
+            }
+          }
+
+          if (status != Status::Success) list_push_copy(failed_suites, test_case.name);
+        }
       }
     }
-
-    //         if (status != Status::Setup_Failed && test_case.after) {
-    //           try { test_case.after(arena); }
-    //           catch (const Test_Failed_Exception &error) {
-    //             print("    CASE CLEANUP FAILED\n");
-    //             status = Status::Cleanup_Failed;
-    //           }
-    //         }
-    //       }
-
-    //       if (status != Status::Success) list_push_copy(failed_suites, test_case.name);
-    //     }
-    //   }
-    // }
   }
 
   int report () const {
@@ -146,4 +175,3 @@ struct Test_Suite_Runner {
     return 1;
   }
 };
-

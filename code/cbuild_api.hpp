@@ -37,17 +37,21 @@ struct Project {
     configuration API, except when the project attempts to load a subproject, in which case we would use a global arena to allocate
     enough space for the subproject data, otherwise, the "arena" should be used.
    */
-  Memory_Arena global_arena;
+  Memory_Arena &global_arena;
 
-  mutable Memory_Arena arena;
+  mutable Memory_Arena arena { make_sub_arena(global_arena, megabytes(2)) };
 
+  /*
+    Default configuration will be configured by the project's loader, that will lookup whatever is acceptible to
+    build the project's configuration. User has capabilities to overwrite toolchain.
+   */
+  Toolchain_Configuration toolchain {};
   Target_Arch target_architecture = Target_Arch_x64;
-  Toolchain_Configuration toolchain;
 
   bool rebuild_required  = false;
   bool registry_disabled = false;
 
-  List<User_Defined_Command> user_defined_commands;
+  List<User_Defined_Command> user_defined_commands { global_arena };
 
   /*
     If this is an external project, i.e it's loaded as a dependency by some other project, it will be given an
@@ -68,23 +72,20 @@ struct Project {
    */
   File_Path output_location_path;
 
-  List<Project *> sub_projects;
+  List<Project *> sub_projects { arena };
 
-  List<Target *> targets;
-  u32            total_files_count;
+  List<Target *> targets { arena };
+  u32            total_files_count = 0;
 
-  struct {
-    List<File_Path> include_paths;
+  List<File_Path> include_paths { arena };
 
-    List<String> compiler;
-    List<String> archiver;
-    List<String> linker;
-  } project_options;
+  List<String> compiler { arena };
+  List<String> archiver { arena };
+  List<String> linker   { arena };
 
   const Arguments *args = nullptr;
 
   struct {
-    
   } hooks;
 
   Project (Memory_Arena &global,
@@ -92,18 +93,11 @@ struct Project {
            File_Path root,
            File_Path _output_location,
            const bool _is_external = false)
-    // Toolchain_Configuration default_toolchain)
     : global_arena          { global },
-      arena                 { make_sub_arena(global, megabytes(2)) },
-      //toolchain           { default_toolchain },
-      user_defined_commands { global },
       external_name         { move(String::copy(global, name)) },
       is_external           { _is_external },
       project_root          { move(root) },
-      output_location_path  { move(_output_location) },
-      sub_projects          { arena },
-      targets               { arena },
-      project_options       { .include_paths { arena }, .compiler { arena }, .archiver { arena }, .linker { arena } }
+      output_location_path  { move(_output_location) }
   {}
 };
 
@@ -131,26 +125,22 @@ struct Target {
     IMPORANT: For the external targets this would point to the external project, not the main project
     that we are building now.
    */
-  Project *project;
+  Project &project;
 
   struct {
     bool external = false;
   } flags;
 
-  List<File_Path> files;
-  List<File_Path> include_paths;
-  List<String>    link_libraries;
+  List<File_Path> files          { project.arena };
+  List<File_Path> include_paths  { project.arena };
+  List<String>    link_libraries { project.arena };
 
-  List<Target *> depends_on;
-  List<Target *> required_by;
+  List<Target *> depends_on  { project.arena };
+  List<Target *> required_by { project.arena };
 
-  struct {
-    List<String> compiler;
-    List<String> archiver;
-    List<String> linker;
-  } options;
-
-  //File_Path output_file_path;
+  List<String> compiler { project.arena };
+  List<String> archiver { project.arena };
+  List<String> linker   { project.arena };
 
   struct {
     Hook_Func on_linked = nullptr;
@@ -174,24 +164,14 @@ struct Target {
   } build_context;
 
   Target (Project &_project, Type _type, String _name)
-    : name           { move(_name) },
-      type           { _type },
-      project        { &_project },
-      flags          { .external = project->is_external },
-      files          { project->arena },
-      include_paths  { project->arena },
-      link_libraries { project->arena },
-      depends_on     { project->arena },
-      required_by    { project->arena },
-      options {
-        .compiler { project->arena },
-        .archiver { project->arena },
-        .linker   { project->arena }
-      }
-    {}
+    : name    { move(_name) },
+      type    { _type },
+      project { _project },
+      flags   { .external = project.is_external }
+  {}
 
   void * operator new (usize size, Memory_Arena &arena) {
-    return reserve(arena, sizeof(Target), alignof(Target));
+    return reserve<Target>(arena);
   }
 };
 
