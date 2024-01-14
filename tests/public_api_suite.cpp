@@ -28,8 +28,8 @@ static void setup_workspace (Memory_Arena &arena) {
 
   require(create_directory(workspace));
 
-  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
-  require(copy_directory(testbed_path, workspace));
+  auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
+  require(copy_directory(testsite_path, workspace));
 
   require(set_working_directory(workspace));
 }

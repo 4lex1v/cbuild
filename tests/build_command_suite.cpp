@@ -11,12 +11,12 @@ static void setup_workspace (Memory_Arena &arena) {
   set_working_directory(workspace);
 }
 
-static void setup_testbed (Memory_Arena &arena) {
+static void setup_testsite (Memory_Arena &arena) {
   if (check_directory_exists(workspace)) delete_directory(workspace);
   create_directory(workspace);
 
-  auto testbed_path = make_file_path(arena, working_directory, "tests", "testbed");
-  copy_directory(testbed_path, workspace);
+  auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
+  copy_directory(testsite_path, workspace);
 
   set_working_directory(workspace);
 }
@@ -47,7 +47,7 @@ static void build_init_project_tests (Memory_Arena &arena) {
   require(has_substring(cmd_result.value.output, "Thank you for trying cbuild!"));
 }
 
-static String build_testbed (Memory_Arena &arena, String_View extra_arguments = {}) {
+static String build_testsite (Memory_Arena &arena, String_View extra_arguments = {}) {
   auto build_command = format_string(arena, "% build %", binary_path, extra_arguments);
   auto build_cmd_result = run_system_command(arena, build_command);
   require(build_cmd_result);
@@ -67,15 +67,13 @@ static void validate_binary (Memory_Arena &arena, String_View binary_name, Strin
 static u32 count_lines_starting_with (String_View output, String_View start_with, u32 expected_count) {
   u32 count = 0;
 
-  // TODO rewrite with foreach
-  // for (auto line: iterators::split(output, '\n')) {
-  //   if (starts_with(line, start_with)) count += 1;
-  // }
+  split_string(output, '\n')
+    .for_each([&] (auto it) { if (starts_with(it, start_with)) count += 1; });
 
   return count;
 }
 
-static void build_testbed_tests (Memory_Arena &arena) {
+static void build_testsite_tests (Memory_Arena &arena) {
   String_View toolchains [] { "msvc_x86", "msvc_x64", "llvm", "llvm_cl" };
   String_View configs    [] { "debug", "release" };
 
@@ -107,20 +105,20 @@ static void build_testbed_tests (Memory_Arena &arena) {
 static void build_registry_tests (Memory_Arena &arena) {
   auto executable_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
 
-  auto output = build_testbed(arena);
+  auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file", 9);
   validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
 
   for (int idx = 0; idx < 5; idx++) {
-    auto output2 = build_testbed(arena);
+    auto output2 = build_testsite(arena);
     count_lines_starting_with(output2, "Building file", 0);
     validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
   }
 
   for (int idx = 0; idx < 5; idx++) {
-    auto output2 = build_testbed(arena, "cache=off");
+    auto output2 = build_testsite(arena, "cache=off");
     count_lines_starting_with(output2, "Building file", 9);
 
     validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
@@ -128,7 +126,7 @@ static void build_registry_tests (Memory_Arena &arena) {
   }
 
   for (int idx = 0; idx < 5; idx++) {
-    auto output2 = build_testbed(arena);
+    auto output2 = build_testsite(arena);
     count_lines_starting_with(output2, "Building file", 0);
     validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
@@ -138,7 +136,7 @@ static void build_registry_tests (Memory_Arena &arena) {
 static void build_changes_tests (Memory_Arena &arena) {
   using enum File_System_Flags;
 
-  auto output = build_testbed(arena);
+  auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file", 9);
 
   validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
@@ -164,7 +162,7 @@ void library2 () {
   require(write_buffer_to_file(new_lib, new_lib_impl));
 
   {
-    auto output = build_testbed(arena);
+    auto output = build_testsite(arena);
 
     count_lines_starting_with(output, "Building file",  1); // library2.cpp
     count_lines_starting_with(output, "Linking target", 3); // library2, dynamic2, binary1
@@ -197,7 +195,7 @@ void library2 () {
 //   require(write_buffer_to_file(base_header_file, base_file_content));
                                     
 //   {
-//     auto output = build_testbed(arena);
+//     auto output = build_testsite(arena);
 
 //     count_lines_starting_with(output, "Building file",  3); // dynamic1, dynamic2, dynamic3
 //     count_lines_starting_with(output, "Linking target", 5); // dynamic1, dynamic2, dynamic3, binary1, binary2
@@ -210,7 +208,7 @@ void library2 () {
 static void build_errors_tests (Memory_Arena &arena) {
   using enum File_System_Flags;
 
-  auto output = build_testbed(arena);
+  auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file", 9);
 
   validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
@@ -298,7 +296,7 @@ EXPORT_SYMBOL void dynamic1 () {
 
   require(write_buffer_to_file(fixed_handle, fixed_code_impl));
 
-  auto output3 = build_testbed(arena);
+  auto output3 = build_testsite(arena);
 
   count_lines_starting_with(output3, "Building file", 1); // dynamic1
   count_lines_starting_with(output3, "Linking target", 3); // dynamic1, dynamic2, binary1
@@ -328,7 +326,7 @@ static void test_modify_file (Memory_Arena &arena, File_Path file_path) {
 }
 
 static void build_project_tests (Memory_Arena &arena) {
-  auto output = build_testbed(arena);
+  auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file", 9);
   count_lines_starting_with(output, "Linking target", 9);
 
@@ -337,7 +335,7 @@ static void build_project_tests (Memory_Arena &arena) {
 
   test_modify_file(arena, make_file_path(arena, "project", "build.cpp"));
   
-  auto output2 = build_testbed(arena);
+  auto output2 = build_testsite(arena);
   count_lines_starting_with(output2, "Building file", 9);
   count_lines_starting_with(output2, "Linking target", 9);
 
@@ -345,7 +343,7 @@ static void build_project_tests (Memory_Arena &arena) {
   validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
 
   for (int idx = 0; idx < 5; idx++) {
-    auto output3 = build_testbed(arena);
+    auto output3 = build_testsite(arena);
     count_lines_starting_with(output3, "Building file", 0);
     count_lines_starting_with(output3, "Linking target", 0);
 
@@ -355,30 +353,30 @@ static void build_project_tests (Memory_Arena &arena) {
 }
 
 static void build_cache_tests (Memory_Arena &arena) {
-  build_testbed(arena, "cache=off");
+  build_testsite(arena, "cache=off");
   validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
 
   auto registry_file = make_file_path(arena, ".cbuild", "build", "__registry");
   require(!check_file_exists(registry_file));
 
-  auto output = build_testbed(arena);
+  auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file",  9); 
   count_lines_starting_with(output, "Linking target", 9);
 
   require(check_file_exists(registry_file));
 
-  auto output2 = build_testbed(arena, "cache=flush");
+  auto output2 = build_testsite(arena, "cache=flush");
   count_lines_starting_with(output2, "Building file",  9); 
   count_lines_starting_with(output2, "Linking target", 9);
 
   require(check_file_exists(registry_file));
 
-  auto output3 = build_testbed(arena);
+  auto output3 = build_testsite(arena);
   count_lines_starting_with(output3, "Building file",  0); 
   count_lines_starting_with(output3, "Linking target", 0);
 
-  auto output4 = build_testbed(arena, "cache=off");
+  auto output4 = build_testsite(arena, "cache=off");
   count_lines_starting_with(output4, "Building file",  9); 
   count_lines_starting_with(output4, "Linking target", 9);
 
@@ -387,23 +385,23 @@ static void build_cache_tests (Memory_Arena &arena) {
 }
 
 static void build_targets_tests (Memory_Arena &arena) {
-  auto output = build_testbed(arena, "targets=library1");
+  auto output = build_testsite(arena, "targets=library1");
   count_lines_starting_with(output, "Building file",  1); // library1
   count_lines_starting_with(output, "Linking target", 1); // library1
 
-  auto output3 = build_testbed(arena, "targets=\"binary2,library3\"");
+  auto output3 = build_testsite(arena, "targets=\"binary2,library3\"");
   count_lines_starting_with(output3, "Building file",  3); // binary2, dynamic3, library3
   count_lines_starting_with(output3, "Linking target", 3);
 
-  auto output2 = build_testbed(arena, "targets=dynamic2,");
+  auto output2 = build_testsite(arena, "targets=dynamic2,");
   count_lines_starting_with(output2, "Building file",  3); // library2, dynamic1, dynamic2
   count_lines_starting_with(output2, "Linking target", 3); 
 
-  auto output4 = build_testbed(arena);
+  auto output4 = build_testsite(arena);
   count_lines_starting_with(output4, "Building file",  2); // binary1, library4
   count_lines_starting_with(output4, "Linking target", 2);
 
-  auto output5 = build_testbed(arena, "targets=library3,library2");
+  auto output5 = build_testsite(arena, "targets=library3,library2");
   count_lines_starting_with(output5, "Building file",  0);
   count_lines_starting_with(output5, "Linking target", 0);
 
@@ -424,13 +422,13 @@ static void build_targets_tests (Memory_Arena &arena) {
 
 static Test_Case build_command_tests [] {
   define_test_case_ex(build_init_project_tests, setup_workspace, cleanup_workspace),
-  define_test_case_ex(build_testbed_tests,      setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_registry_tests,     setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_changes_tests,      setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_errors_tests,       setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_project_tests,      setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_cache_tests,        setup_testbed,   cleanup_workspace),
-  define_test_case_ex(build_targets_tests,      setup_testbed,   cleanup_workspace),
+  define_test_case_ex(build_testsite_tests,      setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_registry_tests,     setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_changes_tests,      setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_errors_tests,       setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_project_tests,      setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_cache_tests,        setup_testsite,   cleanup_workspace),
+  define_test_case_ex(build_targets_tests,      setup_testsite,   cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)

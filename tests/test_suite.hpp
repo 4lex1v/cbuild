@@ -100,7 +100,7 @@ struct Test_Suite_Runner {
 
     try { step(local); }
     catch (const Test_Errors::System_Error &error) {
-      print("   Status:\tSYSTEM_ERROR\n"
+      print<2048>("   Status:\tSYSTEM_ERROR\n"
             "   Position:\t[%:%]\n"
             "   Error:\t%\n",
             error.callsite.file, error.callsite.line, error.error);

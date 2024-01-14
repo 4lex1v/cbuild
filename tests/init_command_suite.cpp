@@ -92,7 +92,7 @@ static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
   require(!init_cmd_has_failed);
   require(status.status_code != 0);
 
-  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: "),
+  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option:"),
            concat_string(arena, "status.output = ", status.output));
 }
 

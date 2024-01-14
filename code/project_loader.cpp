@@ -58,9 +58,9 @@ void init_workspace (Memory_Arena &arena, const File_Path &working_directory, Co
     if (open_failed) panic("Failed to open file '%' for writing due to an error: %", path_view, error);
 
     write_buffer_to_file(file, data)
-      .expect(format_string(arena, "Failed to write data into the file '%'", file.path));
+      .expect(concat_string(arena, "Failed to write data into the file ", file.path));
 
-     close_file(file).expect(format_string(arena, "Failed to close file '%'", file.path));
+     close_file(file).expect(concat_string(arena, "Failed to close file ", file.path));
   };
 
   auto cbuild_h_path     = make_file_path(arena, project_directory_path, "cbuild.h");
