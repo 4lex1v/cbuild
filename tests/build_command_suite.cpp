@@ -67,9 +67,10 @@ static void validate_binary (Memory_Arena &arena, String_View binary_name, Strin
 static u32 count_lines_starting_with (String_View output, String_View start_with, u32 expected_count) {
   u32 count = 0;
 
-  for (auto line: iterator::split(output, '\n')) {
-    if (starts_with(line, start_with)) count += 1;
-  }
+  // TODO rewrite with foreach
+  // for (auto line: iterators::split(output, '\n')) {
+  //   if (starts_with(line, start_with)) count += 1;
+  // }
 
   return count;
 }

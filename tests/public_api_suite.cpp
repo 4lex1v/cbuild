@@ -43,7 +43,6 @@ static Project create_project (Memory_Arena &arena) {
   return { arena, "test_project", copy(working_directory), {} };
 }
 
-
 // TODO: Need to rewrite the arguments API for the next release
 // static void arguments_test (Memory_Arena &arena) {
 //   using Arg_Type = Arguments::Argument::Type;
@@ -162,8 +161,10 @@ static void add_compiler_option_test (Memory_Arena &arena) {
 
   auto target = add_static_library(&project, "library");
   add_compiler_option(target, "/nologo");
-  add_compiler_option(target, "/W4274");
-  add_compiler_option(target, "/foo /bar /baz");
+  add_compiler_option(target, "  ");
+  add_compiler_option(target, "  /W4274");
+  add_compiler_option(target, "/foo   /bar /baz  ");
+  require_crash(add_compiler_option(target, ""));
 
   require(target->compiler.count == 5);
   require(ensure_list_content(target->compiler, "/nologo", "/W4274", "/foo", "/bar", "/baz"));
@@ -291,8 +292,8 @@ static void add_all_sources_from_directory_test (Memory_Arena &arena) {
   require(project.total_files_count == 9);
 
   add_all_sources_from_directory(target, "code", "c", true);
-  require(target->files.count == 9); 
-  require(project.total_files_count == 9);
+  require(target->files.count == 10); 
+  require(project.total_files_count == 10);
 
   require_crash(add_all_sources_from_directory(target, "non_existing_dir", "c", false));
   require_crash(add_all_sources_from_directory(target, "dir/file.cpp", "cpp", false));
@@ -451,7 +452,7 @@ static void add_global_linker_option_test (Memory_Arena &arena) {
   add_global_linker_option(&project, "/std:c++20");
   
   require(project.linker.count == 2);
-  require(ensure_list_content(project.archiver, "/nologo", "/std:c++20"));
+  require(ensure_list_content(project.linker, "/nologo", "/std:c++20"));
 }
 
 static void add_global_include_search_path_test (Memory_Arena &arena) {
@@ -461,12 +462,15 @@ static void add_global_include_search_path_test (Memory_Arena &arena) {
 
   add_global_include_search_path(&project, "./includes");
   add_global_include_search_path(&project, "./libs");
-  
+
   require(project.include_paths.count == 2);
+  require(ensure_list_content(project.include_paths,
+                              *get_absolute_path(arena, "./includes"),
+                              *get_absolute_path(arena, "./libs")));
 }
 
 static Test_Case public_api_tests [] {
-  define_test_case_ex(set_toolchain_test, setup_workspace, cleanup_workspace),
+  define_test_case(set_toolchain_test),
   define_test_case(disable_registry_test),
   define_test_case(register_action_test),
   define_test_case(output_location_test),

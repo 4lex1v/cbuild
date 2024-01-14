@@ -6,7 +6,7 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(workspace).check())
+  if (check_directory_exists(workspace).get())
     require(delete_directory(workspace));
 
   require(create_directory(workspace));

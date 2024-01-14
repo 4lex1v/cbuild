@@ -241,45 +241,50 @@ void add_include_search_path (Target *target, const char *path) {
   list_push(target->include_paths, include_path.take());
 }
 
-void add_all_sources_from_directory (Target *target, const char *_directory, const char *_extension, bool recurse) {
+void add_all_sources_from_directory (Target *target, const char *_directory, const char *extension, bool recurse) {
   require_non_null(target);
   require_non_null(_directory);
   require_non_empty(_directory);
-  require_non_null(_extension);
-  require_non_empty(_extension);
+  require_non_null(extension);
+  require_non_empty(extension);
   
   auto &arena = target->project.arena;
 
-  const auto directory = make_file_path(arena, String_View(_directory));
-  const auto extension = make_file_path(arena, String_View(_extension));
-
+  auto directory = make_file_path(arena, _directory);
   auto folder_path = get_absolute_path(arena, directory)
     .take(format_string(arena, "Couldn't get absolute path for '%'\n", directory));
 
-  if (!check_resource_exists(folder_path, Resource_Type::Directory)) 
-    panic("Directory '%' specified for 'add_all_sources_from_directory' wasn't found, "
-          "please ensure that the path is correct and the directory exists\n",
-          folder_path);
+  {
+    auto [has_failed, error, exists] = check_directory_exists(folder_path);
+    if (has_failed) panic("Couldn't validate directory path % due to a system eror: %", folder_path, error);
+    if (!exists)    panic("Directory '%' specified for 'add_all_sources_from_directory' wasn't found, "
+                          "please ensure that the path is correct and the directory exists\n", folder_path);
+  }
   
   auto existing_target_count = target->files.count;
-  auto files = list_files(arena, folder_path, extension, recurse)
-    .get(format_string(arena, "Couldn't get a list of files from directory '%'", directory));
 
-  for (auto &file: files) list_push(target->files, move(file));
+  auto &file_list = target->files;
+  auto add_file = [&] (File_Path_View file_path) -> bool {
+    if (!file_list.contains([&file_path] (auto &it) { return compare_strings(it, file_path); }))
+      list_push(file_list, String::copy(arena, file_path));
+    return true;
+  };
+
+  for_each_file(folder_path, extension, recurse, add_file);
 
   target->project.total_files_count += (target->files.count - existing_target_count);
 }
 
-static void add_options (Memory_Arena &arena, List<String> &list, const String_View &values) {
-  for (auto value: iterator::split(values, ' ')) {
+static void add_options (Memory_Arena &arena, List<String> &list, String_View values) {
+  split_string(values, ' ').for_each([&] (auto value) {
     list_push(list, String::copy(arena, value));
-  }
+  });
 }
 
-static void remove_option (List<String> &options, const String_View &values) {
-  for (auto value: iterator::split(values, ' ')) {
+static void remove_option (List<String> &options, String_View values) {
+  split_string(values, ' ').for_each([&] (auto value) {
     options.remove([&value] (auto &it) { return compare_strings(it, value); });
-  }
+  });
 }
 
 void add_compiler_option (Target *target, const char *option) {

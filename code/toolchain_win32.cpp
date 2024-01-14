@@ -181,7 +181,7 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
 }
 
 static Option<Toolchain_Configuration> load_gcc_toolchain (Memory_Arena &arena) {
-  trap("GCC Platform is not support on Win32 at this moment");
+  trap("GCC Platform is not supported on Win32 at this moment\n");
 
   return {};
 }

@@ -52,7 +52,7 @@ Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Depe
           auto search_from_position = cursor + 1;
           if (search_from_position == end) return None;
 
-          cursor = get_character_offset_reversed(search_from_position, '"', end - search_from_position);  
+          cursor = get_character_offset_reversed(search_from_position, end - search_from_position, '"');  
           if (cursor == nullptr) return None;
 
           cursor += 1;
@@ -83,7 +83,7 @@ Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Depe
         continue;
       }
 
-      auto end_of_safe_word = get_character_offset_reversed(safe_word, '(', end - safe_word);
+      auto end_of_safe_word = get_character_offset_reversed(safe_word, end - safe_word, '(');
       if (end_of_safe_word == nullptr) return None;
 
       auto safe_word_length = end_of_safe_word - safe_word;
@@ -110,7 +110,7 @@ Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Depe
         auto search_from_position = cursor + 1;
         if (search_from_position == end) return None;
 
-        cursor = get_character_offset_reversed(search_from_position, '\'', end - search_from_position);  
+        cursor = get_character_offset_reversed(search_from_position, end - search_from_position, '\'');  
         if (cursor == nullptr) return None;
 
         cursor += 1;
@@ -142,7 +142,7 @@ Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Depe
 
       while (*cursor == ' ') advance_by(1);
       if (*cursor == '<') {
-        cursor = get_character_offset_reversed(cursor, '>', end - cursor);
+        cursor = get_character_offset_reversed(cursor, end - cursor, '>');
         if (cursor == nullptr) return None;
 
         cursor += 1;
@@ -168,7 +168,7 @@ Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Depe
     if (*cursor == '/') {
       if ((cursor + 1) < end) {
         if (cursor[1] == '/') {
-          cursor = get_character_offset_reversed(cursor, '\n', end - cursor);
+          cursor = get_character_offset_reversed(cursor, end - cursor, '\n');
           if (cursor == nullptr) return None;
           cursor += 1;
           continue;
