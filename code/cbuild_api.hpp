@@ -7,6 +7,7 @@
 #include "anyfin/core/strings.hpp"
 #include "anyfin/core/prelude.hpp"
 
+#include "anyfin/platform/console.hpp"
 #include "anyfin/platform/file_system.hpp"
 
 #include "cbuild_api_template.hpp"
@@ -55,14 +56,26 @@ struct Project {
 
   /*
     If this is an external project, i.e it's loaded as a dependency by some other project, it will be given an
-    "external_name". It'll be used by the root project as a prefix name/path for external targets to avoid
+    "name". It'll be used by the root project as a prefix name/path for external targets to avoid
     potential collisions with other targets. The actual value is up to the user and can be set in the
     "register_external_project" call.
    */
-  String external_name;
+  String name;
   bool   is_external;
 
+  /*
+    Top-level directory where the root of the project tree is. The folder will be used as a working directory
+    with all the paths starting here. This is where the cache and project directories are.
+   */
   File_Path project_root;
+
+  /*
+    Cache root is the path to the .cbuild directory where build residuals are persisted, along with the config's
+    tag file and project's shared lib. It doesn't depend on the project's root path to correctly support external
+    dependend projects, to avoid scenarios, for example, where a dependent project is in some form of the "extern"
+    folder and we create new files there, which would be wrong.
+   */
+  File_Path cache_root;
 
   /*
     Path to the folder where all residual and final artifacts will be created (under corresponding nested folders).
@@ -70,12 +83,20 @@ struct Project {
     could be helpful when multiple build configurations are introduced, e.g debug vs release build, etc... All other
     required folders, for object files and binaries, will be created in this folder.
    */
-  File_Path output_location_path;
+  File_Path output_location_path { make_file_path(arena, cache_root, "build") };
+
+  const File_Path project_output_location { make_file_path(arena, cache_root, "project") };
+  const File_Path project_library_path    { make_file_path(arena, project_output_location, concat_string(arena, name, ".", get_shared_library_extension())) };
 
   List<Project *> sub_projects { arena };
 
-  List<Target *> targets { arena };
-  u32            total_files_count = 0;
+  /*
+    Various cbuild api calls return pointer to the targets contained in this list. While project owns all declared targets
+    care must be taking in changing the container to something else, to avoid issue with potential reallocations.
+    Just in case this would be replaced with a hash table some day.
+   */
+  List<Target> targets { arena };
+  u32          total_files_count = 0;
 
   List<File_Path> include_paths { arena };
 
@@ -88,16 +109,12 @@ struct Project {
   struct {
   } hooks;
 
-  Project (Memory_Arena &global,
-           String_View name,
-           File_Path root,
-           File_Path _output_location,
-           const bool _is_external = false)
-    : global_arena          { global },
-      external_name         { move(String::copy(global, name)) },
-      is_external           { _is_external },
-      project_root          { move(root) },
-      output_location_path  { move(_output_location) }
+  Project (Memory_Arena &global, String_View _name, File_Path_View _project_root, File_Path_View _cache_directory, const bool _is_external = false)
+    : global_arena { global },
+      name         { String::copy(arena, _name) },
+      is_external  { _is_external },
+      project_root { String::copy(arena, _project_root) },
+      cache_root   { String::copy(arena, _cache_directory) }
   {}
 };
 

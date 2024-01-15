@@ -30,8 +30,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   setup_toolchain(project, toolchain);
 
-  auto external = register_external_project(project, args, "external", "libs/external");
-  auto ext_lib  = get_external_target(project, external, "library1");
+  // auto external = register_external_project(project, args, "external", "libs/external");
+  // auto ext_lib  = get_external_target(project, external, "library1");
 
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
@@ -110,7 +110,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   {
     apply_common_settings(bin3);
     add_all_sources_from_directory(bin3, "code/binary3", "c", false);
-    link_with(bin3, ext_lib);
+    //link_with(bin3, ext_lib);
   }
 
   return true;

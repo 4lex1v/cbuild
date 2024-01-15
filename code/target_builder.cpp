@@ -16,8 +16,8 @@
 #include "dependency_iterator.hpp"
 #include "driver.hpp"
 #include "registry.hpp"
-#include "task_system.hpp"
 #include "target_builder.hpp"
+#include "task_system.hpp"
 #include "toolbox.hpp"
 
 extern CLI_Flags global_flags;
@@ -34,15 +34,15 @@ enum struct Target_Link_Status: u32      { Waiting, Linking, Failed, Success };
 enum struct Upstream_Targets_Status: u32 { Ignore, Updated, Failed };
 
 struct Target_Tracker {
-  const Target *target;
+  const Target &target;
 
   Atomic<Target_Compile_Status>   compile_status  { Target_Compile_Status::Compiling };
   Atomic<Target_Link_Status>      link_status     { Target_Link_Status::Waiting };
   Atomic<Upstream_Targets_Status> upstream_status { Upstream_Targets_Status::Ignore };
 
   cau32 skipped_counter    { 0 };
-  cas32 files_pending      { static_cast<s32>(target->files.count) };
-  cas32 waiting_on_counter { static_cast<s32>(target->depends_on.count) };
+  cas32 files_pending      { static_cast<s32>(target.files.count) };
+  cas32 waiting_on_counter { static_cast<s32>(target.depends_on.count) };
 
   /*
     Special flag that could be set by the compilation phase to "false", signaling
@@ -57,11 +57,11 @@ struct Target_Tracker {
    */
   bool needs_linking { true };
 
-  Target_Tracker (Target * const _target)
+  Target_Tracker (Target &_target)
     : target { _target }
   {
-    assert(_target->build_context.tracker == nullptr);
-    _target->build_context.tracker = this;
+    assert(_target.build_context.tracker == nullptr);
+    _target.build_context.tracker = this;
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
@@ -297,7 +297,26 @@ static bool is_msvc (const Toolchain_Configuration &config) {
   return is_msvc(config.type);
 }
 
-static void schedule_downstream_linkage (const Target &target, const Invocable<void, Target_Tracker &> auto &update_tracker) {
+struct Target_Builder_Context {
+  Memory_Arena arena;
+
+  /*
+    NOTE:
+      This constructor will be called on a dedicated thread
+   */
+  Target_Builder_Context (): arena { reserve_virtual_memory(megabytes(1)) } {}
+
+  /*
+    This version would only be used for a short period of time on the main thread,
+    while it executes some of the tasks itself. In this context it's fine to use a local
+    copy of the arena.
+   */
+  Target_Builder_Context (Memory_Arena _arena): arena { _arena } {}
+};
+
+using Build_System = Task_System<Build_Task, Target_Builder_Context>;
+
+static void schedule_downstream_linkage (Build_System &build_system, const Target &target, const Invocable<void, Target_Tracker &> auto &update_tracker) {
   for (auto downstream: target.required_by) {
     auto downstream_tracker = downstream->build_context.tracker;
 
@@ -307,11 +326,10 @@ static void schedule_downstream_linkage (const Target &target, const Invocable<v
     update_tracker(*downstream_tracker);
 
     if ((atomic_fetch_sub(downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
-      // submit_build_task(&build_queue, {
-      //   .type    = Build_Task::Type::Link,
-      //   .tracker = downstream_tracker
-      // });
-      todo();
+      build_system.add_task(Build_Task {
+        .type    = Build_Task::Type::Link,
+        .tracker = downstream_tracker
+      });
     }
   }
 }
@@ -320,13 +338,13 @@ static File_Path get_target_object_folder_path (Memory_Arena &arena, const Targe
   if (!target.flags.external) [[likely]]
     return make_file_path(arena, object_folder_path, target.name);
   
-  return make_file_path(arena, object_folder_path, target.project.external_name, target.name);
+  return make_file_path(arena, object_folder_path, target.project.name, target.name);
 }
 
-static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
+static void link_target (Memory_Arena &arena, Build_System &build_system, Target_Tracker &tracker) {
   using TLS = Target_Link_Status;
 
-  const auto &target  = *tracker.target;
+  const auto &target  = tracker.target;
   const auto &project = target.project;
 
   auto target_compilation_status = atomic_load(tracker.compile_status);
@@ -348,7 +366,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
       (upstream_status           == Upstream_Targets_Status::Failed)) {
     atomic_store(tracker.link_status, TLS::Failed);
 
-    schedule_downstream_linkage(target, [] (Target_Tracker &tracker) {
+    schedule_downstream_linkage(build_system, target, [] (Target_Tracker &tracker) {
       atomic_store(tracker.upstream_status, Upstream_Targets_Status::Failed);
     });
 
@@ -363,102 +381,72 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
     if (!global_flags.silenced) print("Linking target: %\n", target.name);
 
     auto target_object_folder = get_target_object_folder_path(arena, target);
+    auto object_extension     = get_object_extension();
     auto output_file_path     = get_output_file_path_for_target(arena, target);
 
     String_Builder builder { arena };
 
     const auto make_file_name = [&arena] (String_View name, String_View extension) {
-      return format_string(arena, "%.%", name, extension);
+      return concat_string(arena, name, ".", extension);
     };
 
+    /*
+      Clang has some stack uncertainties compiling this function, not sure why. Since each switch
+      branch does pretty much the same, took some commong parts out, which aparently makes Clang
+      happier.
+     */
     switch (target.type) {
-      case Target::Type::Static_Library: {
+      case Target::Static_Library: {
         builder += String_View(project.toolchain.archiver_path);
         builder += project.archiver;
         builder += target.archiver;
-
-        for (auto &path: target.files) {
-          builder += make_file_path(arena, target_object_folder,
-                                    make_file_name(*get_resource_name(arena, path), get_object_extension()));
-        }
-
-        for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
-
-          builder += make_file_path(arena, out_folder_path, make_file_name(lib->name, get_static_library_extension()));
-        }
-
-        if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
-        else            builder += format_string(arena, "-o %",   output_file_path);
-
         break;
       };
-      case Target::Type::Shared_Library: {
+      case Target::Shared_Library: {
         builder += String_View(project.toolchain.linker_path);
         builder += is_win32() ? String_View("/dll") : String_View("-shared");
         builder += project.linker;
         builder += target.linker;
-
-        for (auto &path: target.files) {
-          builder += make_file_path(arena, target_object_folder, make_file_name(*get_resource_name(arena, path), get_object_extension()));
-        }
-      
-        for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
-        
-          builder += make_file_path(arena, make_file_name(lib->name, get_static_library_extension()));
-        }
-
-        builder += target.link_libraries;
-
-        if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
-        else            builder += format_string(arena, "-o %",   output_file_path);
-
         break;
       };
-      case Target::Type::Executable: {
+      case Target::Executable: {
         builder += String_View(project.toolchain.linker_path);
         builder += project.linker;
         builder += target.linker;
-
-        for (auto &path: target.files) {
-          builder += make_file_path(arena, target_object_folder,
-                                    make_file_name(*get_resource_name(arena, path), get_object_extension()));
-        }
-
-        for (auto lib: target.depends_on) {
-          assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
-        
-          String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-          if (!is_win32()) {
-            if (lib->type == Target::Type::Static_Library) lib_extension = "a";
-            else                                           lib_extension = "so";
-          }
-        
-          builder += make_file_path(arena, out_folder_path, make_file_name(lib->name, lib_extension));
-        }
-
-        builder += target.link_libraries;
-
-        if (is_win32()) builder += format_string(arena, "/OUT:%", output_file_path);
-        else            builder += format_string(arena, "-o %",   output_file_path);
-
         break;
       };
     }
+
+    for (auto &path: target.files) {
+      auto file_name = make_file_name(*get_resource_name(arena, path), object_extension);
+      builder += make_file_path(arena, target_object_folder, file_name);
+    }
+
+    for (auto lib: target.depends_on) {
+      assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
+        
+      String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
+      if (!is_win32()) lib_extension = (lib->type == Target::Static_Library) ? String_View("a") : String_View("so");
+        
+      auto file_name = make_file_name(lib->name, lib_extension);
+      builder += make_file_path(arena, out_folder_path, file_name);
+    }
+
+    builder += target.link_libraries;
+    builder += concat_string(arena, is_win32() ? "/OUT:" : "-o ", output_file_path);
 
     auto link_command = build_string_with_separator(arena, builder, ' ');
 
     auto [tag, error, _return] = run_system_command(arena, link_command);
     link_result = (!tag || _return.status_code != 0) ? Link_Result::Failed : Link_Result::Success;
 
-    if (_return.output) print("%\n", _return.output);
+    if (_return.output) print(_return.output);
   }
 
   auto target_link_status = (link_result == Link_Result::Failed) ? TLS::Failed : TLS::Success;
   atomic_store(tracker.link_status, target_link_status);
 
-  schedule_downstream_linkage(target, [link_result] (Target_Tracker &tracker) {
+  schedule_downstream_linkage(build_system, target, [link_result] (Target_Tracker &tracker) {
     if (link_result != Link_Result::Ignore) {
       auto new_status = Upstream_Targets_Status::Updated;
       if (link_result == Link_Result::Failed) {
@@ -476,7 +464,7 @@ static void link_target (Memory_Arena &arena, Target_Tracker &tracker) {
 }
 
 static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const File &file, const bool dependencies_updated) {
-  const auto &target    = *tracker.target;
+  const auto &target    = tracker.target;
   const auto &project   = target.project;
   const auto &toolchain = project.toolchain;
 
@@ -521,21 +509,18 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     builder += project.compiler;
     builder += target.compiler;
 
-    for (auto &path: project.include_paths) {
-      builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
-    }
+    const bool _msvc = is_msvc(toolchain);
 
-    for (auto &path: target.include_paths) {
-      builder += is_msvc(toolchain) ? format_string(arena, R"(/I"%")", path) : format_string(arena, R"(-I "%")", path);
-    }
+    for (auto &path: project.include_paths) builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
+    for (auto &path: target.include_paths)  builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
 
-    if (is_msvc(toolchain)) builder += format_string(arena, R"(/c "%" /Fo"%")",  file.path, object_file_path);
-    else                    builder += format_string(arena, R"(-c "%" -o "%")",  file.path, object_file_path);
+    builder += concat_string(arena, _msvc ? "/c " : "-c ", file.path);
+    builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
 
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
 
     auto [has_failed, error, status] = run_system_command(arena, compilation_command);
-    if (has_failed) panic("File compilation failed with a system error: %, command: %", error, compilation_command);
+    if (has_failed) panic("File compilation failed with a system error: %, command: %\n", error, compilation_command);
 
     auto &[output, return_code] = status;
 
@@ -584,7 +569,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   if (!needs_linking) {
     // If no files were compiled, check that the binary exists
     auto output_file_path = get_output_file_path_for_target(arena, target);
-    needs_linking = !check_resource_exists(output_file_path, Resource_Type::File); 
+    needs_linking = !check_file_exists(arena, output_file_path); 
   }
 
   tracker.needs_linking = needs_linking;
@@ -593,30 +578,11 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   atomic_store<Memory_Order::Release>(tracker.compile_status, Target_Compile_Status::Success);
 }
 
-struct Target_Builder_Context {
-  Memory_Arena arena;
-
-  /*
-    NOTE:
-      This constructor will be called on a dedicated thread
-   */
-  Target_Builder_Context (): arena { reserve_virtual_memory(megabytes(1)) } {}
-
-  /*
-    This version would only be used for a short period of time on the main thread,
-    while it executes some of the tasks itself. In this context it's fine to use a local
-    copy of the arena.
-   */
-  Target_Builder_Context (Memory_Arena _arena): arena { _arena } {}
-};
-
-using Build_System = Task_System<Build_Task, Target_Builder_Context>;
-
 static void build_target_task (Build_System &build_system, Target_Builder_Context &context, Build_Task &task) {
   reset_arena(context.arena);
 
   auto &tracker = *task.tracker;
-  auto &target  = *tracker.target;
+  auto &target  = tracker.target;
 
   switch (task.type) {
     case Build_Task::Type::Uninit: return;
@@ -632,7 +598,7 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
       break;
     }
     case Build_Task::Type::Link: {
-      link_target(context.arena, tracker);
+      link_target(context.arena, build_system, tracker);
       break;
     }
   }
@@ -666,10 +632,8 @@ static auto create_task_system (Memory_Arena &arena, const Project &project, con
 }
 
 struct Build_Plan {
-  using Targets_List = List<Target_Tracker *>;
-
-  Targets_List selected_targets;
-  Targets_List skipped_targets;
+  List<Target_Tracker> selected_targets;
+  List<Target *>       skipped_targets;
 
   Build_Plan (Memory_Arena &arena)
     : selected_targets { arena },
@@ -681,46 +645,42 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   Build_Plan plan(arena);
   
   if (is_empty(config.selected_targets)) {
-    for (int idx = 0; auto target: project.targets) {
-      list_push_copy(plan.selected_targets, new(arena) Target_Tracker(target));
+    for (int idx = 0; auto &target: project.targets) {
+      list_push(plan.selected_targets, Target_Tracker(target));
     }
 
     return plan;
   }
 
-  List<Target *> build_list(arena);
-  auto add_build_target = [&] (Target *target) {
-    auto fixpoint = [&] (Target *target, auto &thunk) -> void {
-      for (auto upstream: target->depends_on)
-        thunk(const_cast<Target *>(upstream), thunk);
+  List<Target *> build_list { arena };
+  auto add_build_target = [] (this auto self, List<Target *> &list, Target *target) -> void {
+    for (auto upstream: target->depends_on) self(list, upstream);
+    for (auto it: list) if (compare_strings(it->name, target->name)) return;
 
-      for (auto it: build_list) {
-        if (compare_strings(it->name, target->name)) return;
-      }
-
-      list_push_copy(build_list, target);
-    };
-    
-    fixpoint(target, fixpoint);
+    list_push_copy(list, target);
   };
 
-  for (auto &target_name: config.selected_targets) {
-    Target *target = nullptr;
-    for (auto it: project.targets) {
-      if (compare_strings(it->name, target_name)) {
-        target = it;
+  for (auto target_name: config.selected_targets) {
+    Target *selected_target = nullptr;
+    for (auto &target: project.targets) {
+      if (compare_strings(target.name, target_name)) {
+        selected_target = &target;
         break;
       }
     }
 
-    if (target == nullptr) panic("Target '%' not found in the project", target_name);
+    if (selected_target) panic("Target '%' not found in the project", target_name);
 
-    add_build_target(target);
+    add_build_target(build_list, selected_target);
   }
 
-  auto trackers = reserve<Target_Tracker *>(arena, build_list.count);
-  for (usize idx = 0; auto target: build_list) {
-    trackers[idx++] = new (arena) Target_Tracker(target);
+  for (auto target: build_list) list_push(plan.selected_targets, Target_Tracker(*target));
+  for (auto &target: project.targets) {
+    if (plan.selected_targets.contains([&] (auto selected_target) {
+      return compare_strings(selected_target.target.name, target.name);
+    })) continue;
+
+    list_push_copy(plan.skipped_targets, &target);
   }
 
   return plan;
@@ -753,22 +713,22 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   auto build_plan = prepare_build_plan(arena, project, config);
 
-  for (auto tracker: build_plan.selected_targets) { // TODO: This should follow a build plan
-    auto target = tracker->target;
+  for (auto &tracker: build_plan.selected_targets) {
+    auto &target = tracker.target;
 
-    if (target->files.count == 0) {
-      print("Target '%' doesn't have any input files and will be skipped\n", target->name);
+    if (target.files.count == 0) {
+      print("Target '%' doesn't have any input files and will be skipped\n", target.name);
 
       continue;
     }
 
-    create_resource(get_target_object_folder_path(arena, *target), Resource_Type::Directory)
-      .expect(format_string(arena, "Couldn't create a build output directory for the target '%'", target->name));
+    create_directory(get_target_object_folder_path(arena, target))
+      .expect(concat_string(arena, "Couldn't create a build output directory for the target ", target.name));
 
-    bool should_build_target = (target->build_context.tracker != nullptr);
+    bool should_build_target = (target.build_context.tracker != nullptr);
 
-    for (auto &&file_path: target->files) {
-      auto [open_failed, error, file] = open_file(move(file_path));
+    for (const auto &file_path: target.files) {
+      auto [open_failed, error, file] = open_file(String::copy(arena, file_path));
       if (open_failed) panic("Couldn't open target's file due to an error: %", error);
 
       auto dependencies_updated = true;
@@ -777,7 +737,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
         List<File_Path> include_paths(local);
         for (auto &path: project.include_paths) list_push(include_paths, String::copy(local, path));
-        for (auto &path: target->include_paths) list_push(include_paths, String::copy(local, path));
+        for (auto &path: target.include_paths) list_push(include_paths, String::copy(local, path));
 
         dependencies_updated = scan_file_dependencies(local, file, include_paths);
       }
@@ -786,7 +746,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         task_system.add_task(Build_Task {
           .type    = Build_Task::Compile,
           .dependencies_updated = dependencies_updated,
-          .tracker = target->build_context.tracker,
+          .tracker = target.build_context.tracker,
           .file    = move(file),
         });
       }
@@ -797,9 +757,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     For the targets that won't be build, copy whatever information is in the registry right now into the update set.
     Not doing this, would cause the registry to be overwritten with whatever was saved in the update set.
   */
-  for (auto tracker: build_plan.skipped_targets) {
-    auto target = tracker->target;
-
+  for (auto target: build_plan.skipped_targets) {
     auto last_info = reinterpret_cast<Registry::Target_Info *>(target->build_context.last_info);
     if (!last_info) continue;
 
@@ -823,18 +781,18 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   if (registry_enabled) flush_registry(registry, update_set);
 
   for (auto tracker: build_plan.selected_targets) {
-    assert_msg(tracker->compile_status.value != Target_Compile_Status::Compiling,
+    assert_msg(tracker.compile_status.value != Target_Compile_Status::Compiling,
                format_string(arena,
                              "INVALID STATE: Target '%' is still waiting for one or more files to be built",
-                             tracker->target->name));
+                             tracker.target.name));
 
-    assert_msg(tracker->link_status.value != Target_Link_Status::Waiting,
+    assert_msg(tracker.link_status.value != Target_Link_Status::Waiting,
                format_string(arena, "INVALID STATE: Target '%' is still waiting on one or more of its dependencies",
-                             tracker->target->name));
+                             tracker.target.name));
 
-    if ((tracker->compile_status.value != Target_Compile_Status::Success) ||
-        (tracker->link_status.value    != Target_Link_Status::Success)) {
-      panic("Building target '%' finished with errors", tracker->target->name);
+    if ((tracker.compile_status.value != Target_Compile_Status::Success) ||
+        (tracker.link_status.value    != Target_Link_Status::Success)) {
+      panic("Building target '%' finished with errors", tracker.target.name);
     }
   }
 

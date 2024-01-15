@@ -6,13 +6,13 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(workspace)) delete_directory(workspace);
+  if (check_directory_exists(arena, workspace)) delete_directory(workspace);
   create_directory(workspace);
   set_working_directory(workspace);
 }
 
 static void setup_testsite (Memory_Arena &arena) {
-  if (check_directory_exists(workspace)) delete_directory(workspace);
+  if (check_directory_exists(arena, workspace)) delete_directory(workspace);
   create_directory(workspace);
 
   auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
@@ -142,7 +142,7 @@ static void build_changes_tests (Memory_Arena &arena) {
   validate_binary(arena, "binary1.exe", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
 
-  String_View new_lib_impl = R"lib(
+  Slice new_lib_impl = R"lib(
 #include <cstdio>
 
 void library2 () {
@@ -227,7 +227,7 @@ static void build_errors_tests (Memory_Arena &arena) {
   copy_memory(correct_file_content, mapping.memory, mapping.size);
   correct_file_content[mapping.size] = '\0';
 
-  String_View bad_code_impl = R"lib(
+  Slice bad_code_impl = R"lib(
 #include <cstdio>
 
 void dynamic1 () {
@@ -242,7 +242,7 @@ void dynamic1 () {
 
   require(write_buffer_to_file(write_file_handle, bad_code_impl));
 
-  String_View new_lib_impl = R"lib(
+  Slice new_lib_impl = R"lib(
 #include <cstdio>
 
 void library2 () {
@@ -278,7 +278,7 @@ void library2 () {
     count_lines_starting_with(build_result.value.output, "Program terminated with an error status", 1);
   }
 
-  String_View fixed_code_impl = R"lib(
+  Slice fixed_code_impl = R"lib(
 #include <cstdio>
 
 #include "base.hpp"
@@ -322,7 +322,7 @@ static void test_modify_file (Memory_Arena &arena, File_Path file_path) {
   
   reset_file_cursor(file);
 
-  require(write_buffer_to_file(file, String_View(file_content, mapping.size + 2)));
+  require(write_buffer_to_file(file, Slice(file_content, mapping.size + 2)));
 }
 
 static void build_project_tests (Memory_Arena &arena) {
@@ -358,19 +358,19 @@ static void build_cache_tests (Memory_Arena &arena) {
   validate_binary(arena, "binary2.exe", "lib3,dyn3,bin2");
 
   auto registry_file = make_file_path(arena, ".cbuild", "build", "__registry");
-  require(!check_file_exists(registry_file));
+  require(!check_file_exists(arena, registry_file));
 
   auto output = build_testsite(arena);
   count_lines_starting_with(output, "Building file",  9); 
   count_lines_starting_with(output, "Linking target", 9);
 
-  require(check_file_exists(registry_file));
+  require(check_file_exists(arena, registry_file));
 
   auto output2 = build_testsite(arena, "cache=flush");
   count_lines_starting_with(output2, "Building file",  9); 
   count_lines_starting_with(output2, "Linking target", 9);
 
-  require(check_file_exists(registry_file));
+  require(check_file_exists(arena, registry_file));
 
   auto output3 = build_testsite(arena);
   count_lines_starting_with(output3, "Building file",  0); 

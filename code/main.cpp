@@ -4,7 +4,6 @@
 #include "anyfin/core/arena.hpp"
 #include "anyfin/core/memory.hpp"
 #include "anyfin/core/option.hpp"
-#include "anyfin/core/result.hpp"
 #include "anyfin/core/strings.hpp"
 
 #include "anyfin/platform/startup.hpp"
@@ -33,12 +32,12 @@ static Option<String_View> find_argument_value (const Iterable<Startup_Argument>
     /*
       Calling find_argument_value implicitly presumes the fact that we need a key-value setting. If it's a plain value
       instead, that's deemed as invalid input.
-     */
+    */
     if (arg.is_value()) panic("ERROR: Invalid option value for the key 'type', expected format: <key>=<value>");
     if (compare_strings(arg.key, name)) return String_View(arg.value);
   }
 
-  return {};
+  return opt_none;
 };
 
 static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const String_View& name) {
@@ -46,7 +45,7 @@ static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const
     /*
       Calling find_option_flag implicitly presumes the fact that we need a singular key (flag) setting.
       If it's a key-value pair instead, it's considered an input error.
-     */
+    */
     if (arg.is_pair()) panic("ERROR: Unexpected input type of the '%' flag", name);
     if (compare_strings(arg.key, name)) return true;
   }
@@ -56,9 +55,8 @@ static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const
 
 struct Build_Command {
   Build_Config config;
-  Slice<Startup_Argument> build_arguments;
 
-  static Build_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
+  static Build_Command parse (Memory_Arena &arena, const Iterable<Startup_Argument> auto &command_arguments) {
     Build_Command command;
 
     find_argument_value(command_arguments, "builders")
@@ -81,30 +79,12 @@ struct Build_Command {
         else panic("Invalid paramter value % for the 'cache' option", value);
       });
 
-    find_argument_value(command_arguments, "targets")
-      .handle_value([&command](auto &value) {
-        //usize offset = 0;
-        // while (true) {
-        //   const char *value_start = targets + offset;
-
-        //   usize length = 0;
-        //   for (usize idx = offset; idx < targets.length; idx++) {
-        //     if (targets[idx] == ',') break;
-        //     offset += 1;
-        //     length += 1;
-        //   }
-
-        //   if (offset > 0 && length > 0) {
-        //     push_struct<String>(arena, value_start, length);
-        //     command.build.targets_count += 1;
-        //   } else if (offset == 0) {
-        //     panic("Invalid 'targets' value, starting with ',': %", targets));
-        //   }
-
-        //   if (offset == targets.length) break;
-
-        //   offset += 1; // Move past the comma
+    find_argument_value(command_arguments, "targets").handle_value([&](auto targets) {
+      command.config.selected_targets = List<String_View> { arena };
+      split_string(targets, ',').for_each([&] (auto target) {
+        list_push_copy(command.config.selected_targets, target);
       });
+    });
 
     return command;
   }
@@ -117,11 +97,11 @@ struct Init_Command {
     Init_Command command;
 
     find_argument_value(command_arguments, "type")
-        .handle_value([&command](auto value) {
-          if      (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
-          else if (compare_strings(value, "c"))   command.type = Configuration_Type::C;
-          else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);
-        });
+      .handle_value([&command](auto value) {
+        if      (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
+        else if (compare_strings(value, "c"))   command.type = Configuration_Type::C;
+        else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);
+      });
 
     return command;
   }
@@ -138,7 +118,7 @@ struct Clean_Command {
 };
 
 static constexpr String_View help_message =
-    R"help(
+  R"help(
 Usage: cbuild [switches] <command> [command_args]
 
 Switches:
@@ -193,10 +173,6 @@ Commands:
     Prints the help message.
 )help";
 
-static void print_usage () {
-  print("%\n", help_message);
-}
-
 /*
   Global flags are the very first argument values passed to the CBuild executable that go before all other options.
 */
@@ -216,13 +192,13 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
     /*
       Global flags should always come before other input arguments. If we see a token that doesn't start with a dash,
       that's not a global flag and should be parsed at a later stage.
-     */
+    */
     if (arg.key[0] != '-') break;
 
     /*
       Flags should always be prefixed with a single or double dash, thus in the shortest case it should at least be of
       length 2, if it's not there's something wrong.
-     */
+    */
     if (arg.key.length < 2) panic("Incomplete flag value passed");
 
     if (arg.key[1] != '-') {
@@ -273,7 +249,7 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   auto arg = *args;
   if (!arg.is_value()) {
     print("Command name is expected as the first argument, a %=% pair is found instead", arg.key, arg.value);
-    print_usage();
+    print(help_message);
     trap("");
   }
 
@@ -348,14 +324,15 @@ int mainCRTStartup () {
 
   if (command_type == CLI_Command::Help) {
     silence_report = true;
-    print_usage();
+    print(help_message);
     return 0;
   }
 
-  auto project = load_project(arena, "project", working_directory_path, working_directory_path, args_cursor);
+  Project project { arena, "project", working_directory_path, make_file_path(arena, working_directory_path, ".cbuild") };
+  load_project(arena, project, args_cursor);
 
   if (command_type == CLI_Command::Build) {
-    auto command = Build_Command::parse(args_cursor);
+    auto command = Build_Command::parse(arena, args_cursor);
     return build_project(arena, project, command.config);
   }
 

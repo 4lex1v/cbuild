@@ -23,7 +23,7 @@ static bool ensure_list_content (const Iterable<String> auto &list, String_View 
 }
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(workspace))
+  if (*check_directory_exists(workspace))
     require(delete_directory(workspace));
 
   require(create_directory(workspace));

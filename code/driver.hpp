@@ -37,5 +37,5 @@ struct Build_Config {
     List of targets (names) requested by the user to build.
     Only these targets (and their upstream dependencies) should be built by CBuild.
    */
-  Slice<String_View> selected_targets;
+  List<String_View> selected_targets;
 };

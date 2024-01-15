@@ -60,7 +60,7 @@ static void require_internal (const Fin::Platform::Result<T> &result,
                               String_View expression,
                               String_View context = "",
                               Callsite_Info callsite = {}) {
-  if (!result) throw Test_Errors::System_Error(result.status, context, callsite);
+  if (result.is_error()) throw Test_Errors::System_Error(result.status, context, callsite);
 
   if constexpr (Same_Types<T, System_Command_Status>) {
     if (result.value.status_code != 0)

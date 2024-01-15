@@ -159,19 +159,15 @@ static Target * create_target (Project *project, Target::Type type, const char *
     }
   }
 
-  for (auto t: project->targets) {
-    if (compare_strings(t->name, name)) {
+  for (auto &target: project->targets) {
+    if (compare_strings(target.name, name)) {
       panic("FATAL ERROR: Target '%' already defined in the project. "
             "It's not allowed to have multiple targets with the same name\n",
             name);
     }
   }
 
-  auto target = new (project->arena) Target(*project, type, move(name));
-
-  list_push_copy(project->targets, target);
-
-  return target;
+  return &list_push(project->targets, Target(*project, type, move(name)));
 }
 
 Target * add_static_library (Project *project, const char *name) {
@@ -235,10 +231,10 @@ void add_include_search_path (Target *target, const char *path) {
   const auto path_view = String_View(path);
   const auto file_path = make_file_path(target->project.arena, path_view);
 
-  auto include_path = get_absolute_path(target->project.arena, file_path);
-  if (!include_path) panic("Couldn't resolve the path '%', error details: %", path_view, include_path.status);
+  auto [has_failed, error, include_path] = get_absolute_path(target->project.arena, file_path);
+  if (has_failed) panic("Couldn't resolve the path '%', error details: %", path_view, error);
   
-  list_push(target->include_paths, include_path.take());
+  list_push(target->include_paths, move(include_path));
 }
 
 void add_all_sources_from_directory (Target *target, const char *_directory, const char *extension, bool recurse) {
@@ -405,8 +401,8 @@ Project_Ref * register_external_project (Project *project, const Arguments *args
   auto &arena = project->global_arena;
 
   auto sub_project_path = make_file_path(arena, project->project_root, String_View(external_project_path));
-  if (!check_resource_exists(sub_project_path, Resource_Type::Directory))
-    panic("ERROR: No valid CBuild project found under %\n", sub_project_path);
+  // if (!check_resource_exists(sub_project_path, Resource_Type::Directory))
+  //   panic("ERROR: No valid CBuild project found under %\n", sub_project_path);
 
   //String external_name = name;
   // if (!external_name) {

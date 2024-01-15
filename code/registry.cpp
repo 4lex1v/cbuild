@@ -74,7 +74,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     /*
       It's aligned by 4 to put the size of the allocated buffer on a 32-byte boundary, each file record is 8 bytes.
     */
-    for (auto target: project.targets) new_aligned_total += align_forward(target->files.count, 4);
+    for (auto &target: project.targets) new_aligned_total += align_forward(target.files.count, 4);
 
     /*
       If the number of files in the project reduced, copying old info for the new allocation will cause memory
@@ -136,24 +136,24 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     We needs to copy information from the old registry for the existing targets to update that information later,
     as well as drop obsolete targets that were removed from the registry.
    */
-  for (usize target_index = 0, files_offset = 0; auto target: project.targets) {
+  for (usize target_index = 0, files_offset = 0; auto &target: project.targets) {
     auto info = update_set.targets + target_index;
 
-    target->build_context.info = info;
-    copy_memory(info->name, target->name.value, target->name.length);
+    target.build_context.info = info;
+    copy_memory(info->name, target.name.value, target.name.length);
 
     for (usize idx = 0; idx < records.header.targets_count; idx++) {
       auto old_info = records.targets + idx;
 
       //if (compare_strings(info->name, old_info->name, Target::Max_Name_Limit) == 0) {
       if (compare_strings(info->name, old_info->name)) {
-        target->build_context.last_info = old_info;
+        target.build_context.last_info = old_info;
         break;
       }
     }
 
     // The boundary of each segment for target files should still be aligned on 32-bytes.
-    info->aligned_max_files_count = align_forward(target->files.count, 4);
+    info->aligned_max_files_count = align_forward(target.files.count, 4);
     info->files_offset            = files_offset;
 
     target_index += 1;
@@ -172,7 +172,7 @@ void flush_registry (Registry &registry, const Update_Set &update_set) {
 
   auto flush_buffer_size = usize(records + count) - usize(update_set.buffer);
 
-  write_buffer_to_file(registry.registry_file, String_View(update_set.buffer, flush_buffer_size));
+  write_buffer_to_file(registry.registry_file, Slice(update_set.buffer, flush_buffer_size));
 
   close_file(registry.registry_file);
 }
