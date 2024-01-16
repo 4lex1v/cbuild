@@ -23,10 +23,6 @@ using namespace Fin::Platform;
 
 template <usize MEMORY_SIZE = 1024, Fin::Core::Printable... P>
 [[noreturn]] static void panic (Fin::Core::Format_String &&format, P&&... args) {
-#ifdef DEV_BUILD
-  __builtin_debugtrap();
-#endif
-
   u8 stack_memory[MEMORY_SIZE];
   auto arena = Memory_Arena(stack_memory, MEMORY_SIZE);
 

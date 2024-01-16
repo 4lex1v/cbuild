@@ -15,14 +15,10 @@ struct Dependency_Iterator {
   File_Mapping  mapping;
   const char   *cursor;
 
-  Dependency_Iterator (File_Mapping &&_mapping)
-    : mapping { move(_mapping) },
+  Dependency_Iterator (File_Mapping _mapping)
+    : mapping { _mapping },
       cursor  { mapping.memory }
   {}
-
-  ~Dependency_Iterator () {
-    unmap_file(this->mapping);
-  }
 };
 
 enum struct Parse_Error {

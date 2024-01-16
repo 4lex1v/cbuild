@@ -39,7 +39,11 @@ struct Task_Queue {
   Task_Queue (Allocator auto &_allocator, const usize queue_size)
     : allocator       { _allocator },
       tasks_queue     { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
-    {}
+  {
+    for (s32 idx = 0; auto &node: tasks_queue) {
+      node.sequence_number = idx++;
+    }
+  }
 
   bool push_task (T &&task) {
     using enum Memory_Order;
@@ -117,7 +121,7 @@ struct Task_System {
   using Handler = void (*) (Task_System<T, BC> &, BC &, T &);
 
   Queue         queue;
-  Array<Thread> builders;
+  Array<Thread> builders {};
   Semaphore     semaphore;
 
   Handler func;
@@ -126,12 +130,12 @@ struct Task_System {
 
   Task_System (Allocator auto &allocator, const usize queue_size, const usize builders_count, Handler &&_func)
     : queue     { allocator, queue_size },
-      builders  { reserve_array<Thread>(allocator, builders_count) },
       semaphore { create_semaphore().take("Failed to create a semaphore resource for the build queue system") },
       func      { _func }
   {
-    for (auto &builder: builders) {
-      builder = *spawn_thread(task_system_loop, this); 
+    if (builders_count) {
+      builders = reserve_array<Thread>(allocator, builders_count);
+      for (auto &builder: builders) builder = *spawn_thread(task_system_loop, this); 
     }
   }
 
@@ -148,10 +152,10 @@ struct Task_System {
   }
 
   bool has_unfinished_tasks () {
-    auto submitted = atomic_load(this->queue.tasks_submitted);
     auto completed = atomic_load(this->queue.tasks_completed);
+    auto submitted = atomic_load(this->queue.tasks_submitted);
 
-    assert(submitted <= completed);
+    assert(completed <= submitted);
 
     return (submitted != completed);
   }

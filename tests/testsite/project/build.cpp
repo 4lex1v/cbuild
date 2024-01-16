@@ -35,14 +35,16 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   if (strcmp(cache, "off") == 0) disable_registry(project);
 
-  if (strstr(toolchain, "msvc"))
+  if (strstr(toolchain, "msvc")) {
     add_global_compiler_option(project, "/nologo");  
+    add_global_archiver_option(project, "/nologo");  
+    add_global_linker_option(project, "/nologo");  
+  }
 
   auto apply_common_settings = [&] (Target *target) {
     add_include_search_path(target, "code");
     add_include_search_path(target, ".");
 
-    if (strstr(toolchain, "msvc")) add_linker_option(target, "/nologo");
     if (strstr(toolchain, "llvm")) link_with(target, "libcmt.lib");
   };
 

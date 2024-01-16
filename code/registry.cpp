@@ -10,25 +10,16 @@
 Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path) {
   using enum File_System_Flags;
 
-  auto registry_file =
-    open_file(String::copy(arena, registry_file_path), Write_Access | Create_Missing)
-      .take("Couldn't open the file");
+  auto registry_file = open_file(arena, String::copy(arena,registry_file_path), Write_Access | Create_Missing);
+  auto file_size     = get_file_size(registry_file).or_default(0);
 
-  auto file_size =
-    get_file_size(registry_file)
-      .take("Couldn't get the size of the file");
-
-  /*
-    If the file was just created or it's empty there are no records to load.
-   */
+  // If the file was just created or it's empty there are no records to load.
   if (file_size == 0) return {};
 
   Registry registry;
   auto &records = registry.records;
 
-  auto mapping = map_file_into_memory(registry_file)
-    .get("Failed to map the file into memory.");
-
+  auto mapping = map_file_into_memory(registry_file).take("Failed to map the file into memory.");
   registry.registry_file_mapping = mapping;
 
   auto buffer        = reinterpret_cast<u8 *>(mapping.memory);

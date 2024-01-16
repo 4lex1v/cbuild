@@ -73,8 +73,11 @@ struct Build_Task {
   enum struct Type: u32 { Uninit, Compile, Link };
   using enum Type;
 
+  /*
+    REMINDER: The ordering of these fields is important to keep tasks separated on cache lines.
+   */
   Type type;
-  bool dependencies_updated; // TODO: Check if I still need this flag?
+  bool dependencies_updated;
   Target_Tracker *tracker;
   File file;
 };
@@ -86,19 +89,33 @@ static Registry   registry {};
 static bool       registry_enabled;
 static Update_Set update_set {};
 
-/*
-  Massive array with per-file dependency chain statuses;
- */
-static Slice<Chain_Status> chain_status_cache;
+static Option<File_Path> try_resolve_include_path (Memory_Arena &arena, File_Path_View path, const Option<File_Path> &folder, Slice<File_Path_View> include_paths) {
+  if (folder) {
+    auto current_folder_path = make_file_path(arena, folder.get(), path);
+    if (auto check = check_file_exists(current_folder_path); check.is_ok() && check.get())
+      return current_folder_path;
+  }
 
-static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &source_file, const List<File_Path> &extra_include_paths) {
+  for (auto &prefix: include_paths) {
+    auto full_path = make_file_path(arena, prefix, path);
+    auto [has_failed, error, exists] = check_file_exists(full_path);
+    if (has_failed || !exists) {
+      if (has_failed) print("WARNING: System error occured while checking file %\n", error);
+      continue;
+    }
+
+    return full_path;
+  }
+
+  return opt_none;
+}
+
+static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path_View> include_directories) {
   using enum Chain_Status;
 
-  assert(chain_status_cache);
+  const auto &records = registry.records;
 
-  auto &records = registry.records;
-
-  auto file_id = *get_file_id(source_file);
+  auto file_id = get_file_id(arena, source_file);
 
   if (auto result = find_offset(get_dependencies(update_set), file_id); result) {
     return chain_status_cache[result.get()];
@@ -111,76 +128,54 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
 
   assert(chain_status_cache[index] == Chain_Status::Checking);
 
-  auto iterator = Dependency_Iterator(*map_file_into_memory(source_file));
-
-  List<File_Path> include_directories(arena);
+  Option<File_Path> source_file_folder_path = opt_none;
   {
-    auto [tag, error, parent_folder] = get_parent_folder_path(arena, source_file.path);
-    if (tag) [[likely]] {
-      if (parent_folder) list_push(include_directories, parent_folder.take());  
-      else {
-        print("ERROR: Couldn't resolve parent folder for the source file '%'. "
-              "Build process will continue, but this may cause issues with include files lookup.",
-              source_file.path);
-      }
-    }
-    else {
-      print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-            "Build process will continue, but this may cause issues with include files lookup.",
-            source_file.path, error);
-    }
-    
-    for (auto &path: extra_include_paths)
-      list_push(include_directories, String::copy(arena, path));
-  };
+    auto [has_failed, error, path] = get_folder_path(arena, source_file.path);
+    if (!has_failed) source_file_folder_path = Option(move(path));
+    else print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+               "Build process will continue, but this may cause issues with include files lookup.",
+               source_file.path, error);
+  }
 
   bool chain_has_updates = false;
+
+  auto iterator = Dependency_Iterator(*map_file_into_memory(source_file));
   while (true) {
-    auto [tag, parse_error, next_value] = get_next_include_value(iterator);
-
-    /*
-      TODO: Perhaps this shouldn't trap the entire process and it would be better to keep building other targets to make
-      overall progress?
-    */
-    if (!tag) panic("Parse error occurred while resolving included files");
-    if (next_value.is_none()) break;
-
-    auto include_value = next_value.take();
-
-    File_Path resolved_path;
-    for (auto &prefix: include_directories) {
-      auto full_path = make_file_path(arena, prefix, include_value);
-      if (auto [tag, _, result] = check_resource_exists(full_path, Resource_Type::File); !tag || result) continue;
-
-      resolved_path = move(full_path);
-
-      break;
+    auto [has_failed, _, include_value] = get_next_include_value(iterator);
+    if (has_failed) {
+      print("WARNING: Parse error occurred while checking #include files in %. "
+            "This file will be recompiled and target relinked. If the compiler doesn't "
+            "complain about this file and the project builds successfully, but this error "
+            "keeps occuring, please report this issue. Thank you.", source_file.path);
+      continue;
     }
 
-    if (!resolved_path) {
-      /*
-        TODO:
-          For now this is fine, but running this on multiple threads the message maybe interspersed with
-          other message and broken into multiple parts. I could compose a string with a builder and print
-          with a single call instead, which would work better in multi-threaded env.
-       */
-      print("Couldn't resolve the include file: %, source: %, the following paths were checked: \n", include_value, source_file.path);
-      for (auto &path: include_directories) print("  - %\n", path);
+    if (include_value.is_none()) break;
+
+    auto local = arena;
+
+    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
+    if (!is_defined) {
+      String_Builder builder { local };
+      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, "the following paths were checked:\n");
+      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
+
+      print(build_string(local, builder));
 
       continue;
     }
 
     auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
-    if (open_failed) panic("Couldn't open included header file for scanning due to an error: %", error);
+    if (open_failed) {
+      print("Couldn't open included header file for scanning due to an error: %", error);
+    }
 
     defer { close_file(dependency_file); };
     
-    auto chain_scan_result = scan_dependency_chains(arena, dependency_file, extra_include_paths);
+    auto chain_scan_result = scan_dependency_chains(arena, chain_status_cache, dependency_file, include_directories);
     assert(chain_scan_result != Chain_Status::Unchecked);
 
-    if (chain_scan_result == Chain_Status::Checked_Has_Updates) {
-      chain_has_updates = true;
-    }
+    if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
   }
 
   auto timestamp = *get_last_update_timestamp(source_file);
@@ -209,79 +204,61 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, const File &sou
   return status;
 }
 
-static bool scan_file_dependencies (Memory_Arena &_arena, const File &source_file, const List<File_Path> &extra_include_paths) {
-  auto local = _arena;
-
-  auto iterator = Dependency_Iterator(*map_file_into_memory(source_file));
-
-  List<File_Path> include_directories;
-  {
-    auto [tag, error, parent_folder] = get_parent_folder_path(local, source_file.path);
-    if (tag) [[likely]] {
-      if (parent_folder) list_push(include_directories, parent_folder.take());  
-      else {
-        print("ERROR: Couldn't resolve parent folder for the source file '%'. "
-              "Build process will continue, but this may cause issues with include files lookup.",
-              source_file.path);
-      }
-    }
-    else {
-      print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-            "Build process will continue, but this may cause issues with include files lookup.",
-            source_file.path, error);
-    }
-    
-    for (auto &path: extra_include_paths)
-      list_push(include_directories, String::copy(local, path));
-  };
-
+static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path_View> include_directories) {
   bool chain_has_updates = false;
+
+  auto file_mapping = map_file_into_memory(arena, source_file);
+  defer { unmap_file(file_mapping); };
+
+  Option<File_Path> source_file_folder_path = opt_none;
+  {
+    auto [has_failed, error, path] = get_folder_path(arena, source_file.path);
+    if (!has_failed) source_file_folder_path = Option(move(path));
+    else print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+               "Build process will continue, but this may cause issues with include files lookup.",
+               source_file.path, error);
+  }
+
+  auto iterator = Dependency_Iterator(file_mapping);
   while (true) {
-    auto [tag, parse_error, include_value] = get_next_include_value(iterator);
-
-    /*
-      TODO: Perhaps this shouldn't trap the entire process and it would be better to keep building other targets to make
-      overall progress?
-    */
-    if (!tag) panic("Parse error occurred while resolving included files");
-    if (!include_value) break;
-
-    auto inner_local = local;
-    
-    File_Path resolved_path;
-    for (auto &prefix: include_directories) {
-      auto full_path = make_file_path(inner_local, prefix, include_value.get());
-      if (auto [tag, _, result] = check_resource_exists(full_path, Resource_Type::File); !tag || result) continue;
-
-      resolved_path = move(full_path);
-
-      break;
+    auto [has_failed, _, include_value] = get_next_include_value(iterator);
+    if (has_failed) {
+      print("WARNING: Parse error occurred while checking #include files in %. "
+            "This file will be recompiled and target relinked. If the compiler doesn't "
+            "complain about this file and the project builds successfully, but this error "
+            "keeps occuring, please report this issue. Thank you.", source_file.path);
+      chain_has_updates = true;
+      continue;
     }
 
-    if (!resolved_path) {
-      /*
-        TODO:
-          For now this is fine, but running this on multiple threads the message maybe interspersed with
-          other message and broken into multiple parts. I could compose a string with a builder and print
-          with a single call instead, which would work better in multi-threaded env.
-       */
-      print("Couldn't resolve the include file: %, source: %, the following paths were checked: \n",
-            include_value, source_file.path);
-      for (auto &path: include_directories) print("  - %\n", path);
+    if (include_value.is_none()) break;
+
+    auto local = arena;
+    
+    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
+    if (!is_defined) {
+      String_Builder builder { local };
+      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, "the following paths were checked:\n");
+      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
+
+      print(build_string(local, builder));
 
       continue;
     }
 
     auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
-    if (open_failed) panic("Couldn't open included header file for scanning due to an error: %", error);
+    if (open_failed) {
+      print("WARNING: Couldn't open included header file for scanning due to a system error: %.", error);
+      chain_has_updates = true;
+      continue;
+    }
+
     defer { close_file(dependency_file); };
-    
-    auto chain_scan_result = scan_dependency_chains(inner_local, dependency_file, extra_include_paths);
+
+    auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
     assert(chain_scan_result != Chain_Status::Unchecked);
 
-    if (chain_scan_result == Chain_Status::Checked_Has_Updates) {
-      chain_has_updates = true;
-    }
+    if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
   }
 
   return chain_has_updates;
@@ -298,20 +275,27 @@ static bool is_msvc (const Toolchain_Configuration &config) {
 }
 
 struct Target_Builder_Context {
+  constexpr static auto RESERVATION_SIZE = megabytes(1);
+
   Memory_Arena arena;
 
   /*
-    NOTE:
-      This constructor will be called on a dedicated thread
+    REMINDER:
+      This constructor will be called on a dedicated builder thread, by the task system and
+      owned by that thread.
    */
-  Target_Builder_Context (): arena { reserve_virtual_memory(megabytes(1)) } {}
+  Target_Builder_Context ()
+    : arena { reserve_virtual_memory(RESERVATION_SIZE) }
+  {}
 
   /*
     This version would only be used for a short period of time on the main thread,
     while it executes some of the tasks itself. In this context it's fine to use a local
     copy of the arena.
    */
-  Target_Builder_Context (Memory_Arena _arena): arena { _arena } {}
+  Target_Builder_Context (Memory_Arena _arena)
+    : arena { _arena }
+  {}
 };
 
 using Build_System = Task_System<Build_Task, Target_Builder_Context>;
@@ -475,8 +459,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto timestamp = *get_last_update_timestamp(file);
 
   auto target_object_folder = get_target_object_folder_path(arena, target);
-  auto object_file_path     = make_file_path(arena, target_object_folder,
-                                             format_string(arena, "%.%", *get_resource_name(arena, file.path), get_object_extension()));
+  auto object_file_path     = make_file_path(arena, target_object_folder, concat_string(arena, *get_resource_name(arena, file.path), ".", get_object_extension()));
 
   bool should_rebuild = true;
   if (!project.rebuild_required && !dependencies_updated && target.build_context.last_info) {
@@ -503,31 +486,41 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     if (!global_flags.silenced) print("Building file: %\n", file.path);
 
     auto is_cpp_file = ends_with(file.path, "cpp");
+    auto _msvc       = is_msvc(toolchain);
 
     String_Builder builder { arena };
-    builder += String_View(is_cpp_file ? project.toolchain.cpp_compiler_path : project.toolchain.c_compiler_path);
+    builder += is_cpp_file ? project.toolchain.cpp_compiler_path : project.toolchain.c_compiler_path;
     builder += project.compiler;
     builder += target.compiler;
 
-    const bool _msvc = is_msvc(toolchain);
+    project.include_paths.for_each([&] (auto &path) {
+      builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
+    });
 
-    for (auto &path: project.include_paths) builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
-    for (auto &path: target.include_paths)  builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
+    target.include_paths.for_each([&] (auto &path) {
+      builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
+    });
 
-    builder += concat_string(arena, _msvc ? "/c " : "-c ", file.path);
+    builder += concat_string(arena, _msvc ? "/c " : "-c ", "\"", file.path, "\"");
     builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
 
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
+    //print("Building file % with: %\n", file.path, compilation_command);
 
     auto [has_failed, error, status] = run_system_command(arena, compilation_command);
-    if (has_failed) panic("File compilation failed with a system error: %, command: %\n", error, compilation_command);
-
-    auto &[output, return_code] = status;
-
-    if (!return_code) panic("File compilation failed with status: %, command: %\n", return_code, compilation_command);
-    if (output)       print("%\n", output);
-
-    file_compilation_status = (!return_code) ? File_Compile_Status::Success : File_Compile_Status::Failed;
+    if (has_failed) {
+      print("WARNING: File compilation failed due to a system error: %, command: %\n", error, compilation_command);
+      file_compilation_status = File_Compile_Status::Failed;
+    }
+    else if (status.status_code != 0) {
+      print("WARNING: File compilation failed with status: %, command: %\n", status.status_code, compilation_command);
+      if (status.output) print(concat_string(arena, status.output, "\n"));
+      file_compilation_status = File_Compile_Status::Failed;
+    }
+    else {
+      if (status.output) print(concat_string(arena, status.output, "\n"));
+      file_compilation_status = File_Compile_Status::Success;
+    }
   }
   else {
     atomic_fetch_add(tracker.skipped_counter, 1);
@@ -645,10 +638,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   Build_Plan plan(arena);
   
   if (is_empty(config.selected_targets)) {
-    for (int idx = 0; auto &target: project.targets) {
-      list_push(plan.selected_targets, Target_Tracker(target));
-    }
-
+    for (auto &it: project.targets) list_push(plan.selected_targets, it);
     return plan;
   }
 
@@ -691,11 +681,13 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   if (is_empty(project.targets)) return 0;
 
+  create_directory(arena, project.output_location_path);
+
   out_folder_path    = make_file_path(arena, project.output_location_path, "out");
   object_folder_path = make_file_path(arena, project.output_location_path, "obj");
 
-  create_resource(out_folder_path,    Resource_Type::Directory).expect();
-  create_resource(object_folder_path, Resource_Type::Directory).expect();
+  create_directory(arena, out_folder_path);
+  create_directory(arena, object_folder_path);
 
   registry_enabled = !project.registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
   if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
@@ -708,48 +700,47 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   }
 
   auto task_system = create_task_system(arena, project, config);
-
-  chain_status_cache = Slice(reserve<Chain_Status>(arena, max_supported_files_count), max_supported_files_count);
-
-  auto build_plan = prepare_build_plan(arena, project, config);
+  auto deps_cache  = reserve_array<Chain_Status>(arena, max_supported_files_count);
+  auto build_plan  = prepare_build_plan(arena, project, config);
 
   for (auto &tracker: build_plan.selected_targets) {
-    auto &target = tracker.target;
+    const auto &target = tracker.target;
 
     if (target.files.count == 0) {
       print("Target '%' doesn't have any input files and will be skipped\n", target.name);
-
       continue;
     }
 
-    create_directory(get_target_object_folder_path(arena, target))
-      .expect(concat_string(arena, "Couldn't create a build output directory for the target ", target.name));
-
-    bool should_build_target = (target.build_context.tracker != nullptr);
+    create_directory(arena, get_target_object_folder_path(arena, target));
 
     for (const auto &file_path: target.files) {
-      auto [open_failed, error, file] = open_file(String::copy(arena, file_path));
-      if (open_failed) panic("Couldn't open target's file due to an error: %", error);
+      Build_Task task {
+        .type    = Build_Task::Compile,
+        /*
+          If the registry is disabled, it's expected that we do full rebuild of the project everytime, thus
+          we consider that dependencies were updated (because we are not going to walk the includes tree),
+          which triggers rebuild of every file. If registry is enabled, we can consider that dependencies
+          were not updated and the scanner would tell us otherwise, if there were any changes.
+        */
+        .dependencies_updated = !registry_enabled,
+        .tracker = &tracker,
+        .file    = open_file(arena, String::copy(arena, file_path)),
+      };
 
-      auto dependencies_updated = true;
       if (registry_enabled) {
         auto local = arena;
 
-        List<File_Path> include_paths(local);
-        for (auto &path: project.include_paths) list_push(include_paths, String::copy(local, path));
-        for (auto &path: target.include_paths) list_push(include_paths, String::copy(local, path));
+        auto include_paths = reserve_array<File_Path_View>(local, target.include_paths.count + project.include_paths.count);
 
-        dependencies_updated = scan_file_dependencies(local, file, include_paths);
+        usize offset = 0;
+        for (auto &path: target.include_paths)  include_paths[offset++] = path;
+        for (auto &path: project.include_paths) include_paths[offset++] = path;
+        assert(offset == include_paths.count);
+
+        task.dependencies_updated = scan_file_dependencies(local, deps_cache, task.file, include_paths);
       }
 
-      if (should_build_target) {
-        task_system.add_task(Build_Task {
-          .type    = Build_Task::Compile,
-          .dependencies_updated = dependencies_updated,
-          .tracker = target.build_context.tracker,
-          .file    = move(file),
-        });
-      }
+      task_system.add_task(move(task));
     }
   }
 
@@ -774,7 +765,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     *info = *last_info;
   }
 
-  auto main_thread_local_context = Target_Builder_Context(arena);
+  auto main_thread_local_context = Target_Builder_Context(make_sub_arena(arena, Target_Builder_Context::RESERVATION_SIZE));
   while (task_system.has_unfinished_tasks())
     task_system.execute_task(main_thread_local_context);
 

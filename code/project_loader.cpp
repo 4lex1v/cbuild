@@ -191,7 +191,7 @@ static void build_project_configuration (
 #endif
 
     auto linking_command = build_string_with_separator(local, builder, ' ');
-    print(concat_string(local, "Linking project's configuration with: ", linking_command));
+    //print(concat_string(local, "Linking project's configuration with: ", linking_command));
 
     auto [has_failed, error, status] = run_system_command(local, linking_command);
     if (has_failed) panic("Failed to execute system command, details: %, command: %.\n", error, linking_command);
