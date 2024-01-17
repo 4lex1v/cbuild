@@ -26,6 +26,7 @@ template <usize MEMORY_SIZE = 1024, Fin::Core::Printable... P>
   u8 stack_memory[MEMORY_SIZE];
   auto arena = Memory_Arena(stack_memory, MEMORY_SIZE);
 
-  Fin::Core::trap(Fin::Core::format_string(arena, format, forward<P>(args)...).value);
+  auto message = Fin::Core::format_string(arena, format, forward<P>(args)...);
+  Fin::Core::trap(message.value, message.length);
   __builtin_unreachable();
 }

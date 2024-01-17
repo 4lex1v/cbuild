@@ -97,7 +97,7 @@ struct Init_Command {
     Init_Command command;
 
     find_argument_value(command_arguments, "type")
-      .handle_value([&command](auto value) {
+      .handle_value([&command] (auto value) {
         if      (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
         else if (compare_strings(value, "c"))   command.type = Configuration_Type::C;
         else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);

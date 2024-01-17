@@ -23,12 +23,9 @@ static bool ensure_list_content (const Iterable<String> auto &list, String_View 
 }
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (*check_directory_exists(workspace))
-    require(delete_directory(workspace));
-
-  require(create_directory(workspace));
-
   auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
+
+  require(delete_directory(workspace));
   require(copy_directory(testsite_path, workspace));
 
   require(set_working_directory(workspace));
@@ -40,7 +37,7 @@ static void cleanup_workspace (Memory_Arena &arena) {
 }
 
 static Project create_project (Memory_Arena &arena) {
-  return { arena, "test_project", copy(working_directory), {} };
+  return Project(arena, "test_project", workspace, make_file_path(arena, workspace, ".cbuild"));
 }
 
 // TODO: Need to rewrite the arguments API for the next release
@@ -115,12 +112,13 @@ static void register_action_test (Memory_Arena &arena) {
 static void output_location_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
-  require(is_empty(project.output_location_path));
+  // For now to simplify setup, .cbuild/build is the default 
+  require(ends_with(project.output_location_path, "build"));
 
   String_View path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(project.output_location_path != nullptr);
+  require(project.output_location_path == make_file_path(arena, workspace, ".cbuild", "build", path));
 }
 
 static void add_static_library_test (Memory_Arena &arena) {
