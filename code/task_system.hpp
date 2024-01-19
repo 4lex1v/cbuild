@@ -37,8 +37,8 @@ struct Task_Queue {
   cau32 tasks_completed = 0;
 
   Task_Queue (Allocator auto &_allocator, const usize queue_size)
-    : allocator       { _allocator },
-      tasks_queue     { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
+    : allocator   { _allocator },
+      tasks_queue { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
   {
     for (s32 idx = 0; auto &node: tasks_queue) {
       node.sequence_number = idx++;
@@ -61,15 +61,21 @@ struct Task_Queue {
       auto diff     = sequence - index;
     
       if (diff == 0) {
-        if (atomic_compare_and_set<Whatever, Whatever>(this->write_index, index, index + 1)) break;
+        if (atomic_compare_and_set(this->write_index, index, index + 1)) break;
       }
       else if (diff < 0) return false;
       else index = atomic_load(this->write_index);
     }
 
+    /*
+      The submitted count is only checked to see if there are unfinished tasks in the queue or not,
+      so we want to increment it as early as possible.
+    */
     atomic_fetch_add(this->tasks_submitted, 1);
 
+    zero_memory(&node->task);
     node->task = move(task);
+
     atomic_store<Release>(node->sequence_number, index + 1);
 
     return true;

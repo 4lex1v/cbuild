@@ -21,16 +21,14 @@ static void __require_non_empty (const char *value, const String_View &function_
   if (value && !value[0]) panic("Invalid '%' value passed to '%': value must NOT BE empty\n", parameter_name, function_name);
 }
 
-const char * get_argument_or_default (const Arguments *_args, const char *_key, const char *default_value) {
-  const auto &args = *reinterpret_cast<const Slice<Startup_Argument> *>(_args);
-  const auto key = String_View(_key);
+const char * get_argument_or_default (const Arguments *arguments, const char *key, const char *default_value) {
+  if (is_empty(arguments->args))        return default_value;
+  if (key == nullptr || key[0] == '\0') return default_value;
 
-  if (is_empty(key)) return default_value;
-  if (is_empty(args)) return default_value;
-
-  for (auto arg: args) {
-    if (compare_strings(arg.key, key)) {
-      return ((arg.is_value()) ? key : arg.value).value;
+  const auto key_name = String_View(key);
+  for (auto arg: arguments->args) {
+    if (arg.key == key_name) {
+      return String::copy(arguments->global_arena, (arg.is_value()) ? arg.key : arg.value);
     }
   }
 

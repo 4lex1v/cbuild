@@ -1,4 +1,6 @@
 
+#include "anyfin/base.hpp"
+
 #include "code/cbuild_api.hpp"
 #include "code/toolchain.hpp"
 
@@ -13,7 +15,7 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 static bool ensure_list_content (const Iterable<String> auto &list, String_View value, Convertible_To<String_View> auto&&... more_values) {
   String_View values [] { value, static_cast<String_View>(more_values)... };
 
-  if (iterator::count(list) != array_count_elements(values)) return false;
+  if (iterator::count(list) != Fin::Base::array_count_elements(values)) return false;
 
   for (usize idx = 0; auto &elem: list) {
     if (!compare_strings(elem, values[idx++])) return false;

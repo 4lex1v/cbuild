@@ -8,6 +8,7 @@
 #include "anyfin/core/prelude.hpp"
 
 #include "anyfin/platform/console.hpp"
+#include "anyfin/platform/startup.hpp"
 #include "anyfin/platform/file_system.hpp"
 
 #include "cbuild_api_template.hpp"
@@ -26,6 +27,11 @@ enum Target_Arch {
 };
 
 struct Target;
+
+struct Arguments {
+  Memory_Arena &global_arena;
+  const Slice<Startup_Argument> &args;
+};
 
 struct User_Defined_Command {
   String      name;
@@ -114,7 +120,7 @@ struct Project {
       name         { String::copy(arena, _name) },
       is_external  { _is_external },
       project_root { String::copy(arena, _project_root) },
-      cache_root   { String::copy(arena, _cache_directory) }
+      cache_root   { make_file_path(arena, _cache_directory) }
   {}
 };
 

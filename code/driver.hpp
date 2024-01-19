@@ -7,6 +7,7 @@
 
 struct CLI_Flags {
   bool silenced = false;
+  bool tracing  = false;
 };
 
 struct Build_Config {

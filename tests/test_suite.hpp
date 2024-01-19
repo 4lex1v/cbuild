@@ -100,28 +100,30 @@ struct Test_Suite_Runner {
 
     try { step(local); }
     catch (const Test_Errors::System_Error &error) {
-      print<2048>("   Status:\tSYSTEM_ERROR\n"
+      print(local,
+            "   Status:\tSYSTEM_ERROR\n"
             "   Position:\t[%:%]\n"
             "   Error:\t%\n",
             error.callsite.file, error.callsite.line, error.error);
-      if (error.context) print("\tContext:\t%\n", error.context);
+      if (error.context) print(local, "\tContext:\t%\n", error.context);
       return Status::Failed;
     }
     catch (const Test_Errors::Child_Process_Error &error) {
-      print("   Status:\tCHILD_PROCESS_ERROR\n"
+      print(local,
+            "   Status:\tCHILD_PROCESS_ERROR\n"
             "   Position:\t[%:%]\n"
             "   Return Code:\t%\n",
             error.callsite.file, error.callsite.line, error.status_code);
-      if (error.output) print("   Output:\t%\n", error.output);
-      if (error.context) print("\tContext:\t%\n", error.context);
+      if (error.output)  print(local, "   Output:\t%\n", error.output);
+      if (error.context) print(local, "\tContext:\t%\n", error.context);
       return Status::Failed;
     }
     catch (const Test_Errors::Condition_Error &error) {
-      print("\tStatus:\tCONDITION\n"
+      print(local, "\tStatus:\tCONDITION\n"
             "\tPosition:\t[%:%]\n"
             "\tExpression:\t%,\n",
             error.callsite.file, error.callsite.line, error.expression);
-      if (error.context) print("\tContext:\t%\n", error.context);
+      if (error.context) print(local, "\tContext:\t%\n", error.context);
       return Status::Failed;
     }
 
@@ -130,12 +132,12 @@ struct Test_Suite_Runner {
 
   template <const usize N>
   void run (const String_View &suite_name, const Test_Case (&cases)[N]) {
-    if (is_empty(suite_filter) || compare_strings(suite_filter, suite_name)) {
-      print("Suite: %\n", suite_name);
+    if (is_empty(suite_filter) || suite_filter == suite_name) {
+      print(arena, "Suite: %\n", suite_name);
 
       for (auto &test_case: cases) {
-        if (is_empty(case_filter) || compare_strings(case_filter, test_case.name)) {
-          print("  - %\n", test_case.name);
+        if (is_empty(case_filter) || (case_filter == test_case.name)) {
+          print(arena, "  - %\n", test_case.name);
 
           if (test_case.before && execute_step(test_case.before) == Status::Failed) continue;
           if (execute_step(test_case.case_code) == Status::Failed) list_push_copy(failed_suites, test_case.name);
@@ -147,13 +149,13 @@ struct Test_Suite_Runner {
 
   int report () const {
     if (failed_suites.count == 0) {
-      print("\nSUCCESS");
+      print(arena, "\nSUCCESS");
       return 0;
     }
 
-    print("\n\nFAILED (%): ", failed_suites.count);
-    for (auto &name: failed_suites) print("%, ", name);
-    print("\n");
+    print(arena, "\n\nFAILED (%): ", failed_suites.count);
+    for (auto &name: failed_suites) print(arena, "%, ", name);
+    print(arena, "\n");
 
     return 1;
   }

@@ -95,65 +95,19 @@ static String_View get_msvc_installation_path (Memory_Arena &arena) {
 }
 
 static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena, bool force_clang = false) {
-  String clang_path;
-  String clang_cpp_path;
-  String lld_link_path;
-  String llvm_lib_path;
-
-  {
-    if (force_clang) {
-      char _clang_path[MAX_PATH];
-      char _clang_cpp_path[MAX_PATH];
-
-      // "Couldn't find clang.exe, please make sure it's added to the system's PATH.\n" 
-      auto status = reinterpret_cast<usize>(FindExecutable("clang", NULL, _clang_path));
-      if (status <= 32) return {};
-
-      // "Couldn't find clang++.exe, please make sure it's added to the system's PATH.\n" 
-      status = reinterpret_cast<usize>(FindExecutable("clang++", NULL, _clang_cpp_path));
-      if (status <= 32) return {};
-      
-      clang_path     = String::copy(arena, _clang_path);
-      clang_cpp_path = String::copy(arena, _clang_cpp_path);
-    }
-    else {
-      char _clang_cl_path[MAX_PATH];
-      
-      // "Couldn't find clang-cl.exe, please make sure it's added to the system's PATH.\n" 
-      auto status = reinterpret_cast<usize>(FindExecutable("clang-cl", NULL, _clang_cl_path));
-      if (status <= 32) return {};
-
-      clang_path     = String::copy(arena, _clang_cl_path);
-      clang_cpp_path = clang_path;
-    }
-  }
-
-  {
-    char _lld_link_path[MAX_PATH];
-    
-    // "Couldn't find lld-link.exe, please make sure it's added to the system's PATH.\n" 
-    auto status = reinterpret_cast<usize>(FindExecutable("lld-link", NULL, _lld_link_path));
-    if (status <= 32) return {};
-
-    lld_link_path = String::copy(arena, _lld_link_path);
-  }
-
-  {
-    char _llvm_lib_path[MAX_PATH];
-    
-    // "Couldn't find llvm-lib.exe, please make sure it's added to the system's PATH.\n" 
-    auto status = reinterpret_cast<usize>(FindExecutable("llvm-lib", NULL, _llvm_lib_path));
-    if (status <= 32) return {};
-
-    llvm_lib_path = String::copy(arena, _llvm_lib_path);
-  }
+  const auto get_executable = [&] (const char *name) -> String {
+    char buffer[MAX_PATH];
+    auto status = reinterpret_cast<usize>(FindExecutable(name, NULL, buffer));
+    if (status <= 32) panic("Executable % not found, please make sure it's added to the system's PATH\n", name);
+    return String::copy(arena, buffer);
+  };
   
   return Toolchain_Configuration {
     .type              = force_clang ? Toolchain_Type_LLVM : Toolchain_Type_LLVM_CL,
-    .c_compiler_path   = clang_path,
-    .cpp_compiler_path = clang_cpp_path,
-    .linker_path       = lld_link_path,
-    .archiver_path     = llvm_lib_path,
+    .c_compiler_path   = get_executable(force_clang ? "clang.exe" : "clang-cl.exe"),
+    .cpp_compiler_path = get_executable(force_clang ? "clang++.exe" : "clang-cl.exe"),
+    .linker_path       = get_executable("lld-link.exe"),
+    .archiver_path     = get_executable("llvm-lib.exe"),
   };
 }
 
@@ -352,7 +306,7 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
   return previous;
 }
 
-void reset_environment (const Slice<Env_Var> &env) {
+void reset_environment (List<Env_Var> env) {
   for (auto &[key, value]: env)
     if (!SetEnvironmentVariable(key.value, value.value)) [[unlikely]]
       panic("Failed to set the '%' envvar", String_View(key.value));

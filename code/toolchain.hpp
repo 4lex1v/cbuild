@@ -3,7 +3,6 @@
 
 #include "anyfin/core/option.hpp"
 #include "anyfin/core/list.hpp"
-#include "anyfin/core/slice.hpp"
 
 #include "cbuild_api.hpp"
 
@@ -18,4 +17,4 @@ struct Env_Var {
 
 List<Env_Var> setup_system_sdk (Memory_Arena &arena, Target_Arch architecture);
 
-void reset_environment (const Slice<Env_Var> &env);
+void reset_environment (List<Env_Var> env);

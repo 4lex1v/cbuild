@@ -6,6 +6,7 @@
 #include "anyfin/core/math.hpp"
 #include "anyfin/core/result.hpp"
 #include "anyfin/core/string_builder.hpp"
+#include "anyfin/core/seq.hpp"
 
 #include "anyfin/platform/console.hpp"
 #include "anyfin/platform/platform.hpp"
@@ -61,7 +62,6 @@ struct Target_Tracker {
     : target { _target }
   {
     assert(_target.build_context.tracker == nullptr);
-    _target.build_context.tracker = this;
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
@@ -328,11 +328,16 @@ static File_Path get_target_object_folder_path (Memory_Arena &arena, const Targe
 static void link_target (Memory_Arena &arena, Build_System &build_system, Target_Tracker &tracker) {
   using TLS = Target_Link_Status;
 
+  const u32 thread_id = get_current_thread_id();
+
   const auto &target  = tracker.target;
   const auto &project = target.project;
 
   auto target_compilation_status = atomic_load(tracker.compile_status);
-  if (target_compilation_status == Target_Compile_Status::Compiling) return;
+  if (target_compilation_status == Target_Compile_Status::Compiling) {
+    if (global_flags.tracing) print("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
+    return;
+  }
 
   /*
     For targets that have upstream dependencies, we must ensure that all upstreams were processed and finalized their
@@ -341,7 +346,10 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     `waiting_on_counter` > 0, means that when some other thread decrements this counter to zero, a linking task will be
     submitted to the queue by that thread.
   */
-  if (atomic_load<Memory_Order::Acquire>(tracker.waiting_on_counter) > 0) return;
+  if (auto counter = atomic_load<Memory_Order::Acquire>(tracker.waiting_on_counter); counter > 0) {
+    if (global_flags.tracing) print("TRACE(#%): Target % is waiting on % more targets to be linked\n", thread_id, target.name, counter);
+    return;
+  }
 
   if (!atomic_compare_and_set(tracker.link_status, TLS::Waiting, TLS::Linking)) return;
 
@@ -406,13 +414,13 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
       builder += make_file_path(arena, target_object_folder, file_name);
     }
 
-    for (auto lib: target.depends_on) {
-      assert(atomic_load(lib->build_context.tracker->link_status) == Target_Link_Status::Success);
+    for (auto upstream_target: target.depends_on) {
+      assert(atomic_load(upstream_target->build_context.tracker->link_status) == Target_Link_Status::Success);
         
       String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-      if (!is_win32()) lib_extension = (lib->type == Target::Static_Library) ? String_View("a") : String_View("so");
+      if (!is_win32()) lib_extension = (upstream_target->type == Target::Static_Library) ? String_View("a") : String_View("so");
         
-      auto file_name = make_file_name(lib->name, lib_extension);
+      auto file_name = make_file_name(upstream_target->name, lib_extension);
       builder += make_file_path(arena, out_folder_path, file_name);
     }
 
@@ -420,11 +428,22 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     builder += concat_string(arena, is_win32() ? "/OUT:" : "-o ", output_file_path);
 
     auto link_command = build_string_with_separator(arena, builder, ' ');
+    if (global_flags.tracing) print("Linking target % with %\n", target.name, link_command);
 
-    auto [tag, error, _return] = run_system_command(arena, link_command);
-    link_result = (!tag || _return.status_code != 0) ? Link_Result::Failed : Link_Result::Success;
-
-    if (_return.output) print(_return.output);
+    auto [has_failed, error, status] = run_system_command(arena, link_command);
+    if (has_failed) {
+      print("WARNING: Target linking failed due to a system error: %, command: %\n", error, link_command);
+      link_result = Link_Result::Failed;
+    }
+    else if (status.status_code != 0) {
+      print("WARNING: Target linking failed with status: %, command: %\n", status.status_code, link_command);
+      if (status.output) print(concat_string(arena, status.output, "\n"));
+      link_result = Link_Result::Failed;
+    }
+    else {
+      if (status.output) print(concat_string(arena, status.output, "\n"));
+      link_result = Link_Result::Success;
+    }
   }
 
   auto target_link_status = (link_result == Link_Result::Failed) ? TLS::Failed : TLS::Success;
@@ -505,7 +524,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
 
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
-    //print("Building file % with: %\n", file.path, compilation_command);
+    if (global_flags.tracing) print("Building file % with: %\n", file.path, compilation_command);
 
     auto [has_failed, error, status] = run_system_command(arena, compilation_command);
     if (has_failed) {
@@ -574,12 +593,18 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 static void build_target_task (Build_System &build_system, Target_Builder_Context &context, Build_Task &task) {
   reset_arena(context.arena);
 
+  const u32 thread_id = get_current_thread_id();
+
   auto &tracker = *task.tracker;
   auto &target  = tracker.target;
 
   switch (task.type) {
     case Build_Task::Type::Uninit: return;
     case Build_Task::Type::Compile: {
+      if (global_flags.tracing)
+        print("TRACE(#%): Picking up file % for target % for compilation\n",
+              thread_id, task.file.path, target.name);
+
       compile_file(context.arena, tracker, task.file, task.dependencies_updated);
 
       auto status = atomic_load(tracker.compile_status);
@@ -591,6 +616,9 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
       break;
     }
     case Build_Task::Type::Link: {
+      if (global_flags.tracing)
+        print("TRACE(#%): Picking up target % for linkage\n", thread_id, target.name);
+
       link_target(context.arena, build_system, tracker);
       break;
     }
@@ -638,7 +666,10 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   Build_Plan plan(arena);
   
   if (is_empty(config.selected_targets)) {
-    for (auto &it: project.targets) list_push(plan.selected_targets, it);
+    for (auto &it: project.targets) {
+      it.build_context.tracker = &list_push(plan.selected_targets, it);
+    }
+      
     return plan;
   }
 
@@ -653,31 +684,47 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   for (auto target_name: config.selected_targets) {
     Target *selected_target = nullptr;
     for (auto &target: project.targets) {
-      if (compare_strings(target.name, target_name)) {
+      if (target.name == target_name) {
         selected_target = &target;
         break;
       }
     }
 
-    if (selected_target) panic("Target '%' not found in the project", target_name);
+    if (!selected_target) panic("Target '%' not found in the project", target_name);
 
     add_build_target(build_list, selected_target);
   }
 
-  for (auto target: build_list) list_push(plan.selected_targets, Target_Tracker(*target));
-  for (auto &target: project.targets) {
-    if (plan.selected_targets.contains([&] (auto selected_target) {
-      return compare_strings(selected_target.target.name, target.name);
-    })) continue;
+  for (auto target: build_list) {
+    target->build_context.tracker = &list_push(plan.selected_targets, Target_Tracker(*target));
+  }
 
+  for (auto &target: project.targets) {
+    if (plan.selected_targets.contains(lambda { return it.target.name == target.name; })) continue;
     list_push_copy(plan.skipped_targets, &target);
   }
 
   return plan;
 }
 
+static void validate_toolchain (const Project &project) {
+  const auto &tc = project.toolchain;
+
+  if (!tc.c_compiler_path)   panic("C compiler path is not set for the project\n");
+  if (!tc.cpp_compiler_path) panic("C++ compiler path is not set for the project\n");
+  if (!tc.linker_path)       panic("Linker path is not set for the project\n");
+  if (!tc.archiver_path)     panic("Archive tool is not set for the project\n");
+
+  if (!check_file_exists(tc.c_compiler_path).or_default(false))   panic("No C compiler found at %\n", tc.c_compiler_path);
+  if (!check_file_exists(tc.cpp_compiler_path).or_default(false)) panic("No C++ compiler found at %\n", tc.cpp_compiler_path);
+  if (!check_file_exists(tc.linker_path).or_default(false))       panic("No linker found at %\n", tc.linker_path);
+  if (!check_file_exists(tc.archiver_path).or_default(false))     panic("No archive tool found at %\n", tc.archiver_path);
+}
+
 u32 build_project (Memory_Arena &arena, const Project &project, Build_Config config) {
   using enum File_System_Flags;
+
+  validate_toolchain(project);
 
   if (is_empty(project.targets)) return 0;
 
@@ -730,12 +777,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
       if (registry_enabled) {
         auto local = arena;
 
-        auto include_paths = reserve_array<File_Path_View>(local, target.include_paths.count + project.include_paths.count);
+        auto include_paths = reserve_seq<File_Path_View>(local, target.include_paths.count + project.include_paths.count);
 
-        usize offset = 0;
-        for (auto &path: target.include_paths)  include_paths[offset++] = path;
-        for (auto &path: project.include_paths) include_paths[offset++] = path;
-        assert(offset == include_paths.count);
+        for (auto &path: target.include_paths)  seq_push(include_paths, path);
+        for (auto &path: project.include_paths) seq_push(include_paths, path);
 
         task.dependencies_updated = scan_file_dependencies(local, deps_cache, task.file, include_paths);
       }
@@ -783,7 +828,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
     if ((tracker.compile_status.value != Target_Compile_Status::Success) ||
         (tracker.link_status.value    != Target_Link_Status::Success)) {
-      panic("Building target '%' finished with errors", tracker.target.name);
+      print("Building target '%' finished with errors\n", tracker.target.name);
     }
   }
 

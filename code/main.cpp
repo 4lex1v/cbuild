@@ -82,7 +82,7 @@ struct Build_Command {
     find_argument_value(command_arguments, "targets").handle_value([&](auto targets) {
       command.config.selected_targets = List<String_View> { arena };
       split_string(targets, ',').for_each([&] (auto target) {
-        list_push_copy(command.config.selected_targets, target);
+        if (!is_empty(target)) list_push_copy(command.config.selected_targets, target);
       });
     });
 
@@ -181,10 +181,13 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
   
   struct {
     char short_name;
-    const char* name;
+    String_View name;
     bool* flag;
   } table [] {
-    {'s', "silence", &global_flags.silenced},
+    { 's',  "silence", &global_flags.silenced },
+
+    // Internal flags
+    { '\0', "trace",   &global_flags.tracing },
   };
 
   usize parsed_flags_count = 0;
@@ -203,28 +206,28 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
 
     if (arg.key[1] != '-') {
       // Parsing single character switches
-      for (int idx = 1; idx < arg.key.length; idx++) {
-        bool found = false;
-        for (auto& option : table) {
-          if (option.short_name == arg.key[idx]) {
-            if (*option.flag) print("Flag -%c is duplicated and has no effect\n", arg.key[idx]);
+      bool found = false;
+      for (auto& option : table) {
+        if (arg.key[1] == option.short_name) {
+          if (*option.flag) print("Flag -%c is duplicated and has no effect\n", arg.key[1]);
 
-            *option.flag = true;
-            found        = true;
+          *option.flag = true;
+          found        = true;
 
-            break;
-          }
+          break;
         }
-
-        if (!found) panic("Flag '-%c' is not supported", arg.key[idx]);
       }
+
+      if (!found) panic("Flag '-%c' is not supported", arg.key[1]);
     } else {
       // Parsing long name flags
       if (arg.key.length < 3) panic("Incomplete flag value passed");
 
+      const auto key_name = arg.key + 2;
+
       bool found = false;
       for (auto& option : table) {
-        if (!compare_strings(arg.key + 2, String_View(option.name))) {
+        if (key_name == option.name) {
           if (*option.flag) print("Flag %s is duplicated and has no effect\n", arg.key);
 
           *option.flag = true;

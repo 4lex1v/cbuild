@@ -80,7 +80,7 @@ void cleanup_workspace (Memory_Arena &arena, bool full_cleanup) {
   if (full_cleanup) delete_directory(make_file_path(arena, ".cbuild", "project")).expect();
 }
 
-static inline void load_project_from_library (Project &project, const Slice<Startup_Argument> &args) {
+static inline void load_project_from_library (Project &project, const Slice<Startup_Argument> &arguments) {
   auto [load_failed, error, library] = load_shared_library(project.project_library_path);
   if (load_failed) panic("ERROR: Project % configuration file load failed due to a system error: %\n", project.name, error);
 
@@ -115,16 +115,14 @@ static inline void load_project_from_library (Project &project, const Slice<Star
   auto loader = lookup_symbol<project_func>(*library, "setup_project")
     .get("Failed to load the 'setup_project' symbol from a shared library.\n");
 
-  loader(reinterpret_cast<const Arguments *>(&args), project);
+  const Arguments args { project.arena, arguments };
+  loader(&args, project);
 }
 
-static void build_project_configuration (
-  Memory_Arena &arena,
-  Project      &project,
-  const File   &build_file,
-  const Toolchain_Configuration &toolchain) {
-
+static void build_project_configuration (Memory_Arena &arena, Project &project, const File &build_file) {
   using enum File_System_Flags;
+
+  auto &toolchain = project.toolchain;
 
   auto project_obj_file_name = concat_string(arena, project.name, ".", get_object_extension());
   auto project_obj_file_path = make_file_path(arena, project.project_output_location, project_obj_file_name);
@@ -267,19 +265,21 @@ void load_project (Memory_Arena &arena, Project &project, const Slice<Startup_Ar
   create_directory(project.project_output_location);
 
   auto previous_env = setup_system_sdk(arena, Target_Arch_x64);
+  defer {
+    /*
+      Previous setup_system_sdk call configures env to build the configuration for the host machine. After the project
+      was loaded, it's entirely possible for the user to overwrite the toolset and target architecture. In which case
+      the env should be restored and we need to try and setup the environment for the new target.
+    */
+    if (project.target_architecture == Target_Arch_x86) {
+      reset_environment(previous_env);
+      setup_system_sdk(arena, project.target_architecture);
+    }
+  };
 
-  /*
-    Previous setup_system_sdk call configures env to build the the project's configuration for the host machine,
-    while this call should setup CBuild to build the project for the specific target, where, at least in the case of
-    Windows, different dll libs should be used.
-
-    CBuild itself targets x64 machine only, while it allows the user to build for x86. Since the default toolchain must
-    be x64, current env must already be configured for that and there's no need to do this again.
-  */
-  // if (project.target_architecture == Target_Arch_x86) {
-  //   reset_environment(previous_env);
-  //   setup_system_sdk(arena, project.target_architecture);
-  // }
+  project.toolchain = discover_toolchain(arena)
+    .get("Failed to find any suitable toolchain on the host machine to "
+         "build & load the project's configuration file.\n");
 
   auto build_file_path = discover_build_file(arena, project.project_root)
     .take(concat_string(arena, "No project configuration at: ", project.project_root, "\n"));
@@ -318,11 +318,7 @@ void load_project (Memory_Arena &arena, Project &project, const Slice<Startup_Ar
     }
   }
 
-  auto toolchain = discover_toolchain(arena)
-    .get("Failed to find any suitable toolchain on the host machine to "
-         "build & load the project's configuration file.\n");
-
-  build_project_configuration(arena, project, build_file, toolchain);
+  build_project_configuration(arena, project, build_file);
   
   reset_file_cursor(tag_file).expect("Failed to reset tag's file pointer");
   if (auto bytes = Slice(reinterpret_cast<u8*>(&build_file_timestamp), sizeof(build_file_timestamp));
