@@ -716,6 +716,8 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   }
 
   auto task_system = create_task_system(arena, project, config);
+  defer { destroy(task_system); };
+
   auto deps_cache  = reserve_array<Chain_Status>(arena, max_supported_files_count);
   auto build_plan  = prepare_build_plan(arena, project, config);
 

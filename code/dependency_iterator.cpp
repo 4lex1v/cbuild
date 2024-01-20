@@ -272,9 +272,7 @@ Option<String_View> get_next_include_value (Dependency_Iterator &iterator) {
       continue;
     }
     
-    if (*iterator.cursor == '#') {
-      if (!is_include_directive(iterator)) continue;
-
+    if (*iterator.cursor == '#' && is_include_directive(iterator)) {
       if (!advance(iterator, 8)) return opt_none;
 
       while (*iterator.cursor == ' ')

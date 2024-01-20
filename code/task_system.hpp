@@ -113,8 +113,7 @@ struct Task_Queue {
 
 template <typename T>
 static void destroy (Task_Queue<T> &queue) {
-  for (auto &node: queue.tasks_queue) node.task.~T();
-  free(queue.allocator, queue.tasks_queue.elements);
+  destroy(queue.tasks_queue);
 }
 
 /*
@@ -190,8 +189,6 @@ struct Task_System {
 
 template <typename T, typename BC>
 static void destroy (Task_System<T, BC> &system) {
-  destroy_semaphore(system.tasks_available);
-
   atomic_store<Memory_Order::Release>(system.terminating, true);
     
   // TODO: This shows that current approach has some flaws as the task system shouldn't do this
@@ -199,6 +196,7 @@ static void destroy (Task_System<T, BC> &system) {
   // queue shouldn't be a separate entity.
   increment_semaphore(system.semaphore, system.builders.count);
 
+  destroy(system.semaphore);
   destroy(system.queue);
 }
 
