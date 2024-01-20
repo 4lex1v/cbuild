@@ -89,7 +89,9 @@ struct Project {
     could be helpful when multiple build configurations are introduced, e.g debug vs release build, etc... All other
     required folders, for object files and binaries, will be created in this folder.
    */
-  File_Path output_location_path { make_file_path(arena, cache_root, "build") };
+  File_Path build_location_path { make_file_path(arena, cache_root, "build") };
+
+  File_Path install_location_path { make_file_path(arena, cache_root, "bin") };
 
   const File_Path project_output_location { make_file_path(arena, cache_root, "project") };
   const File_Path project_library_path    { make_file_path(arena, project_output_location, concat_string(arena, name, ".", get_shared_library_extension())) };
@@ -152,6 +154,7 @@ struct Target {
 
   struct {
     bool external = false;
+    bool install  = false;
   } flags;
 
   List<File_Path> files          { project.arena };
@@ -200,5 +203,5 @@ struct Target {
 
 const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
 
-const String_View get_target_extension (const Target &target);
+String_View get_target_extension (const Target &target);
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target);

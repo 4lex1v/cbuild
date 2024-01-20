@@ -155,7 +155,7 @@ CBUILD_API void register_action (Project *project, const char *name, Action_Type
 
   Artifacts are the output of the build process, including compiled object files, linked libraries, executables, etc.
 
-  The default output location is `<project_root>/.cbuild/out`.
+  The default output location is `<project_root>/.cbuild/build/out`.
 
   `set_output_location` specifies additional subdirectories under the default path. The main purpose of this function is to support different configuration types and to prevent clashes between object files and artifacts from different configurations or platforms.
 

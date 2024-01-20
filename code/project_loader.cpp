@@ -141,7 +141,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
     if ((toolchain.type == Toolchain_Type_MSVC_X64) ||
         (toolchain.type == Toolchain_Type_MSVC_X86) ||
         (toolchain.type == Toolchain_Type_LLVM_CL)) {
-      builder += format_string(local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file.path);
+      builder += format_string(local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file.path);
     }
     else {
       builder += format_string(local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file.path, project_obj_file_path);

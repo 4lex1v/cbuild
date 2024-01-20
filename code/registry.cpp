@@ -136,8 +136,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     for (usize idx = 0; idx < records.header.targets_count; idx++) {
       auto old_info = records.targets + idx;
 
-      //if (compare_strings(info->name, old_info->name, Target::Max_Name_Limit) == 0) {
-      if (compare_strings(info->name, old_info->name)) {
+      if (compare_bytes(info->name, old_info->name, Target::Max_Name_Limit)) {
         target.build_context.last_info = old_info;
         break;
       }

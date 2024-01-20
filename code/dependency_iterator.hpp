@@ -12,13 +12,27 @@
 #include "cbuild.hpp"
 
 struct Dependency_Iterator {
+  const File   &file;
   File_Mapping  mapping;
   const char   *cursor;
+  const char   *end;
 
-  Dependency_Iterator (File_Mapping _mapping)
-    : mapping { _mapping },
-      cursor  { mapping.memory }
+  constexpr Dependency_Iterator (const File &_file, File_Mapping _mapping)
+    : file    { _file },
+      mapping { _mapping },
+      cursor  { mapping.memory },
+      end     { mapping.memory + mapping.size }
   {}
+
+  constexpr auto & operator += (usize by) {
+    this->cursor += by;
+    return *this;
+  }
+
+  constexpr auto & operator ++ (int) {
+    this->cursor++;
+    return *this;
+  }
 };
 
 enum struct Parse_Error {
@@ -29,4 +43,4 @@ enum struct Parse_Error {
   Iterates over all user-defined #include directives in the mapped source file retrieving the provided value as-is.
   Resolution of the retrieved file path is left for the caller.
  */
-Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Dependency_Iterator &iterator);
+Option<String_View> get_next_include_value (Dependency_Iterator &iterator);

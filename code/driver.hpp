@@ -27,7 +27,7 @@ struct Build_Config {
     Number of additional build processes to spawn with CBuild as requested by the user.
     If none is specified, the number of logical cores would be used by default.
    */
-  s32 builders_count = -1;
+  u32 builders_count = static_cast<u32>(-1);
 
   /*
     Defines the cache (i.e the registry in CBuild's parlance) behavior for the build process.

@@ -95,7 +95,27 @@ void set_output_location (Project *project, const char *folder_path) {
   require_non_null(folder_path);
   require_non_empty(folder_path);
 
-  project->output_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String_View(folder_path));
+  project->build_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String_View(folder_path));
+}
+
+void set_install_location (Project *project, const char *folder_path) {
+  require_non_null(project);
+  require_non_null(folder_path);
+  require_non_empty(folder_path);
+
+  auto &arena = project->arena;
+
+  File_Path install_path;
+  if (is_absolute_path(folder_path))
+    install_path = File_Path::copy(arena, folder_path);
+  else {
+    auto [has_failed, error, path] = get_absolute_path(arena, folder_path);
+    if (has_failed) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", folder_path, error);
+
+    install_path = move(path);
+  }
+
+  project->install_location_path = move(install_path);
 }
 
 void add_global_compiler_option (Project *project, const char *option) {
@@ -372,7 +392,7 @@ const char * get_target_name (const Target *target) {
 }
 
 // NOTE: CBuild interal API, not exported to the public
-const String_View get_target_extension (const Target &target) {
+String_View get_target_extension (const Target &target) {
   switch (target.type) {
     case Target::Static_Library: return get_static_library_extension();
     case Target::Shared_Library: return get_shared_library_extension();
@@ -382,8 +402,9 @@ const String_View get_target_extension (const Target &target) {
 
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target) {
   auto extension = get_target_extension(target);
-  return make_file_path(arena, target.project.output_location_path, "out",
-                        format_string(arena, "%.%", target.name, extension));
+  auto file_name = concat_string(arena, target.name, ".", extension);
+  auto external  = target.flags.external ? target.project.name : "";
+  return make_file_path(arena, target.project.build_location_path, "out", external, target.name, file_name);
 }
 
 const char * get_generated_binary_file_path (const Target *target) {
@@ -459,4 +480,8 @@ Target * get_external_target (Project *project, const Project_Ref *external_proj
 
   //return *external_target;
   return nullptr;
+}
+
+void install_target (Target *target) {
+  target->flags.install = true;
 }

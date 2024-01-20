@@ -33,6 +33,15 @@ CBUILD_EXPERIMENTAL_API const char * get_generated_binary_file_path (const Targe
 CBUILD_EXPERIMENTAL_API Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path);
 
 CBUILD_EXPERIMENTAL_API Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name);
+
+/*
+  Install API
+ */
+
+CBUILD_EXPERIMENTAL_API void set_install_location (Project *project, const char *path);
+
+CBUILD_EXPERIMENTAL_API void install_target (Target *target);
+
 }
 
 #ifdef __cplusplus

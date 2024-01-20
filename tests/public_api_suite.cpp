@@ -115,12 +115,12 @@ static void output_location_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
   // For now to simplify setup, .cbuild/build is the default 
-  require(ends_with(project.output_location_path, "build"));
+  require(ends_with(project.build_location_path, "build"));
 
   String_View path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(project.output_location_path == make_file_path(arena, workspace, ".cbuild", "build", path));
+  require(project.build_location_path == make_file_path(arena, workspace, ".cbuild", "build", path));
 }
 
 static void add_static_library_test (Memory_Arena &arena) {

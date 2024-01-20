@@ -139,25 +139,14 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Sta
 
   bool chain_has_updates = false;
 
-  auto iterator = Dependency_Iterator(*map_file_into_memory(source_file));
-  while (true) {
-    auto [has_failed, _, include_value] = get_next_include_value(iterator);
-    if (has_failed) {
-      print("WARNING: Parse error occurred while checking #include files in %. "
-            "This file will be recompiled and target relinked. If the compiler doesn't "
-            "complain about this file and the project builds successfully, but this error "
-            "keeps occuring, please report this issue. Thank you.", source_file.path);
-      continue;
-    }
-
-    if (include_value.is_none()) break;
-
+  auto iterator = Dependency_Iterator(source_file, *map_file_into_memory(source_file));
+  while (auto include_value = get_next_include_value(iterator)) {
     auto local = arena;
 
     auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
     if (!is_defined) {
       String_Builder builder { local };
-      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, "the following paths were checked:\n");
+      builder.add(local, Callsite_Info(), ": Couldn't resolve the include file ", include_value, " from file ", source_file.path, " the following paths were checked:\n");
       for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
 
       print(build_string(local, builder));
@@ -167,12 +156,12 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Sta
 
     auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
     if (open_failed) {
-      print("Couldn't open included header file for scanning due to an error: %", error);
+      log("Couldn't open included header file for scanning due to an error: %", error);
     }
 
     defer { close_file(dependency_file); };
     
-    auto chain_scan_result = scan_dependency_chains(arena, chain_status_cache, dependency_file, include_directories);
+    auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
     assert(chain_scan_result != Chain_Status::Unchecked);
 
     if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
@@ -214,41 +203,29 @@ static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &ch
   {
     auto [has_failed, error, path] = get_folder_path(arena, source_file.path);
     if (!has_failed) source_file_folder_path = Option(move(path));
-    else print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-               "Build process will continue, but this may cause issues with include files lookup.",
-               source_file.path, error);
+    else log("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+             "Build process will continue, but this may cause issues with include files lookup.",
+             source_file.path, error);
   }
 
-  auto iterator = Dependency_Iterator(file_mapping);
-  while (true) {
-    auto [has_failed, _, include_value] = get_next_include_value(iterator);
-    if (has_failed) {
-      print("WARNING: Parse error occurred while checking #include files in %. "
-            "This file will be recompiled and target relinked. If the compiler doesn't "
-            "complain about this file and the project builds successfully, but this error "
-            "keeps occuring, please report this issue. Thank you.", source_file.path);
-      chain_has_updates = true;
-      continue;
-    }
-
-    if (include_value.is_none()) break;
-
+  auto iterator = Dependency_Iterator(source_file, file_mapping);
+  while (auto include_value = get_next_include_value(iterator)) {
     auto local = arena;
     
     auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
     if (!is_defined) {
       String_Builder builder { local };
-      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, "the following paths were checked:\n");
+      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, " the following paths were checked:\n");
       for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
 
-      print(build_string(local, builder));
+      log("%\n", build_string(local, builder));
 
       continue;
     }
 
     auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
     if (open_failed) {
-      print("WARNING: Couldn't open included header file for scanning due to a system error: %.", error);
+      log("WARNING: Couldn't open included header file for scanning due to a system error: %.", error);
       chain_has_updates = true;
       continue;
     }
@@ -319,10 +296,13 @@ static void schedule_downstream_linkage (Build_System &build_system, const Targe
 }
 
 static File_Path get_target_object_folder_path (Memory_Arena &arena, const Target &target) {
-  if (!target.flags.external) [[likely]]
-    return make_file_path(arena, object_folder_path, target.name);
-  
-  return make_file_path(arena, object_folder_path, target.project.name, target.name);
+  auto external = target.flags.external ? target.project.name : "";
+  return make_file_path(arena, object_folder_path, external, target.name);
+}
+
+static File_Path get_target_output_folder_path (Memory_Arena &arena, const Target &target) {
+  auto external = target.flags.external ? target.project.name : "";
+  return make_file_path(arena, out_folder_path, external, target.name);
 }
 
 static void link_target (Memory_Arena &arena, Build_System &build_system, Target_Tracker &tracker) {
@@ -373,14 +353,13 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     if (!global_flags.silenced) print("Linking target: %\n", target.name);
 
     auto target_object_folder = get_target_object_folder_path(arena, target);
-    auto object_extension     = get_object_extension();
+    auto target_output_folder = get_target_output_folder_path(arena, target);
     auto output_file_path     = get_output_file_path_for_target(arena, target);
+    auto object_extension     = get_object_extension();
+
+    create_directory(arena, target_output_folder);
 
     String_Builder builder { arena };
-
-    const auto make_file_name = [&arena] (String_View name, String_View extension) {
-      return concat_string(arena, name, ".", extension);
-    };
 
     /*
       Clang has some stack uncertainties compiling this function, not sure why. Since each switch
@@ -410,7 +389,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     }
 
     for (auto &path: target.files) {
-      auto file_name = make_file_name(*get_resource_name(arena, path), object_extension);
+      auto file_name = concat_string(arena, *get_resource_name(arena, path), ".", object_extension);
       builder += make_file_path(arena, target_object_folder, file_name);
     }
 
@@ -420,7 +399,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
       String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
       if (!is_win32()) lib_extension = (upstream_target->type == Target::Static_Library) ? String_View("a") : String_View("so");
         
-      auto file_name = make_file_name(upstream_target->name, lib_extension);
+      auto file_name = concat_string(arena, upstream_target->name, ".", lib_extension);
       builder += make_file_path(arena, out_folder_path, file_name);
     }
 
@@ -626,19 +605,9 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
 }
 
 static u32 number_of_extra_builders_to_spawn (const Build_Config &config) {
-  if (config.builders_count <= 0) return 0;
-  
   // This number excludes main thread, which always exists
   auto cpu_count = get_logical_cpu_count();
-  auto count     = static_cast<u32>(config.builders_count);
-
-  if (count > cpu_count) {
-    print("WARNING: 'builders' value is bigger than the number of CPU cores "
-          "(i.e requested - %, core count - %). Defaulting to %\n",
-          count, cpu_count, cpu_count);
-  }
-
-  count = clamp<u32>(count, 1, cpu_count);
+  auto count     = clamp<u32>(config.builders_count, 1, cpu_count);
 
   // This number specifies only the count of extra threads in addition to the main thread
   return count - 1;
@@ -728,17 +697,17 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   if (is_empty(project.targets)) return 0;
 
-  create_directory(arena, project.output_location_path);
+  create_directory(arena, project.build_location_path, File_System_Flags::Force);
 
-  out_folder_path    = make_file_path(arena, project.output_location_path, "out");
-  object_folder_path = make_file_path(arena, project.output_location_path, "obj");
+  out_folder_path    = make_file_path(arena, project.build_location_path, "out");
+  object_folder_path = make_file_path(arena, project.build_location_path, "obj");
 
   create_directory(arena, out_folder_path);
   create_directory(arena, object_folder_path);
 
   registry_enabled = !project.registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
   if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
-    auto registry_file_path = make_file_path(arena, project.output_location_path, "__registry");
+    auto registry_file_path = make_file_path(arena, project.build_location_path, "__registry");
     registry = load_registry(arena, registry_file_path);
   }
 

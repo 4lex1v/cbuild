@@ -8,10 +8,12 @@
 #include "anyfin/core/trap.hpp"
 
 namespace Fin {
+  namespace Base {};
   namespace Core {};
   namespace Platform {};
 }
 
+using namespace Fin::Base;
 using namespace Fin::Core;
 using namespace Fin::Platform;
 

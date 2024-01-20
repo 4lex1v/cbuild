@@ -1,209 +1,311 @@
 
 #include "anyfin/base.hpp"
 
-#include "anyfin/core/result.hpp"
+#include "anyfin/platform/console.hpp"
 
 #include "dependency_iterator.hpp"
 
-static const char* skip_to_any_symbol (const char* str, size_t size, const char* symbols) {
-  for (size_t i = 0; i < size; i++) {
-    const char* p = symbols;
-    while (*p) {
-      if (str[i] == *p) return &str[i];
-      p++;
-    }
+static bool advance (Dependency_Iterator &iterator, usize by = 1) {
+  if (iterator.cursor == iterator.end) return false;
+
+  iterator.cursor += by;
+
+  return iterator.cursor < iterator.end;
+}
+
+static const char * skip_to_next_symbol (Dependency_Iterator &iterator) {
+  while (iterator.cursor < iterator.end) {
+    if (*iterator.cursor == '/')  return iterator.cursor;
+    if (*iterator.cursor == '\'') return iterator.cursor;
+    if (*iterator.cursor == '"')  return iterator.cursor;
+    if (*iterator.cursor == '#')  return iterator.cursor;
+
+    iterator.cursor += 1;
   }
+
   return nullptr;
 }
 
-static bool compare_memory (const char *source, const char *value, const usize length) {
-  for (usize idx = 0; idx < length; idx++) {
-    if (source[idx] != value[idx]) return false;
-  }
-
-  return true;
-}
-
-static const char* find_substring (const char *memory, size_t memory_size, const char *value, size_t value_size) {
+static const char* find_substring (const char *memory, const char *end, const char *value, size_t value_size) {
+  if (memory == nullptr || end == nullptr)   return nullptr;
   if (value  == nullptr || value_size  == 0) return nullptr;
-  if (memory == nullptr || memory_size == 0) return nullptr;
-  if (memory_size < value_size)              return nullptr;
 
-  auto end = memory + memory_size - value_size + 1;
-
-  while (memory < end) {
-    if (!compare_memory(memory, value, value_size)) return memory;
+  while ((memory + value_size) <= end) {
+    if (compare_bytes(memory, value, value_size)) return memory;
     memory++;
   }
 
   return nullptr;
 }
 
-Fin::Core::Result<Parse_Error, Option<String_View>> get_next_include_value (Dependency_Iterator &iterator) {
+enum Parsing_Status {
+  End_Of_Parsing = 0,
+  Continue       = 1,
+};
+
+static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
   auto cursor = iterator.cursor;
-  auto end    = iterator.mapping.memory + iterator.mapping.size;
+  auto end    = iterator.end;
 
-  auto &&None = Fin::Core::Ok(Option<String_View>());
+  /*
+    It's expected that the iterator points the at openning string literal quote.
+    We need to find a correct closing literal quote handling regular string literals as well as
+    raw-string literals.
+   */
+  assert(*cursor == '"');
 
-  while (cursor < end) {
-    if (*cursor == '\"') {
-      if (cursor == iterator.mapping.memory || (*(cursor - 1) != 'R')) {
-        while (cursor < end) {
-          auto search_from_position = cursor + 1;
-          if (search_from_position == end) return None;
+  if ((cursor == end) || (cursor + 1) == end) return End_Of_Parsing;
 
-          cursor = get_character_offset_reversed(search_from_position, end - search_from_position, '"');  
-          if (cursor == nullptr) return None;
+  const bool is_raw_string = (cursor > iterator.mapping.memory) && (*(cursor - 1) == 'R');
+  
+  if (is_raw_string == false) {
+    /*
+      Can't just search for the first ", it could be escaped with \, in which case we continue the search.
+     */
+    auto search_start_position  = cursor + 1;
+    auto closing_quote_position = static_cast<const char *>(nullptr);
 
-          cursor += 1;
+    while (search_start_position < end) {
+      closing_quote_position = get_character_offset(search_start_position, end, '"');
 
-          if (*(cursor - 2) != '\\') break;
+      if (closing_quote_position == nullptr) return End_Of_Parsing; // most likely a bad source code with unclosed string literal?
+      if (closing_quote_position == end)     return End_Of_Parsing; // we've reached the end of the source code
 
-          /*
-            Have to do this for now because on the next cycle I'm looking up from cursor + 1, which may lead to 
-            incorrect results in cases like \"" where we'll miss the closing quote. Should make a cleaner version
-            at some point later.
-          */
-          cursor -= 1;
-        }
-        
-        continue;
+      if (closing_quote_position == (search_start_position + 1)) { // empty string literal, i.e ""
+        assert(*closing_quote_position == '"');
+        break;
       }
 
-      /*
-        Raw String Handling, who on earth came up with this design :facepalm:
-      */
-      auto safe_word = cursor + 1;
-      if (safe_word != end && *safe_word == '(') {
-        auto raw_string_end = find_substring(cursor, end - cursor, ")\"", 2);
-        if (raw_string_end == nullptr) return None;
+      const char previous_symbol     = *(closing_quote_position - 1);
+      const bool is_escape_backslach = previous_symbol == '\\';
+      if (!is_escape_backslach) break; // it's the actual closing quote of the string literal
 
-        cursor = raw_string_end + 2;
-          
-        continue;
-      }
+      search_start_position = closing_quote_position + 1;
+    }
 
-      auto end_of_safe_word = get_character_offset_reversed(safe_word, end - safe_word, '(');
-      if (end_of_safe_word == nullptr) return None;
+    if (closing_quote_position == end) return End_Of_Parsing;
 
-      auto safe_word_length = end_of_safe_word - safe_word;
-      char raw_string_closing_path[64] = { ')' };
-      copy_memory(raw_string_closing_path + 1, safe_word, safe_word_length);
+    iterator.cursor = closing_quote_position + 1;
 
-      auto raw_string_closing_path_length = safe_word_length + 1;
-      auto raw_string_end_position = find_substring(end_of_safe_word, end - end_of_safe_word,
-                                                    raw_string_closing_path, raw_string_closing_path_length);
-      if ((raw_string_end_position == nullptr) ||
-          (raw_string_end_position[raw_string_closing_path_length] != '"')) {
-        return Fin::Core::Error(Parse_Error::Invalid_Value); // Unclosed string literal, TODO: report a proper error message
-      }
+    return Continue;
+  }
 
-      auto position = raw_string_end_position + safe_word_length + 1;
+  /*
+    Raw String Handling, who on earth came up with this design :facepalm:
 
-      cursor = position + 1; // closing " for a string literal
+    To correctly find the closing quote we should parse the closing sequence, which may or may not
+    be present in the string.
+  */
 
+  const bool has_closing_sequence = cursor[1] != '(';
+
+  if (has_closing_sequence == false) {
+    auto search_start_position = cursor + 2; // this would skip the openning (
+    if (search_start_position == end) return End_Of_Parsing;
+
+    auto raw_string_end = find_substring(search_start_position, end, ")\"", 2);
+    if (raw_string_end == nullptr) return End_Of_Parsing; //most likely an unclosed string literal
+
+    if (raw_string_end + 2 == end) return End_Of_Parsing;
+
+    iterator.cursor = raw_string_end + 2;
+    return Continue;
+  }
+
+  /*
+    Otherwise let's try and pull the closing sequence out.
+    The goal is to find the first ( character on the same line where the openning quote is, otherwise it's a malformed
+    raw-string literal.
+  */
+
+  const char *closing_sequence_start = cursor + 1;
+  if (closing_sequence_start + 1 == end) return End_Of_Parsing;
+
+  const char *closing_sequence_end = closing_sequence_start + 1;
+  while (closing_sequence_end < end) {
+    auto character = closing_sequence_end[0];
+
+    if (character == '(') break;
+
+    /*
+      This should violate the grammar raw string literals, the closing sequence with open paren ( should be fully defined
+      on a single line.
+    */
+    if (character == '\r' || character == '\n') {
+      print("WARNING: Incomplete raw-string literal closing sequence found while parsing %."
+            " Invalid source code cannot be properly parsed by CBuild to check if the dependency tree "
+            "(i.e files #included into the translation unit) were not updated. This file will be skipped "
+            "and rebuild. If there are not issues with the file and it could be compiled, please report this bug.\n",
+            iterator.file.path);
+      return End_Of_Parsing;
+    }
+
+    closing_sequence_end += 1;
+  }
+
+  assert(*closing_sequence_end == '(');
+
+  auto closing_sequence_length = closing_sequence_end - closing_sequence_start;
+  if (closing_sequence_length > 64) {
+    /*
+      Spec limits the length of the closing sequence to 16, just in case we'll handle up to 64, but warn anyway.
+     */
+    print("WARNING: Raw-string literal's closing sequence '%' is bigger than the allowed limit of 16 characters (https://en.cppreference.com/w/cpp/language/string_literal) in file %",
+          String_View(closing_sequence_start, closing_sequence_length), iterator.file.path);
+    assert(false);
+  }
+    
+  char raw_string_closing_path[64] = { ')' }; // closing sequence is limited to 16 characters.
+  copy_memory(raw_string_closing_path + 1, closing_sequence_start, closing_sequence_length);
+
+  closing_sequence_length += 1; // to include the prepended closing paren.
+
+  auto search_start_position   = closing_sequence_end + 1; // start search after the open paren.
+  auto raw_string_end_position = find_substring(search_start_position, end, raw_string_closing_path, closing_sequence_length);
+
+  if (raw_string_end_position == nullptr) return End_Of_Parsing;
+  if (raw_string_end_position == end)     return End_Of_Parsing;
+
+  assert(raw_string_end_position[closing_sequence_length] == '"');
+
+  if (raw_string_end_position[closing_sequence_length] != '"') {
+    auto &file_path = iterator.file.path;
+    panic("WARNING: Parse error occurred while checking #include files in %. "
+          "This file will be recompiled and target relinked. If the compiler doesn't "
+          "complain about this file and the project builds successfully, but this error "
+          "keeps occuring, please report this issue. Thank you.", file_path);
+    return End_Of_Parsing;
+  }
+
+  iterator.cursor = raw_string_end_position + closing_sequence_length + 1; // after the closing quote
+
+  return Continue;
+}
+
+static Parsing_Status skip_character_literal (Dependency_Iterator &iterator) {
+  auto search_from_position  = iterator.cursor + 1;
+  auto literal_closing_quote = static_cast<const char *>(nullptr);
+
+  while (iterator.cursor < iterator.end) {
+    auto search_from_position = iterator.cursor + 1;
+    if (search_from_position == iterator.end) return End_Of_Parsing;
+
+    // Still doing search here, cause a char literal may have some long weird unicode sequence
+    literal_closing_quote = get_character_offset(search_from_position, iterator.end, '\'');  
+    if (literal_closing_quote == nullptr) return End_Of_Parsing;
+
+    char previous_character = *(literal_closing_quote - 1);
+    auto is_escaped_quote   = previous_character == '\\';
+    if (!is_escaped_quote) break;
+    
+    literal_closing_quote += 1; // I'd think that if previous single quote was escaped, the only option that's next is the closing quote?
+    break;
+  }
+
+  iterator.cursor = literal_closing_quote + 1;
+
+  return Continue;
+}
+
+static Parsing_Status skip_comment_section (Dependency_Iterator &iterator) {
+  if (iterator.cursor < iterator.end) {
+    if (iterator.cursor[1] == '/') {
+      iterator.cursor = get_character_offset(iterator.cursor, iterator.end, '\n');
+      if (iterator.cursor == nullptr) return End_Of_Parsing;
+
+      iterator.cursor += 1;
+
+      return Continue;
+    }
+
+    if (iterator.cursor[1] == '*') {
+      auto position = find_substring(iterator.cursor, iterator.end, "*/", 2);
+      if (position == nullptr) return End_Of_Parsing;
+
+      iterator.cursor = position + 2;
+
+      return Continue;
+    }
+  }
+
+  iterator.cursor += 1;
+
+  return Continue;
+}
+
+static bool is_include_directive (Dependency_Iterator &iterator) {
+  assert(iterator.cursor[0] == '#');
+
+  const char directive[] = "#include";
+  auto directive_length   = array_count_elements(directive);
+
+  if (directive_length > (iterator.end - iterator.cursor)) return false;
+
+  return compare_bytes(iterator.cursor, directive, directive_length);
+}
+
+Option<String_View> get_next_include_value (Dependency_Iterator &iterator) {
+  while (skip_to_next_symbol(iterator)) {
+    /*
+      It's possible to something like #include directive be in the string literal, thus we should detect string literals
+      and skip them altogether to avoid incorrectly parsing the included path.
+     */
+    if (*iterator.cursor == '"') {
+      if (skip_string_literal(iterator) == End_Of_Parsing) return opt_none;
       continue;
     }
 
-    if (*cursor == '\'') {
-      while (cursor < end) {
-        auto search_from_position = cursor + 1;
-        if (search_from_position == end) return None;
-
-        cursor = get_character_offset_reversed(search_from_position, end - search_from_position, '\'');  
-        if (cursor == nullptr) return None;
-
-        cursor += 1;
-
-        if (*(cursor - 2) != '\\') break;
-
-        /*
-          Have to do this for now because on the next cycle I'm looking up from cursor + 1, which may lead to 
-          incorrect results in cases like \"" where we'll miss the closing quote. Should make a cleaner version
-          at some point later.
-        */
-        cursor -= 1;
-      }
+    /*
+      Character literals must be skipped since those may contain quotes or hash characters that may confuse the parser into thinking
+      that it's a string literal openning quote.
+     */
+    if (*iterator.cursor == '\'') {
+      if (skip_character_literal(iterator) == End_Of_Parsing) return opt_none;
+      continue;
     }
 
-    if (*cursor == '#') {
-      if (compare_bytes(cursor, "#include", 8) != 0) {
-        cursor += 1;
-        continue;
-      }
-
-#define advance_by(VALUE)                         \
-      do {                                        \
-        if ((cursor + VALUE) >= end) return None; \
-        cursor += VALUE;                          \
-      } while(0)
-
-      advance_by(8);
-
-      while (*cursor == ' ') advance_by(1);
-      if (*cursor == '<') {
-        cursor = get_character_offset_reversed(cursor, end - cursor, '>');
-        if (cursor == nullptr) return None;
-
-        cursor += 1;
-        continue;
-      }
-
-      assert(*cursor == '"');
-      advance_by(1);
-
-      auto file_path_start = cursor;
-
-      while (*cursor != '"') advance_by(1);
-
-      auto include = String_View(file_path_start, cursor - file_path_start);
-
-      iterator.cursor = cursor + 1;
-
-#undef advance_by
-
-      return Fin::Core::Ok(Option(move(include)));
-    }
-
-    if (*cursor == '/') {
-      if ((cursor + 1) < end) {
-        if (cursor[1] == '/') {
-          cursor = get_character_offset_reversed(cursor, end - cursor, '\n');
-          if (cursor == nullptr) return None;
-          cursor += 1;
-          continue;
-        }
-
-        if (cursor[1] == '*') {
-          auto position = find_substring(cursor, end - cursor, "*/", 2);
-          if (position == nullptr) return None;
-          cursor = position + 2;
-          continue;
-        }
-      }
-
-      cursor += 1;
+    /*
+      Skipping comment section as those may also contain #include directives that we shouldn't parse.
+     */
+    if (*iterator.cursor == '/') {
+      if (skip_comment_section(iterator) == End_Of_Parsing) return opt_none;
+      continue;
     }
     
-    cursor = skip_to_any_symbol(cursor, end - cursor, "/#'\"");
-    if (cursor == nullptr) return None;
+    if (*iterator.cursor == '#') {
+      if (!is_include_directive(iterator)) continue;
+
+      if (!advance(iterator, 8)) return opt_none;
+
+      while (*iterator.cursor == ' ')
+        if (!advance(iterator)) return opt_none;
+
+      /*
+        Skipping system includes for now.
+       */
+      if (*iterator.cursor == '<') {
+        iterator.cursor = get_character_offset(iterator.cursor, iterator.end, '>');
+        if (iterator.cursor == nullptr) return opt_none;
+        continue;
+      }
+
+      assert(*iterator.cursor == '"');
+      if (!advance(iterator)) return opt_none;
+
+      auto file_path_start = iterator.cursor;
+
+      iterator.cursor = get_character_offset(iterator.cursor, iterator.end, '"');
+      if (iterator.cursor == nullptr) return opt_none;
+
+      auto include = String_View(file_path_start, iterator.cursor - file_path_start);
+
+      advance(iterator);
+
+      return include;
+    }
+
+    iterator += 1;
   }
 
-  return None;
+  return opt_none;
 }
-
-// static void register_file_dependencies (const char *file_path, int offset = 0) {
-//   auto mapping = map_file_into_memory(file_path);
-//   if (!mapping) return;
-
-//   defer { unmap_file(&mapping); };
-  
-//   char                path_buffer[256] = {};
-//   Dependency_Iterator iterator         = { &mapping };
-//   String         include_value    = {};
-
-//   while (retrieve_next_include_value(&iterator, &include_value)) {
-//     snprintf(path_buffer, 256, "code/%.*s", (int) include_value.count, include_value.offset);
-//     register_file_dependencies(path_buffer, offset + 4);
-//   }
-// }
