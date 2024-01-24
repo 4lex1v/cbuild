@@ -6,7 +6,9 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(arena, workspace)) delete_directory(workspace);
+  auto [error, exists] = check_directory_exists(workspace);
+  if (!error && exists) delete_directory(workspace);
+
   create_directory(workspace);
   set_working_directory(workspace);
 
@@ -34,8 +36,8 @@ static void basic_clean_command_usage (Memory_Arena &arena) {
   auto clean_cmd_result = run_system_command(arena, clean_command);
   require(clean_cmd_result);
 
-  require(!check_directory_exists(arena, output_build_folder));
-  require(check_directory_exists(output_project_folder));
+  require(check_directory_exists(output_build_folder).value);
+  require(check_directory_exists(output_project_folder).value);
 }
 
 static void complete_clean_command_usage (Memory_Arena &arena) {
@@ -50,8 +52,8 @@ static void complete_clean_command_usage (Memory_Arena &arena) {
   auto clean_cmd_result = run_system_command(arena, clean_command);
   require(clean_cmd_result);
 
-  require(check_directory_exists(arena, output_build_folder) == false);
-  require(check_directory_exists(arena, output_project_folder) == false);
+  require(check_directory_exists(output_build_folder).value == false);
+  require(check_directory_exists(output_project_folder).value == false);
 }
 
 static Test_Case clean_command_tests [] {

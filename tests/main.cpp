@@ -1,7 +1,8 @@
 
 #define FIN_EMBED_STATE
 
-#include "anyfin/platform/startup.hpp"
+#include "anyfin/startup.hpp"
+#include "anyfin/concurrent.hpp"
 
 #include "test_suite.hpp"
 
@@ -27,15 +28,30 @@ static int find_arg (const char * arg, const int argc, const char * const * cons
   return -1;
 }
 
-static String_View find_arg_value (const char * arg, const int argc, const char * const * const argv) {
+static String find_arg_value (const char * arg, const int argc, const char * const * const argv) {
   auto idx = find_arg(arg, argc, argv);
-  if ((idx != -1) && ((idx + 1) < argc)) return String_View(argv[idx + 1]);
+  if ((idx != -1) && ((idx + 1) < argc)) return String(argv[idx + 1]);
 
   return {};
 }
 
+namespace Fin {
+
+void trap (const char *msg, usize length, Callsite callsite) {
+  
+}
+
+}
+
+static Spin_Lock log_lock;
+void log (Fin::String message) {
+  log_lock.lock();
+  write_to_stdout(message);
+  log_lock.unlock();
+}
+
 int main (int argc, char **argv) {
-  set_crash_handler(test_configuration_failure);
+  //set_crash_handler(test_configuration_failure);
 
   Memory_Arena arena { reserve_virtual_memory(megabytes(8)) };
 
@@ -49,15 +65,15 @@ int main (int argc, char **argv) {
 
   auto bin_path_arg = get_value(args, "bin").or_default();
   if (!bin_path_arg) {
-    print("ERROR: bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
+    write_to_stdout("ERROR: bin <path> is a required argument that should point to the cbuild binary which should be tested.\n");
     return 1;
   }
 
-  working_directory = *get_working_directory(suite_runner.arena);
-  binary_path       = *get_absolute_path(suite_runner.arena, make_file_path(suite_runner.arena, bin_path_arg));
+  working_directory = get_working_directory(suite_runner.arena).value;
+  binary_path       = get_absolute_path(suite_runner.arena, make_file_path(suite_runner.arena, bin_path_arg)).value;
   workspace         = make_file_path(suite_runner.arena, working_directory, "tests", "verification");
 
-  print("Verifying: %\n", binary_path);
+  write_to_stdout(format_string(arena, "Verifying: %\n", binary_path));
 
 #define run_suite(SUITE_NAME)                                     \
   void tokenpaste(SUITE_NAME, _test_suite)(Test_Suite_Runner &);  \

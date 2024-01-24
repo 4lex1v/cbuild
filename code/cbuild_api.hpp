@@ -2,22 +2,23 @@
 #pragma once
 
 #include "anyfin/base.hpp"
-#include "anyfin/core/arena.hpp"
-#include "anyfin/core/list.hpp"
-#include "anyfin/core/strings.hpp"
-#include "anyfin/core/prelude.hpp"
+#include "anyfin/arena.hpp"
+#include "anyfin/list.hpp"
+#include "anyfin/strings.hpp"
+#include "anyfin/prelude.hpp"
+#include "anyfin/slice.hpp"
 
-#include "anyfin/platform/console.hpp"
-#include "anyfin/platform/startup.hpp"
-#include "anyfin/platform/file_system.hpp"
+#include "anyfin/console.hpp"
+#include "anyfin/startup.hpp"
+#include "anyfin/file_system.hpp"
 
 #include "cbuild_api_template.hpp"
 #include "cbuild_api_experimental.hpp"
 
 #include "cbuild.hpp"
 
-using namespace Fin::Core;
-using namespace Fin::Platform;
+using namespace Fin;
+using namespace Fin;
 
 struct Target_Tracker;
 
@@ -30,7 +31,7 @@ struct Target;
 
 struct Arguments {
   Memory_Arena &global_arena;
-  const Slice<Startup_Argument> &args;
+  Slice<Startup_Argument> args;
 };
 
 struct User_Defined_Command {
@@ -117,11 +118,13 @@ struct Project {
   struct {
   } hooks;
 
-  Project (Memory_Arena &global, String_View _name, File_Path_View _project_root, File_Path_View _cache_directory, const bool _is_external = false)
+  Project (Memory_Arena &global, String _name,
+           File_Path _project_root, File_Path _cache_directory,
+           const bool _is_external = false)
     : global_arena { global },
-      name         { String::copy(arena, _name) },
+      name         { copy_string(arena, _name) },
       is_external  { _is_external },
-      project_root { String::copy(arena, _project_root) },
+      project_root { copy_string(arena, _project_root) },
       cache_root   { make_file_path(arena, _cache_directory) }
   {}
 };
@@ -203,5 +206,5 @@ struct Target {
 
 const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
 
-String_View get_target_extension (const Target &target);
+String get_target_extension (const Target &target);
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target);

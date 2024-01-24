@@ -1,8 +1,6 @@
 
 #pragma once
 
-#include "anyfin/core/slice.hpp"
-
 #include "cbuild.hpp"
 
 struct CLI_Flags {
@@ -38,5 +36,5 @@ struct Build_Config {
     List of targets (names) requested by the user to build.
     Only these targets (and their upstream dependencies) should be built by CBuild.
    */
-  List<String_View> selected_targets;
+  List<String> selected_targets;
 };

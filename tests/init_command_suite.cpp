@@ -6,7 +6,7 @@ extern File_Path workspace;         // Path to the workspace folder where all in
 extern File_Path binary_path;       // Executable under test
 
 static void setup_workspace (Memory_Arena &arena) {
-  if (check_directory_exists(workspace).get())
+  if (check_directory_exists(workspace).value)
     require(delete_directory(workspace));
 
   require(create_directory(workspace));
@@ -66,7 +66,7 @@ static void init_cpp_project_test (Memory_Arena &arena) {
 static void init_unknown_project_type_test (Memory_Arena &arena) {
   auto command = concat_string(arena, binary_path, " init type=rust");
 
-  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  auto [init_cmd_has_failed, status] = run_system_command(arena, command);
   require(!init_cmd_has_failed);
   require(status.status_code != 0);
 
@@ -77,7 +77,7 @@ static void init_unknown_project_type_test (Memory_Arena &arena) {
 static void init_with_unset_type_parameter_test (Memory_Arena &arena) {
   auto command = concat_string(arena, binary_path, " init type");
 
-  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  auto [init_cmd_has_failed, status] = run_system_command(arena, command);
   require(!init_cmd_has_failed);
   require(status.status_code != 0);
 
@@ -88,7 +88,7 @@ static void init_with_unset_type_parameter_test (Memory_Arena &arena) {
 static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
   auto command = concat_string(arena, binary_path, " init type=");
 
-  auto [init_cmd_has_failed, _, status] = run_system_command(arena, command);
+  auto [init_cmd_has_failed, status] = run_system_command(arena, command);
   require(!init_cmd_has_failed);
   require(status.status_code != 0);
 

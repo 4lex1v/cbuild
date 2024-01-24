@@ -12,13 +12,13 @@
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
 extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
 
-static bool ensure_list_content (const Iterable<String> auto &list, String_View value, Convertible_To<String_View> auto&&... more_values) {
-  String_View values [] { value, static_cast<String_View>(more_values)... };
+static bool ensure_list_content (const Iterable<String> auto &list, String value, Convertible_To<String> auto&&... more_values) {
+  String values [] { value, static_cast<String>(more_values)... };
 
-  if (iterator::count(list) != Fin::Base::array_count_elements(values)) return false;
+  if (iterator::count(list) != Fin::array_count_elements(values)) return false;
 
   for (usize idx = 0; auto &elem: list) {
-    if (!compare_strings(elem, values[idx++])) return false;
+    if (elem != values[idx++]) return false;
   }
 
   return true;
@@ -107,7 +107,7 @@ static void register_action_test (Memory_Arena &arena) {
   require(project.user_defined_commands.count == 1);
 
   auto &command = project.user_defined_commands.first->value;
-  require(compare_strings(command.name, "test"));
+  require(command.name == "test");
   require(command.proc == test_action);
 }
 
@@ -117,7 +117,7 @@ static void output_location_test (Memory_Arena &arena) {
   // For now to simplify setup, .cbuild/build is the default 
   require(ends_with(project.build_location_path, "build"));
 
-  String_View path = "somewhere/somehow/something";
+  String path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
   require(project.build_location_path == make_file_path(arena, workspace, ".cbuild", "build", path));
@@ -317,7 +317,7 @@ static void exclude_source_file_test (Memory_Arena &arena) {
   require(target->files.count == 1);
   require(project.total_files_count == 1);
 
-  require(ensure_list_content(target->files, *get_absolute_path(arena, "code/library2/library2.cpp")));
+  require(ensure_list_content(target->files, get_absolute_path(arena, "code/library2/library2.cpp").value));
 
   for (int idx = 0; idx < 5; idx++) exclude_source_file(target, "code/library2/library2.cpp");
   require(target->files.count == 0);
@@ -411,7 +411,7 @@ static void cpp_wrappers_test (Memory_Arena &arena) {
   exclude_source_files(target, "code/library1/library1.cpp", "code/library3/library3.cpp");
   require(target->files.count == 1);
   require(project.total_files_count == 1);
-  require(ensure_list_content(target->files, *get_absolute_path(arena, "code/library2/library2.cpp")));
+  require(ensure_list_content(target->files, get_absolute_path(arena, "code/library2/library2.cpp").value));
 
   auto lib2 = add_static_library(&project, "lib2");
   link_with(lib2, "something.lib", target, "foo.lib");
@@ -465,8 +465,8 @@ static void add_global_include_search_path_test (Memory_Arena &arena) {
 
   require(project.include_paths.count == 2);
   require(ensure_list_content(project.include_paths,
-                              *get_absolute_path(arena, "./includes"),
-                              *get_absolute_path(arena, "./libs")));
+                              get_absolute_path(arena, "./includes").value,
+                              get_absolute_path(arena, "./libs").value));
 }
 
 static Test_Case public_api_tests [] {

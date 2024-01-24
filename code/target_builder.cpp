@@ -1,17 +1,15 @@
 
 #include "anyfin/base.hpp"
-
-#include "anyfin/core/atomics.hpp"
-#include "anyfin/core/list.hpp"
-#include "anyfin/core/math.hpp"
-#include "anyfin/core/result.hpp"
-#include "anyfin/core/string_builder.hpp"
-#include "anyfin/core/seq.hpp"
-
-#include "anyfin/platform/console.hpp"
-#include "anyfin/platform/platform.hpp"
-#include "anyfin/platform/commands.hpp"
-#include "anyfin/platform/file_system.hpp"
+#include "anyfin/atomics.hpp"
+#include "anyfin/seq.hpp"
+#include "anyfin/list.hpp"
+#include "anyfin/math.hpp"
+#include "anyfin/result.hpp"
+#include "anyfin/string_builder.hpp"
+#include "anyfin/array.hpp"
+#include "anyfin/platform.hpp"
+#include "anyfin/commands.hpp"
+#include "anyfin/file_system.hpp"
 
 #include "cbuild_api.hpp"
 #include "dependency_iterator.hpp"
@@ -61,7 +59,7 @@ struct Target_Tracker {
   Target_Tracker (Target &_target)
     : target { _target }
   {
-    assert(_target.build_context.tracker == nullptr);
+    fin_ensure(_target.build_context.tracker == nullptr);
   }
 
   void * operator new (usize size, Memory_Arena &arena) {
@@ -89,18 +87,18 @@ static Registry   registry {};
 static bool       registry_enabled;
 static Update_Set update_set {};
 
-static Option<File_Path> try_resolve_include_path (Memory_Arena &arena, File_Path_View path, const Option<File_Path> &folder, Slice<File_Path_View> include_paths) {
+static Option<File_Path> try_resolve_include_path (Memory_Arena &arena, File_Path path, const Option<File_Path> &folder, Slice<File_Path> include_paths) {
   if (folder) {
-    auto current_folder_path = make_file_path(arena, folder.get(), path);
-    if (auto check = check_file_exists(current_folder_path); check.is_ok() && check.get())
+    auto current_folder_path = make_file_path(arena, folder.value, path);
+    if (auto check = check_file_exists(current_folder_path); check.is_ok() && check.value)
       return current_folder_path;
   }
 
   for (auto &prefix: include_paths) {
     auto full_path = make_file_path(arena, prefix, path);
-    auto [has_failed, error, exists] = check_file_exists(full_path);
-    if (has_failed || !exists) {
-      if (has_failed) print("WARNING: System error occured while checking file %\n", error);
+    auto [error, exists] = check_file_exists(full_path);
+    if (error || !exists) {
+      if (error) log("WARNING: System error occured while checking file %\n", error.value);
       continue;
     }
 
@@ -110,15 +108,15 @@ static Option<File_Path> try_resolve_include_path (Memory_Arena &arena, File_Pat
   return opt_none;
 }
 
-static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path_View> include_directories) {
+static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path> include_directories) {
   using enum Chain_Status;
 
   const auto &records = registry.records;
 
-  auto file_id = get_file_id(arena, source_file);
+  auto file_id = unwrap(get_file_id(source_file));
 
   if (auto result = find_offset(get_dependencies(update_set), file_id); result) {
-    return chain_status_cache[result.get()];
+    return chain_status_cache[result.value];
   }
 
   const usize index = update_set.header->dependencies_count++;
@@ -126,48 +124,46 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Sta
   update_set.dependencies[index] = file_id;
   chain_status_cache[index]      = Chain_Status::Checking;
 
-  assert(chain_status_cache[index] == Chain_Status::Checking);
+  fin_ensure(chain_status_cache[index] == Chain_Status::Checking);
 
   Option<File_Path> source_file_folder_path = opt_none;
   {
-    auto [has_failed, error, path] = get_folder_path(arena, source_file.path);
-    if (!has_failed) source_file_folder_path = Option(move(path));
-    else print("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+    auto [error, path] = get_folder_path(arena, source_file.path);
+    if (!error) source_file_folder_path = Option(move(path));
+    else log("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
                "Build process will continue, but this may cause issues with include files lookup.",
                source_file.path, error);
   }
 
   bool chain_has_updates = false;
 
-  auto iterator = Dependency_Iterator(source_file, *map_file_into_memory(source_file));
+  auto iterator = Dependency_Iterator(source_file, unwrap(map_file_into_memory(source_file)));
   while (auto include_value = get_next_include_value(iterator)) {
     auto local = arena;
 
-    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
+    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.value, source_file_folder_path, include_directories);
     if (!is_defined) {
       String_Builder builder { local };
-      builder.add(local, Callsite_Info(), ": Couldn't resolve the include file ", include_value, " from file ", source_file.path, " the following paths were checked:\n");
+      builder.add(local, Callsite(), ": Couldn't resolve the include file ", include_value, " from file ", source_file.path, " the following paths were checked:\n");
       for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
 
-      print(build_string(local, builder));
+      log(build_string(local, builder));
 
       continue;
     }
 
-    auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
-    if (open_failed) {
-      log("Couldn't open included header file for scanning due to an error: %", error);
-    }
+    auto [open_error, dependency_file] = open_file(move(resolved_path));
+    if (open_error) log("Couldn't open included header file for scanning due to an error: %", open_error.value);
 
     defer { close_file(dependency_file); };
     
     auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
-    assert(chain_scan_result != Chain_Status::Unchecked);
+    fin_ensure(chain_scan_result != Chain_Status::Unchecked);
 
     if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
   }
 
-  auto timestamp = *get_last_update_timestamp(source_file);
+  auto timestamp = unwrap(get_last_update_timestamp(source_file));
 
   {
     // Attempt to find the offset for the given file_id if the chain has no updates.
@@ -193,29 +189,29 @@ static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Sta
   return status;
 }
 
-static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path_View> include_directories) {
+static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path> include_directories) {
   bool chain_has_updates = false;
 
-  auto file_mapping = map_file_into_memory(arena, source_file);
+  auto file_mapping = unwrap(map_file_into_memory(source_file));
   defer { unmap_file(file_mapping); };
 
   Option<File_Path> source_file_folder_path = opt_none;
   {
-    auto [has_failed, error, path] = get_folder_path(arena, source_file.path);
-    if (!has_failed) source_file_folder_path = Option(move(path));
+    auto [error, path] = get_folder_path(arena, source_file.path);
+    if (!error) source_file_folder_path = Option(move(path));
     else log("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
              "Build process will continue, but this may cause issues with include files lookup.",
-             source_file.path, error);
+             source_file.path, error.value);
   }
 
   auto iterator = Dependency_Iterator(source_file, file_mapping);
   while (auto include_value = get_next_include_value(iterator)) {
     auto local = arena;
     
-    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.get(), source_file_folder_path, include_directories);
+    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.value, source_file_folder_path, include_directories);
     if (!is_defined) {
       String_Builder builder { local };
-      builder.add(local, "Couldn't resolve the include file ", include_value.get(), " from file ", source_file.path, " the following paths were checked:\n");
+      builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", source_file.path, " the following paths were checked:\n");
       for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
 
       log("%\n", build_string(local, builder));
@@ -223,9 +219,9 @@ static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &ch
       continue;
     }
 
-    auto [open_failed, error, dependency_file] = open_file(move(resolved_path));
-    if (open_failed) {
-      log("WARNING: Couldn't open included header file for scanning due to a system error: %.", error);
+    auto [open_error, dependency_file] = open_file(resolved_path);
+    if (open_error) {
+      log("WARNING: Couldn't open included header file for scanning due to a system error: %.", open_error.value);
       chain_has_updates = true;
       continue;
     }
@@ -233,7 +229,7 @@ static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &ch
     defer { close_file(dependency_file); };
 
     auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
-    assert(chain_scan_result != Chain_Status::Unchecked);
+    fin_ensure(chain_scan_result != Chain_Status::Unchecked);
 
     if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
   }
@@ -315,7 +311,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
   auto target_compilation_status = atomic_load(tracker.compile_status);
   if (target_compilation_status == Target_Compile_Status::Compiling) {
-    if (global_flags.tracing) print("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
+    if (global_flags.tracing) log("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
     return;
   }
 
@@ -327,7 +323,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     submitted to the queue by that thread.
   */
   if (auto counter = atomic_load<Memory_Order::Acquire>(tracker.waiting_on_counter); counter > 0) {
-    if (global_flags.tracing) print("TRACE(#%): Target % is waiting on % more targets to be linked\n", thread_id, target.name, counter);
+    if (global_flags.tracing) log("TRACE(#%): Target % is waiting on % more targets to be linked\n", thread_id, target.name, counter);
     return;
   }
 
@@ -350,14 +346,14 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
   auto needs_linking = tracker.needs_linking || upstream_status == Upstream_Targets_Status::Updated;
   if (needs_linking) {
-    if (!global_flags.silenced) print("Linking target: %\n", target.name);
+    if (!global_flags.silenced) log("Linking target: %\n", target.name);
 
     auto target_object_folder = get_target_object_folder_path(arena, target);
     auto target_output_folder = get_target_output_folder_path(arena, target);
     auto output_file_path     = get_output_file_path_for_target(arena, target);
     auto object_extension     = get_object_extension();
 
-    create_directory(arena, target_output_folder);
+    ensure(create_directory(target_output_folder));
 
     String_Builder builder { arena };
 
@@ -368,20 +364,20 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
      */
     switch (target.type) {
       case Target::Static_Library: {
-        builder += String_View(project.toolchain.archiver_path);
+        builder += String(project.toolchain.archiver_path);
         builder += project.archiver;
         builder += target.archiver;
         break;
       };
       case Target::Shared_Library: {
-        builder += String_View(project.toolchain.linker_path);
-        builder += is_win32() ? String_View("/dll") : String_View("-shared");
+        builder += String(project.toolchain.linker_path);
+        builder += is_win32() ? String("/dll") : String("-shared");
         builder += project.linker;
         builder += target.linker;
         break;
       };
       case Target::Executable: {
-        builder += String_View(project.toolchain.linker_path);
+        builder += String(project.toolchain.linker_path);
         builder += project.linker;
         builder += target.linker;
         break;
@@ -389,15 +385,15 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     }
 
     for (auto &path: target.files) {
-      auto file_name = concat_string(arena, *get_resource_name(arena, path), ".", object_extension);
+      auto file_name = concat_string(arena, unwrap(get_resource_name(path)), ".", object_extension);
       builder += make_file_path(arena, target_object_folder, file_name);
     }
 
     for (auto upstream_target: target.depends_on) {
-      assert(atomic_load(upstream_target->build_context.tracker->link_status) == Target_Link_Status::Success);
+      fin_ensure(atomic_load(upstream_target->build_context.tracker->link_status) == Target_Link_Status::Success);
         
-      String_View lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
-      if (!is_win32()) lib_extension = (upstream_target->type == Target::Static_Library) ? String_View("a") : String_View("so");
+      String lib_extension = "lib"; // on Win32 static and import libs for dlls have the same extension
+      if (!is_win32()) lib_extension = (upstream_target->type == Target::Static_Library) ? String("a") : String("so");
         
       auto file_name = concat_string(arena, upstream_target->name, ".", lib_extension);
       builder += make_file_path(arena, out_folder_path, file_name);
@@ -407,20 +403,20 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     builder += concat_string(arena, is_win32() ? "/OUT:" : "-o ", output_file_path);
 
     auto link_command = build_string_with_separator(arena, builder, ' ');
-    if (global_flags.tracing) print("Linking target % with %\n", target.name, link_command);
+    if (global_flags.tracing) log("Linking target % with %\n", target.name, link_command);
 
-    auto [has_failed, error, status] = run_system_command(arena, link_command);
-    if (has_failed) {
-      print("WARNING: Target linking failed due to a system error: %, command: %\n", error, link_command);
+    auto [error, status] = run_system_command(arena, link_command);
+    if (error) {
+      log("WARNING: Target linking failed due to a system error: %, command: %\n", error.value, link_command);
       link_result = Link_Result::Failed;
     }
     else if (status.status_code != 0) {
-      print("WARNING: Target linking failed with status: %, command: %\n", status.status_code, link_command);
-      if (status.output) print(concat_string(arena, status.output, "\n"));
+      log("WARNING: Target linking failed with status: %, command: %\n", status.status_code, link_command);
+      if (status.output) log(concat_string(arena, status.output, "\n"));
       link_result = Link_Result::Failed;
     }
     else {
-      if (status.output) print(concat_string(arena, status.output, "\n"));
+      if (status.output) log(concat_string(arena, status.output, "\n"));
       link_result = Link_Result::Success;
     }
   }
@@ -453,11 +449,11 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto target_info      = reinterpret_cast<Registry::Target_Info *>(target.build_context.info);
   auto target_last_info = reinterpret_cast<Registry::Target_Info *>(target.build_context.last_info);
 
-  auto file_id   = *get_file_id(file);
-  auto timestamp = *get_last_update_timestamp(file);
+  auto file_id   = unwrap(get_file_id(file));
+  auto timestamp = unwrap(get_last_update_timestamp(file));
 
   auto target_object_folder = get_target_object_folder_path(arena, target);
-  auto object_file_path     = make_file_path(arena, target_object_folder, concat_string(arena, *get_resource_name(arena, file.path), ".", get_object_extension()));
+  auto object_file_path     = make_file_path(arena, target_object_folder, concat_string(arena, unwrap(get_resource_name(file.path)), ".", get_object_extension()));
 
   bool should_rebuild = true;
   if (!project.rebuild_required && !dependencies_updated && target.build_context.last_info) {
@@ -466,14 +462,14 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     auto section      = records.files + target_last_info->files_offset;
     auto section_size = target_last_info->files_count.value;
 
-    auto [record_found, index] = find_offset(Slice(section, section_size), file_id);
+    auto [record_found, index] = find_offset(Array(section, section_size), file_id);
     if (record_found) {
       auto record_index     = target_last_info->files_offset + index;
       auto record_timestamp = records.file_records[record_index].timestamp;
 
-      auto [tag, _, exists] = check_resource_exists(object_file_path, Resource_Type::File);
+      auto [error, exists] = check_file_exists(object_file_path);
 
-      should_rebuild = (timestamp != record_timestamp) || (!tag || !exists);
+      should_rebuild = (timestamp != record_timestamp) || (error || !exists);
     }
   }
 
@@ -481,7 +477,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto file_compilation_status = File_Compile_Status::Ignore;
 
   if (should_rebuild) {
-    if (!global_flags.silenced) print("Building file: %\n", file.path);
+    if (!global_flags.silenced) log("Building file: %\n", file.path);
 
     auto is_cpp_file = ends_with(file.path, "cpp");
     auto _msvc       = is_msvc(toolchain);
@@ -503,20 +499,20 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
 
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
-    if (global_flags.tracing) print("Building file % with: %\n", file.path, compilation_command);
+    if (global_flags.tracing) log("Building file % with: %\n", file.path, compilation_command);
 
-    auto [has_failed, error, status] = run_system_command(arena, compilation_command);
-    if (has_failed) {
-      print("WARNING: File compilation failed due to a system error: %, command: %\n", error, compilation_command);
+    auto [error, status] = run_system_command(arena, compilation_command);
+    if (error) {
+      log("WARNING: File compilation failed due to a system error: %, command: %\n", error.value, compilation_command);
       file_compilation_status = File_Compile_Status::Failed;
     }
     else if (status.status_code != 0) {
-      print("WARNING: File compilation failed with status: %, command: %\n", status.status_code, compilation_command);
-      if (status.output) print(concat_string(arena, status.output, "\n"));
+      log("WARNING: File compilation failed with status: %, command: %\n", status.status_code, compilation_command);
+      if (status.output) log(concat_string(arena, status.output, "\n"));
       file_compilation_status = File_Compile_Status::Failed;
     }
     else {
-      if (status.output) print(concat_string(arena, status.output, "\n"));
+      if (status.output) log(concat_string(arena, status.output, "\n"));
       file_compilation_status = File_Compile_Status::Success;
     }
   }
@@ -526,11 +522,11 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 
   if (registry_enabled && file_compilation_status != File_Compile_Status::Failed) {
     auto index = atomic_fetch_add(target_info->files_count, 1);
-    assert(index < target_info->aligned_max_files_count);
+    fin_ensure(index < target_info->aligned_max_files_count);
 
     auto update_set_index = target_info->files_offset + index;
 
-    assert(update_set.files[update_set_index] == 0);
+    fin_ensure(update_set.files[update_set_index] == 0);
     update_set.files[update_set_index]        = file_id;
     update_set.file_records[update_set_index] = Registry::Record { .timestamp = timestamp };  
   }
@@ -551,7 +547,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
 
   auto compile_status = atomic_load(tracker.compile_status);
   if (compile_status == Target_Compile_Status::Failed) {
-    print("Target '%' couldn't be linked because of compilation errors\n", target.name);
+    log("Target '%' couldn't be linked because of compilation errors\n", target.name);
     return;
   }
 
@@ -560,12 +556,12 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   if (!needs_linking) {
     // If no files were compiled, check that the binary exists
     auto output_file_path = get_output_file_path_for_target(arena, target);
-    needs_linking = !check_file_exists(arena, output_file_path); 
+    needs_linking         = unwrap(check_file_exists(output_file_path)); 
   }
 
   tracker.needs_linking = needs_linking;
 
-  assert(compile_status == Target_Compile_Status::Compiling);
+  fin_ensure(compile_status == Target_Compile_Status::Compiling);
   atomic_store<Memory_Order::Release>(tracker.compile_status, Target_Compile_Status::Success);
 }
 
@@ -581,7 +577,7 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
     case Build_Task::Type::Uninit: return;
     case Build_Task::Type::Compile: {
       if (global_flags.tracing)
-        print("TRACE(#%): Picking up file % for target % for compilation\n",
+        log("TRACE(#%): Picking up file % for target % for compilation\n",
               thread_id, task.file.path, target.name);
 
       compile_file(context.arena, tracker, task.file, task.dependencies_updated);
@@ -596,7 +592,7 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
     }
     case Build_Task::Type::Link: {
       if (global_flags.tracing)
-        print("TRACE(#%): Picking up target % for linkage\n", thread_id, target.name);
+        log("TRACE(#%): Picking up target % for linkage\n", thread_id, target.name);
 
       link_target(context.arena, build_system, tracker);
       break;
@@ -645,7 +641,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   List<Target *> build_list { arena };
   auto add_build_target = [] (this auto self, List<Target *> &list, Target *target) -> void {
     for (auto upstream: target->depends_on) self(list, upstream);
-    for (auto it: list) if (compare_strings(it->name, target->name)) return;
+    for (auto it: list) if (it->name == target->name) return;
 
     list_push_copy(list, target);
   };
@@ -669,7 +665,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
   }
 
   for (auto &target: project.targets) {
-    if (plan.selected_targets.contains(lambda { return it.target.name == target.name; })) continue;
+    if (plan.selected_targets.contains([&] (auto it) { return it.target.name == target.name; })) continue;
     list_push_copy(plan.skipped_targets, &target);
   }
 
@@ -697,13 +693,13 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   if (is_empty(project.targets)) return 0;
 
-  create_directory(arena, project.build_location_path, File_System_Flags::Force);
+  ensure(create_directory(project.build_location_path, File_System_Flags::Force));
 
   out_folder_path    = make_file_path(arena, project.build_location_path, "out");
   object_folder_path = make_file_path(arena, project.build_location_path, "obj");
 
-  create_directory(arena, out_folder_path);
-  create_directory(arena, object_folder_path);
+  ensure(create_directory(out_folder_path));
+  ensure(create_directory(object_folder_path));
 
   registry_enabled = !project.registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
   if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
@@ -716,7 +712,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   }
 
   auto task_system = create_task_system(arena, project, config);
-  defer { destroy(task_system); };
+  //defer { shutdown(task_system); };
 
   auto deps_cache  = reserve_array<Chain_Status>(arena, max_supported_files_count);
   auto build_plan  = prepare_build_plan(arena, project, config);
@@ -725,11 +721,11 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     const auto &target = tracker.target;
 
     if (target.files.count == 0) {
-      print("Target '%' doesn't have any input files and will be skipped\n", target.name);
+      log("Target '%' doesn't have any input files and will be skipped\n", target.name);
       continue;
     }
 
-    create_directory(arena, get_target_object_folder_path(arena, target));
+    ensure(create_directory(get_target_object_folder_path(arena, target)));
 
     for (const auto &file_path: target.files) {
       Build_Task task {
@@ -742,16 +738,16 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         */
         .dependencies_updated = !registry_enabled,
         .tracker = &tracker,
-        .file    = open_file(arena, String::copy(arena, file_path)),
+        .file    = unwrap(open_file(copy_string(arena, file_path))),
       };
 
       if (registry_enabled) {
         auto local = arena;
 
-        auto include_paths = reserve_seq<File_Path_View>(local, target.include_paths.count + project.include_paths.count);
+        auto include_paths = reserve_seq<File_Path>(local, target.include_paths.count + project.include_paths.count);
 
-        for (auto &path: target.include_paths)  seq_push(include_paths, path);
-        for (auto &path: project.include_paths) seq_push(include_paths, path);
+        for (auto &path: target.include_paths)  seq_push_copy(include_paths, path);
+        for (auto &path: project.include_paths) seq_push_copy(include_paths, path);
 
         task.dependencies_updated = scan_file_dependencies(local, deps_cache, task.file, include_paths);
       }
@@ -788,18 +784,12 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   if (registry_enabled) flush_registry(registry, update_set);
 
   for (auto tracker: build_plan.selected_targets) {
-    assert_msg(tracker.compile_status.value != Target_Compile_Status::Compiling,
-               format_string(arena,
-                             "INVALID STATE: Target '%' is still waiting for one or more files to be built",
-                             tracker.target.name));
-
-    assert_msg(tracker.link_status.value != Target_Link_Status::Waiting,
-               format_string(arena, "INVALID STATE: Target '%' is still waiting on one or more of its dependencies",
-                             tracker.target.name));
+    fin_ensure(tracker.compile_status.value != Target_Compile_Status::Compiling);
+    fin_ensure(tracker.link_status.value != Target_Link_Status::Waiting);
 
     if ((tracker.compile_status.value != Target_Compile_Status::Success) ||
         (tracker.link_status.value    != Target_Link_Status::Success)) {
-      print("Building target '%' finished with errors\n", tracker.target.name);
+      log("Building target '%' finished with errors\n", tracker.target.name);
     }
   }
 

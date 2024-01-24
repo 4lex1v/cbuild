@@ -1,10 +1,7 @@
 
 #include "anyfin/base.hpp"
-
-#include "anyfin/core/allocator.hpp"
-
-#include "anyfin/platform/startup.hpp"
-#include "anyfin/platform/console.hpp"
+#include "anyfin/startup.hpp"
+#include "anyfin/console.hpp"
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
@@ -12,12 +9,12 @@
 #include "toolchain.hpp"
 
 #define require_non_null(PARAM) __require_non_null(PARAM, __FUNCTION__, #PARAM)
-static void __require_non_null (const void *value, const String_View &function_name, const String_View &parameter_name) {
+static void __require_non_null (const void *value, String function_name, String parameter_name) {
   if (!value) panic("Invalid '%' value passed to '%': value must NOT BE Null\n", parameter_name, function_name);
 }
 
 #define require_non_empty(PARAM) __require_non_empty(PARAM, __FUNCTION__, #PARAM)
-static void __require_non_empty (const char *value, const String_View &function_name, const String_View &parameter_name) {
+static void __require_non_empty (const char *value, String function_name, String parameter_name) {
   if (value && !value[0]) panic("Invalid '%' value passed to '%': value must NOT BE empty\n", parameter_name, function_name);
 }
 
@@ -25,10 +22,10 @@ const char * get_argument_or_default (const Arguments *arguments, const char *ke
   if (is_empty(arguments->args))        return default_value;
   if (key == nullptr || key[0] == '\0') return default_value;
 
-  const auto key_name = String_View(key);
+  const auto key_name = String(key);
   for (auto arg: arguments->args) {
     if (arg.key == key_name) {
-      return String::copy(arguments->global_arena, (arg.is_value()) ? arg.key : arg.value);
+      return copy_string(arguments->global_arena, (arg.is_value()) ? arg.key : arg.value);
     }
   }
 
@@ -85,7 +82,7 @@ void register_action (Project *project, const char *name, Action_Type action) {
   require_non_empty(name);
 
   list_push(project->user_defined_commands, {
-    .name = String::copy(project->arena, name),
+    .name = copy_string(project->arena, name),
     .proc = action
   });
 }
@@ -95,7 +92,7 @@ void set_output_location (Project *project, const char *folder_path) {
   require_non_null(folder_path);
   require_non_empty(folder_path);
 
-  project->build_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String_View(folder_path));
+  project->build_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String(folder_path));
 }
 
 void set_install_location (Project *project, const char *folder_path) {
@@ -107,10 +104,10 @@ void set_install_location (Project *project, const char *folder_path) {
 
   File_Path install_path;
   if (is_absolute_path(folder_path))
-    install_path = File_Path::copy(arena, folder_path);
+    install_path = copy_string(arena, folder_path);
   else {
-    auto [has_failed, error, path] = get_absolute_path(arena, folder_path);
-    if (has_failed) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", folder_path, error);
+    auto [error, path] = get_absolute_path(arena, folder_path);
+    if (error) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", folder_path, error.value);
 
     install_path = move(path);
   }
@@ -123,7 +120,7 @@ void add_global_compiler_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->compiler, String::copy(project->arena, option));
+  list_push(project->compiler, copy_string(project->arena, option));
 }
 
 void add_global_archiver_option (Project *project, const char *option) {
@@ -131,7 +128,7 @@ void add_global_archiver_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->archiver, String::copy(project->arena, option));
+  list_push(project->archiver, copy_string(project->arena, option));
 }
 
 void add_global_linker_option (Project *project, const char *option) {
@@ -139,7 +136,7 @@ void add_global_linker_option (Project *project, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  list_push(project->linker, String::copy(project->arena, option));
+  list_push(project->linker, copy_string(project->arena, option));
 }
 
 void add_global_include_search_path (Project *project, const char *path) {
@@ -147,12 +144,12 @@ void add_global_include_search_path (Project *project, const char *path) {
   require_non_null(path);
   require_non_empty(path);
 
-  const auto path_view = String_View(path);
+  const auto path_view = String(path);
 
   const auto file_path = make_file_path(project->arena, path_view);
 
-  auto [has_failed, error, absolute_path] = get_absolute_path(project->arena, file_path);
-  if (has_failed) panic("Couldn't resolve the provided path '%', error: %\n", file_path, error);
+  auto [error, absolute_path] = get_absolute_path(project->arena, file_path);
+  if (error) panic("Couldn't resolve the provided path '%', error: %\n", file_path, error.value);
 
   list_push(project->include_paths, move(absolute_path));
 }
@@ -162,7 +159,7 @@ static Target * create_target (Project *project, Target::Type type, const char *
   require_non_null(_name);
   require_non_empty(_name);
 
-  auto name = String::copy(project->arena, _name);
+  auto name = copy_string(project->arena, _name);
   if (name.length > Target::Max_Name_Limit) 
     panic("Target's name length is limited to % symbols. If your case requires a "
           "longer target name, please submit an issue on the project's Github page\n",
@@ -178,11 +175,9 @@ static Target * create_target (Project *project, Target::Type type, const char *
   }
 
   for (auto &target: project->targets) {
-    if (compare_strings(target.name, name)) {
+    if (target.name == name) 
       panic("FATAL ERROR: Target '%' already defined in the project. "
-            "It's not allowed to have multiple targets with the same name\n",
-            name);
-    }
+            "It's not allowed to have multiple targets with the same name\n", name);
   }
 
   return &list_push(project->targets, Target(*project, type, move(name)));
@@ -207,14 +202,14 @@ void add_source_file (Target *target, const char *path) {
 
   const auto file_path = make_file_path(target->project.arena, path);
 
-  auto abs_file_path = get_absolute_path(target->project.arena, file_path)
-    .take(concat_string(target->project.global_arena, "Couldn't resolve the absolute path for the file ", file_path));
+  auto [sys_error, absolute_path] = get_absolute_path(target->project.arena, file_path);
+  if (sys_error) panic("Couldn't resolve the absolute path for the file %\n", file_path);
 
-  auto [has_failed, error, file_exists] = check_file_exists(abs_file_path);
-  if (has_failed)   panic("Couldn't validate file path % due to a system eror: %", abs_file_path, error);
-  if (!file_exists) panic("File '%' wasn't found, please check the correctness of the specified path and that the file exists\n", abs_file_path);
+  auto [check_error, file_exists] = check_file_exists(absolute_path);
+  if (check_error)  panic("Couldn't validate file path % due to a system eror: %", absolute_path, check_error.value);
+  if (!file_exists) panic("File '%' wasn't found, please check the correctness of the specified path and that the file exists\n", absolute_path);
 
-  list_push(target->files, move(abs_file_path));
+  list_push(target->files, move(absolute_path));
 
   target->project.total_files_count += 1;
 }
@@ -226,16 +221,13 @@ void exclude_source_file (Target *target, const char *path) {
 
   if (is_empty(target->files)) return;
 
-  const auto path_view = String_View(path);
+  const auto path_view = String(path);
   const auto file_path = make_file_path(target->project.arena, path_view);
 
-  auto abs_file_path = get_absolute_path(target->project.arena, file_path)
-    .take(format_string(target->project.global_arena, "Couldn't resolve the absolute path for the file '%'", file_path));
+  auto [abs_error, abs_file_path] = get_absolute_path(target->project.arena, file_path);
+  if (abs_error) panic("Couldn't resolve the absolute path for the file % due to an error: %\n", file_path, abs_error.value);
 
-  auto removed = target->files.remove([&] (const File_Path &file) {
-    return compare_strings(file, abs_file_path);
-  });
-
+  auto removed = target->files.remove([&] (const File_Path &file) { return file == abs_file_path; });
   if (!removed) panic("File '%' not included for the target %\n", file_path, target->name);
 
   target->project.total_files_count -= 1;
@@ -246,11 +238,11 @@ void add_include_search_path (Target *target, const char *path) {
   require_non_null(path);
   require_non_empty(path);
 
-  const auto path_view = String_View(path);
+  const auto path_view = String(path);
   const auto file_path = make_file_path(target->project.arena, path_view);
 
-  auto [has_failed, error, include_path] = get_absolute_path(target->project.arena, file_path);
-  if (has_failed) panic("Couldn't resolve the path '%', error details: %", path_view, error);
+  auto [error, include_path] = get_absolute_path(target->project.arena, file_path);
+  if (error) panic("Couldn't resolve the path '%', error details: %", path_view, error.value);
   
   list_push(target->include_paths, move(include_path));
 }
@@ -265,22 +257,21 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
   auto &arena = target->project.arena;
 
   auto directory = make_file_path(arena, _directory);
-  auto folder_path = get_absolute_path(arena, directory)
-    .take(format_string(arena, "Couldn't get absolute path for '%'\n", directory));
+  auto [abs_error, folder_path] = get_absolute_path(arena, directory);
+  if (abs_error) panic("Couldn't get absolute path for '%'\n", directory);
 
   {
-    auto [has_failed, error, exists] = check_directory_exists(folder_path);
-    if (has_failed) panic("Couldn't validate directory path % due to a system eror: %", folder_path, error);
-    if (!exists)    panic("Directory '%' specified for 'add_all_sources_from_directory' wasn't found, "
-                          "please ensure that the path is correct and the directory exists\n", folder_path);
+    auto [check_error, exists] = check_directory_exists(folder_path);
+    if (check_error) panic("Couldn't validate directory path % due to a system eror: %", folder_path, check_error.value);
+    if (!exists)     panic("Directory '%' specified for 'add_all_sources_from_directory' wasn't found, "
+                           "please ensure that the path is correct and the directory exists\n", folder_path);
   }
   
   auto existing_target_count = target->files.count;
 
   auto &file_list = target->files;
-  auto add_file = [&] (File_Path_View file_path) -> bool {
-    if (!file_list.contains([&file_path] (auto &it) { return compare_strings(it, file_path); }))
-      list_push(file_list, String::copy(arena, file_path));
+  auto add_file = [&] (File_Path file_path) -> bool {
+    if (!file_list.contains(file_path)) list_push(file_list, copy_string(arena, file_path));
     return true;
   };
 
@@ -289,15 +280,15 @@ void add_all_sources_from_directory (Target *target, const char *_directory, con
   target->project.total_files_count += (target->files.count - existing_target_count);
 }
 
-static void add_options (Memory_Arena &arena, List<String> &list, String_View values) {
+static void add_options (Memory_Arena &arena, List<String> &list, String values) {
   split_string(values, ' ').for_each([&] (auto value) {
-    list_push(list, String::copy(arena, value));
+    list_push(list, copy_string(arena, value));
   });
 }
 
-static void remove_option (List<String> &options, String_View values) {
+static void remove_option (List<String> &options, String values) {
   split_string(values, ' ').for_each([&] (auto value) {
-    options.remove([&value] (auto &it) { return compare_strings(it, value); });
+    options.remove([&value] (auto &it) { return it == value; });
   });
 }
 
@@ -307,7 +298,7 @@ void add_compiler_option (Target *target, const char *option) {
   require_non_empty(option);
   
   auto &arena = target->project.arena;
-  add_options(arena, target->compiler, String_View(option));
+  add_options(arena, target->compiler, String(option));
 }
 
 void remove_compiler_option (Target *target, const char *option) {
@@ -315,7 +306,7 @@ void remove_compiler_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->compiler, String_View(option));
+  remove_option(target->compiler, String(option));
 }
 
 void add_archiver_option (Target *target, const char *option) {
@@ -324,7 +315,7 @@ void add_archiver_option (Target *target, const char *option) {
   require_non_empty(option);
   
   auto &arena = target->project.arena;
-  add_options(arena, target->archiver, String_View(option));
+  add_options(arena, target->archiver, String(option));
 }
 
 void remove_archiver_option (Target *target, const char *option) {
@@ -332,7 +323,7 @@ void remove_archiver_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->archiver, String_View(option));
+  remove_option(target->archiver, String(option));
 }
 
 void add_linker_option (Target *target, const char *option) {
@@ -341,7 +332,7 @@ void add_linker_option (Target *target, const char *option) {
   require_non_empty(option);
 
   auto &arena = target->project.arena;
-  add_options(arena, target->linker, String_View(option));
+  add_options(arena, target->linker, String(option));
 }
 
 void remove_linker_option (Target *target, const char *option) {
@@ -349,7 +340,7 @@ void remove_linker_option (Target *target, const char *option) {
   require_non_null(option);
   require_non_empty(option);
 
-  remove_option(target->linker, String_View(option));
+  remove_option(target->linker, String(option));
 }
 
 void link_with_target (Target *target, Target *dependency) {
@@ -372,7 +363,7 @@ void link_with_library (Target *target, const char *library_name) {
   require_non_empty(library_name);
   
   auto &arena = target->project.arena;
-  list_push(target->link_libraries, String::copy(arena, library_name));
+  list_push(target->link_libraries, copy_string(arena, library_name));
 }
 
 void add_target_hook (Target *target, Hook_Type type, Hook_Func func) {
@@ -392,7 +383,7 @@ const char * get_target_name (const Target *target) {
 }
 
 // NOTE: CBuild interal API, not exported to the public
-String_View get_target_extension (const Target &target) {
+String get_target_extension (const Target &target) {
   switch (target.type) {
     case Target::Static_Library: return get_static_library_extension();
     case Target::Shared_Library: return get_shared_library_extension();
@@ -419,7 +410,7 @@ const char * get_generated_binary_file_path (const Target *target) {
 Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path) {
   auto &arena = project->global_arena;
 
-  auto sub_project_path = make_file_path(arena, project->project_root, String_View(external_project_path));
+  auto sub_project_path = make_file_path(arena, project->project_root, String(external_project_path));
   // if (!check_resource_exists(sub_project_path, Resource_Type::Directory))
   //   panic("ERROR: No valid CBuild project found under %\n", sub_project_path);
 

@@ -1,22 +1,22 @@
 
-#include "anyfin/base.hpp"
-
-#include "anyfin/core/arena.hpp"
-#include "anyfin/core/result.hpp"
-#include "anyfin/core/callsite.hpp"
-
 #define WIN32_DEBUG_OUTPUT_ENABLE
-#include "anyfin/platform/console.hpp"
-#include "anyfin/platform/commands.hpp"
-#include "anyfin/platform/file_system.hpp"
 
-using namespace Fin::Core;
-using namespace Fin::Platform;
+#include "anyfin/base.hpp"
+#include "anyfin/arena.hpp"
+#include "anyfin/result.hpp"
+#include "anyfin/callsite.hpp"
+#include "anyfin/console.hpp"
+#include "anyfin/commands.hpp"
+#include "anyfin/file_system.hpp"
+#include "anyfin/format.hpp"
+
+using namespace Fin;
+using namespace Fin;
 
 struct Test_Case {
   typedef void (*Case_Step)(Memory_Arena &arena);
 
-  String_View name;
+  String name;
 
   Case_Step case_code;
   Case_Step before;
@@ -36,31 +36,31 @@ struct Test_Case {
 
 struct Test_Errors {
   struct System_Error {
-    Fin::Platform::System_Error error;
-    String_View context;
-    Callsite_Info callsite;
+    Fin::System_Error error;
+    String context;
+    Callsite callsite;
   };
 
   struct Child_Process_Error {
     u32 status_code;
-    String_View output;
-    String_View context;
-    Callsite_Info callsite;
+    String output;
+    String context;
+    Callsite callsite;
   };
 
   struct Condition_Error {
-    String_View expression;
-    String_View context;
-    Callsite_Info callsite;
+    String expression;
+    String context;
+    Callsite callsite;
   };
 };
 
 template <typename T>
-static void require_internal (const Fin::Platform::Result<T> &result,
-                              String_View expression,
-                              String_View context = "",
-                              Callsite_Info callsite = {}) {
-  if (result.is_error()) throw Test_Errors::System_Error(result.status, context, callsite);
+static void require_internal (const Sys_Result<T> &result,
+                              String expression,
+                              String context = "",
+                              Callsite callsite = {}) {
+  if (result.is_error()) throw Test_Errors::System_Error(result.error.value, context, callsite);
 
   if constexpr (Same_Types<T, System_Command_Status>) {
     if (result.value.status_code != 0)
@@ -68,7 +68,7 @@ static void require_internal (const Fin::Platform::Result<T> &result,
   }
 }
 
-static void require_internal (bool result, String_View expression, String_View context = "", Callsite_Info callsite = {}) {
+static void require_internal (bool result, String expression, String context = "", Callsite callsite = {}) {
   if (!result) throw Test_Errors::Condition_Error(expression, context, callsite);
 }
 
@@ -90,40 +90,35 @@ struct Test_Suite_Runner {
 
   mutable Memory_Arena arena;
 
-  String_View suite_filter;
-  String_View case_filter;
+  String suite_filter;
+  String case_filter;
 
-  List<String_View> failed_suites { arena };
+  List<String> failed_suites { arena };
 
   Status execute_step (const Test_Case::Case_Step step) {
     auto local = this->arena;
 
     try { step(local); }
     catch (const Test_Errors::System_Error &error) {
-      print(local,
-            "   Status:\tSYSTEM_ERROR\n"
-            "   Position:\t[%:%]\n"
-            "   Error:\t%\n",
-            error.callsite.file, error.callsite.line, error.error);
-      if (error.context) print(local, "\tContext:\t%\n", error.context);
+      auto msg = format_string(local, "\tStatus:\tSYSTEM_ERROR\nPosition:\t[%:%]\nError:\t%\n",
+                               error.callsite.file, error.callsite.line, error.error);
+      write_to_stdout(msg);
+      if (error.context) write_to_stdout(format_string(local, "\tContext:\t%\n", error.context));
       return Status::Failed;
     }
     catch (const Test_Errors::Child_Process_Error &error) {
-      print(local,
-            "   Status:\tCHILD_PROCESS_ERROR\n"
-            "   Position:\t[%:%]\n"
-            "   Return Code:\t%\n",
-            error.callsite.file, error.callsite.line, error.status_code);
-      if (error.output)  print(local, "   Output:\t%\n", error.output);
-      if (error.context) print(local, "\tContext:\t%\n", error.context);
+      auto msg = format_string(local, "\tStatus:\tCHILD_PROCESS_ERROR\n\tPosition:\t[%:%]\n\tReturn Code:\t%\n",
+                               error.callsite.file, error.callsite.line, error.status_code);
+      if (error.output)  write_to_stdout(format_string(local, "\tOutput:\t%\n", error.output));
+      if (error.context) write_to_stdout(format_string(local, "\tContext:\t%\n", error.context));
+
       return Status::Failed;
     }
     catch (const Test_Errors::Condition_Error &error) {
-      print(local, "\tStatus:\tCONDITION\n"
-            "\tPosition:\t[%:%]\n"
-            "\tExpression:\t%,\n",
-            error.callsite.file, error.callsite.line, error.expression);
-      if (error.context) print(local, "\tContext:\t%\n", error.context);
+      auto msg = format_string(local, "\tStatus:\tCONDITION\n\tPosition:\t[%:%]\n\tExpression:\t%,\n",
+                               error.callsite.file, error.callsite.line, error.expression);
+      write_to_stdout(msg);
+      if (error.context) write_to_stdout(format_string(local, "\tContext:\t%\n", error.context));
       return Status::Failed;
     }
 
@@ -131,13 +126,13 @@ struct Test_Suite_Runner {
   }
 
   template <const usize N>
-  void run (const String_View &suite_name, const Test_Case (&cases)[N]) {
+  void run (String suite_name, const Test_Case (&cases)[N]) {
     if (is_empty(suite_filter) || suite_filter == suite_name) {
-      print(arena, "Suite: %\n", suite_name);
+      write_to_stdout(format_string(arena, "Suite: %\n", suite_name));
 
       for (auto &test_case: cases) {
         if (is_empty(case_filter) || (case_filter == test_case.name)) {
-          print(arena, "  - %\n", test_case.name);
+          write_to_stdout(format_string(arena, "  - %\n", test_case.name));
 
           if (test_case.before && execute_step(test_case.before) == Status::Failed) continue;
           if (execute_step(test_case.case_code) == Status::Failed) list_push_copy(failed_suites, test_case.name);
@@ -149,13 +144,13 @@ struct Test_Suite_Runner {
 
   int report () const {
     if (failed_suites.count == 0) {
-      print(arena, "\nSUCCESS");
+      write_to_stdout(format_string(arena, "\nSUCCESS"));
       return 0;
     }
 
-    print(arena, "\n\nFAILED (%): ", failed_suites.count);
-    for (auto &name: failed_suites) print(arena, "%, ", name);
-    print(arena, "\n");
+    write_to_stdout(format_string(arena, "\n\nFAILED (%): ", failed_suites.count));
+    for (auto &name: failed_suites) write_to_stdout(format_string(arena, "%, ", name));
+    write_to_stdout(format_string(arena, "\n"));
 
     return 1;
   }

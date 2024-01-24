@@ -1,14 +1,14 @@
 
-#define FIN_EMBED_STATE
-
-#include "anyfin/core/arena.hpp"
-#include "anyfin/core/memory.hpp"
-#include "anyfin/core/option.hpp"
-#include "anyfin/core/strings.hpp"
-
-#include "anyfin/platform/startup.hpp"
-#include "anyfin/platform/console.hpp"
-#include "anyfin/platform/timers.hpp"
+#include "anyfin/arena.hpp"
+#include "anyfin/callsite.hpp"
+#include "anyfin/memory.hpp"
+#include "anyfin/option.hpp"
+#include "anyfin/strings.hpp"
+#include "anyfin/concurrent.hpp"
+#include "anyfin/startup.hpp"
+#include "anyfin/console.hpp"
+#include "anyfin/timers.hpp"
+#include "anyfin/slice.hpp"
 
 #include "cbuild.hpp"
 #include "driver.hpp"
@@ -16,6 +16,14 @@
 #include "target_builder.hpp"
 
 CLI_Flags global_flags;
+
+namespace Fin {
+
+void trap (const char *msg, usize length, Callsite callsite) {
+  
+}
+
+}
 
 enum struct CLI_Command {
   Init,
@@ -27,27 +35,27 @@ enum struct CLI_Command {
   Dynamic
 };
 
-static Option<String_View> find_argument_value (const Iterable<Startup_Argument> auto &args, const String_View& name) {
+static Option<String> find_argument_value (const Iterable<Startup_Argument> auto &args, String name) {
   for (auto arg: args) {
     /*
       Calling find_argument_value implicitly presumes the fact that we need a key-value setting. If it's a plain value
       instead, that's deemed as invalid input.
     */
     if (arg.is_value()) panic("ERROR: Invalid option value for the key 'type', expected format: <key>=<value>");
-    if (compare_strings(arg.key, name)) return String_View(arg.value);
+    if (arg.key == name) return String(arg.value);
   }
 
   return opt_none;
 };
 
-static bool find_option_flag (const Iterable<Startup_Argument> auto &args, const String_View& name) {
+static bool find_option_flag (const Iterable<Startup_Argument> auto &args, String name) {
   for (auto arg: args) {
     /*
       Calling find_option_flag implicitly presumes the fact that we need a singular key (flag) setting.
       If it's a key-value pair instead, it's considered an input error.
     */
     if (arg.is_pair()) panic("ERROR: Unexpected input type of the '%' flag", name);
-    if (compare_strings(arg.key, name)) return true;
+    if (arg.key == name) return true;
   }
 
   return false;
@@ -73,14 +81,14 @@ struct Build_Command {
     find_argument_value(command_arguments, "cache")
       .handle_value([&command](auto &value) {
         if      (is_empty(value))                 command.config.cache = Build_Config::Cache_Behavior::On;
-        else if (compare_strings(value, "on"))    command.config.cache = Build_Config::Cache_Behavior::On;
-        else if (compare_strings(value, "off"))   command.config.cache = Build_Config::Cache_Behavior::Off;
-        else if (compare_strings(value, "flush")) command.config.cache = Build_Config::Cache_Behavior::Flush;
+        else if (value == "on")    command.config.cache = Build_Config::Cache_Behavior::On;
+        else if (value == "off")   command.config.cache = Build_Config::Cache_Behavior::Off;
+        else if (value == "flush") command.config.cache = Build_Config::Cache_Behavior::Flush;
         else panic("Invalid paramter value % for the 'cache' option", value);
       });
 
     find_argument_value(command_arguments, "targets").handle_value([&](auto targets) {
-      command.config.selected_targets = List<String_View> { arena };
+      command.config.selected_targets = List<String> { arena };
       split_string(targets, ',').for_each([&] (auto target) {
         if (!is_empty(target)) list_push_copy(command.config.selected_targets, target);
       });
@@ -98,8 +106,8 @@ struct Init_Command {
 
     find_argument_value(command_arguments, "type")
       .handle_value([&command] (auto value) {
-        if      (compare_strings(value, "cpp")) command.type = Configuration_Type::Cpp;
-        else if (compare_strings(value, "c"))   command.type = Configuration_Type::C;
+        if      (value == "cpp") command.type = Configuration_Type::Cpp;
+        else if (value == "c")   command.type = Configuration_Type::C;
         else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);
       });
 
@@ -117,7 +125,7 @@ struct Clean_Command {
   }
 };
 
-static constexpr String_View help_message =
+static constexpr String help_message =
   R"help(
 Usage: cbuild [switches] <command> [command_args]
 
@@ -181,7 +189,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
   
   struct {
     char short_name;
-    String_View name;
+    String name;
     bool* flag;
   } table [] {
     { 's',  "silence", &global_flags.silenced },
@@ -209,7 +217,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
       bool found = false;
       for (auto& option : table) {
         if (arg.key[1] == option.short_name) {
-          if (*option.flag) print("Flag -%c is duplicated and has no effect\n", arg.key[1]);
+          if (*option.flag) log("Flag -%c is duplicated and has no effect\n", arg.key[1]);
 
           *option.flag = true;
           found        = true;
@@ -228,7 +236,7 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
       bool found = false;
       for (auto& option : table) {
         if (key_name == option.name) {
-          if (*option.flag) print("Flag %s is duplicated and has no effect\n", arg.key);
+          if (*option.flag) log("Flag %s is duplicated and has no effect\n", arg.key);
 
           *option.flag = true;
           found        = true;
@@ -251,31 +259,36 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
 
   auto arg = *args;
   if (!arg.is_value()) {
-    print("Command name is expected as the first argument, a %=% pair is found instead", arg.key, arg.value);
-    print(help_message);
-    trap("");
+    log("Command name is expected as the first argument, a %=% pair is found instead\n", arg.key, arg.value);
+    log(help_message);
+    terminate(1);
   }
 
   args += 1;
 
   const auto command_name = arg.key;
 
-  if (compare_strings(command_name, "init"))    return CLI_Command::Init;
-  if (compare_strings(command_name, "build"))   return CLI_Command::Build;
-  if (compare_strings(command_name, "clean"))   return CLI_Command::Clean;
-  if (compare_strings(command_name, "update"))  return CLI_Command::Update;
-  if (compare_strings(command_name, "version")) return CLI_Command::Version;
-  if (compare_strings(command_name, "help"))    return CLI_Command::Help;
+  if (command_name == "init")    return CLI_Command::Init;
+  if (command_name == "build")   return CLI_Command::Build;
+  if (command_name == "clean")   return CLI_Command::Clean;
+  if (command_name == "update")  return CLI_Command::Update;
+  if (command_name == "version") return CLI_Command::Version;
+  if (command_name == "help")    return CLI_Command::Help;
 
   return CLI_Command::Dynamic;
 }
 
-int mainCRTStartup () {
-  set_crash_handler(terminate);
-  
+static Spin_Lock log_lock;
+void log (Fin::String message) {
+  log_lock.lock();
+  write_to_stdout(message);
+  log_lock.unlock();
+}
+
+u32 run_cbuild () {
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
     
-  auto args        = get_startup_args(arena);
+  auto args = get_startup_args(arena);
   auto args_cursor = slice(args);
 
   bool silence_report = false;
@@ -285,7 +298,7 @@ int mainCRTStartup () {
       auto end_stamp = get_timer_value();
       auto elapsed   = get_elapsed_millis(get_timer_frequency(), start_stamp, end_stamp);
 
-      print("Finished in: %ms\n", elapsed);
+      log("Finished in: %ms\n", elapsed);
     }
   };
 
@@ -294,9 +307,9 @@ int mainCRTStartup () {
 
   if (!global_flags.silenced || command_type == CLI_Command::Version) {
 #ifdef DEV_BUILD
-    print("CBuild r% DEV\n", TOOL_VERSION);
+    log("CBuild r% DEV\n", TOOL_VERSION);
 #else
-    print("CBuild r%\n", TOOL_VERSION);
+    log("CBuild r%\n", TOOL_VERSION);
 #endif
 
     if (command_type == CLI_Command::Version) {
@@ -305,8 +318,8 @@ int mainCRTStartup () {
     }
   }
 
-  auto working_directory_path = *get_working_directory(arena);
-  if (!global_flags.silenced) print("Working directory: %\n", working_directory_path);
+  auto working_directory_path = unwrap(get_working_directory(arena));
+  if (!global_flags.silenced) log("Working directory: %\n", working_directory_path);
 
   if (command_type == CLI_Command::Init) {
     auto command = Init_Command::parse(args_cursor);
@@ -327,7 +340,7 @@ int mainCRTStartup () {
 
   if (command_type == CLI_Command::Help) {
     silence_report = true;
-    print(help_message);
+    log(help_message);
     return 0;
   }
 
@@ -339,7 +352,7 @@ int mainCRTStartup () {
     return build_project(arena, project, command.config);
   }
 
-  assert(command_type == CLI_Command::Dynamic);
+  fin_ensure(command_type == CLI_Command::Dynamic);
 
   //   exit_status = Status_Code(Status_Code::User_Command_Error,
   //                             format_string(&arena, "Unrecognized cli_input '%'", argv[1]));
@@ -359,5 +372,9 @@ int mainCRTStartup () {
   //   }
 
   return 0;
+}
+
+int mainCRTStartup () {
+  terminate(run_cbuild());
 }
 

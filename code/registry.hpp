@@ -2,9 +2,7 @@
 #pragma once
 
 #include "anyfin/base.hpp"
-
-#include "anyfin/core/atomics.hpp"
-#include "anyfin/core/slice.hpp"
+#include "anyfin/atomics.hpp"
 
 #include "cbuild_api.hpp"
 
@@ -59,8 +57,8 @@ struct Registry {
   } records;
 };
 
-static Slice<u64> get_dependencies (Registry &registry) {
-  return Slice(registry.records.dependencies, registry.records.header.dependencies_count);
+static Array<u64> get_dependencies (Registry &registry) {
+  return Array(registry.records.dependencies, registry.records.header.dependencies_count);
 }
 
 struct Update_Set {
@@ -77,11 +75,11 @@ struct Update_Set {
   Registry::Record *dependency_records;
 };
 
-static Slice<u64> get_dependencies (Update_Set &set) {
-  return Slice(set.dependencies, set.header->dependencies_count);
+static Array<u64> get_dependencies (Update_Set &set) {
+  return Array(set.dependencies, set.header->dependencies_count);
 }
 
-Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path);
+Registry load_registry (Memory_Arena &arena, File_Path registry_file_path);
 
 Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const Project &project);
 

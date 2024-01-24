@@ -96,7 +96,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   add_global_compiler_options(project, "-std=c++2b",
                               versions,
-                              "-DPLATFORM_X64 -DPLATFORM_WIN32",
+                              "-DFIN_CPU_ARCH_X64 -DFIN_PLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
                               "-nostdlib -nostdlib++ -nostdinc++");
   //add_global_compiler_options(project, "-H");
@@ -130,7 +130,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   auto cbuild = add_executable(project, "cbuild");
   {
-    add_source_file(cbuild, "code/main.cpp");
     add_source_file(cbuild, "code/project_loader.cpp");
     add_source_file(cbuild, "code/toolchain_win32.cpp");
     add_source_file(cbuild, "code/cbuild_api.cpp");
@@ -138,6 +137,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/registry.cpp");
     add_source_file(cbuild, "code/target_builder.cpp");
     add_source_file(cbuild, "code/c_runtime_compat.cpp");
+    add_source_file(cbuild, "code/main.cpp");
 
     add_compiler_options(cbuild, "-fno-exceptions");
 

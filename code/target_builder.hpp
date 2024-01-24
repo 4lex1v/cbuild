@@ -3,7 +3,7 @@
 
 #include "anyfin/base.hpp"
 
-#include "anyfin/core/arena.hpp"
+#include "anyfin/arena.hpp"
 
 #include "cbuild.hpp"
 #include "driver.hpp"

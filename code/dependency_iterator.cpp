@@ -1,7 +1,7 @@
 
 #include "anyfin/base.hpp"
 
-#include "anyfin/platform/console.hpp"
+#include "anyfin/console.hpp"
 
 #include "dependency_iterator.hpp"
 
@@ -52,7 +52,7 @@ static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
     We need to find a correct closing literal quote handling regular string literals as well as
     raw-string literals.
    */
-  assert(*cursor == '"');
+  fin_ensure(*cursor == '"');
 
   if ((cursor == end) || (cursor + 1) == end) return End_Of_Parsing;
 
@@ -72,7 +72,7 @@ static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
       if (closing_quote_position == end)     return End_Of_Parsing; // we've reached the end of the source code
 
       if (closing_quote_position == (search_start_position + 1)) { // empty string literal, i.e ""
-        assert(*closing_quote_position == '"');
+        fin_ensure(*closing_quote_position == '"');
         break;
       }
 
@@ -132,7 +132,7 @@ static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
       on a single line.
     */
     if (character == '\r' || character == '\n') {
-      print("WARNING: Incomplete raw-string literal closing sequence found while parsing %."
+      log("WARNING: Incomplete raw-string literal closing sequence found while parsing %."
             " Invalid source code cannot be properly parsed by CBuild to check if the dependency tree "
             "(i.e files #included into the translation unit) were not updated. This file will be skipped "
             "and rebuild. If there are not issues with the file and it could be compiled, please report this bug.\n",
@@ -143,16 +143,16 @@ static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
     closing_sequence_end += 1;
   }
 
-  assert(*closing_sequence_end == '(');
+  fin_ensure(*closing_sequence_end == '(');
 
   auto closing_sequence_length = closing_sequence_end - closing_sequence_start;
   if (closing_sequence_length > 64) {
     /*
       Spec limits the length of the closing sequence to 16, just in case we'll handle up to 64, but warn anyway.
      */
-    print("WARNING: Raw-string literal's closing sequence '%' is bigger than the allowed limit of 16 characters (https://en.cppreference.com/w/cpp/language/string_literal) in file %",
-          String_View(closing_sequence_start, closing_sequence_length), iterator.file.path);
-    assert(false);
+    log("WARNING: Raw-string literal's closing sequence '%' is bigger than the allowed limit of 16 characters (https://en.cppreference.com/w/cpp/language/string_literal) in file %",
+          String(closing_sequence_start, closing_sequence_length), iterator.file.path);
+    fin_ensure(false);
   }
     
   char raw_string_closing_path[64] = { ')' }; // closing sequence is limited to 16 characters.
@@ -166,7 +166,7 @@ static Parsing_Status skip_string_literal (Dependency_Iterator &iterator) {
   if (raw_string_end_position == nullptr) return End_Of_Parsing;
   if (raw_string_end_position == end)     return End_Of_Parsing;
 
-  assert(raw_string_end_position[closing_sequence_length] == '"');
+  fin_ensure(raw_string_end_position[closing_sequence_length] == '"');
 
   if (raw_string_end_position[closing_sequence_length] != '"') {
     auto &file_path = iterator.file.path;
@@ -234,7 +234,7 @@ static Parsing_Status skip_comment_section (Dependency_Iterator &iterator) {
 }
 
 static bool is_include_directive (Dependency_Iterator &iterator) {
-  assert(iterator.cursor[0] == '#');
+  fin_ensure(iterator.cursor[0] == '#');
 
   const char directive[] = "#include";
   auto directive_length   = array_count_elements(directive);
@@ -244,7 +244,7 @@ static bool is_include_directive (Dependency_Iterator &iterator) {
   return compare_bytes(iterator.cursor, directive, directive_length);
 }
 
-Option<String_View> get_next_include_value (Dependency_Iterator &iterator) {
+Option<String> get_next_include_value (Dependency_Iterator &iterator) {
   while (skip_to_next_symbol(iterator)) {
     /*
       It's possible to something like #include directive be in the string literal, thus we should detect string literals
@@ -287,7 +287,7 @@ Option<String_View> get_next_include_value (Dependency_Iterator &iterator) {
         continue;
       }
 
-      assert(*iterator.cursor == '"');
+      fin_ensure(*iterator.cursor == '"');
       if (!advance(iterator)) return opt_none;
 
       auto file_path_start = iterator.cursor;
@@ -295,7 +295,7 @@ Option<String_View> get_next_include_value (Dependency_Iterator &iterator) {
       iterator.cursor = get_character_offset(iterator.cursor, iterator.end, '"');
       if (iterator.cursor == nullptr) return opt_none;
 
-      auto include = String_View(file_path_start, iterator.cursor - file_path_start);
+      auto include = String(file_path_start, iterator.cursor - file_path_start);
 
       advance(iterator);
 

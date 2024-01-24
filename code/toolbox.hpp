@@ -4,16 +4,15 @@
 #include <intrin.h>
 
 #include "anyfin/base.hpp"
-
-#include "anyfin/core/option.hpp"
-#include "anyfin/core/slice.hpp"
+#include "anyfin/array.hpp"
+#include "anyfin/option.hpp"
 
 #include "cbuild.hpp"
 
-static Option<usize> find_offset (const Slice<u64> &data, const u64 _value) {
+static Option<usize> find_offset (Array<u64> data, const u64 _value) {
   if (is_empty(data)) return opt_none;
   
-  assert(is_aligned_by(data.value, 32));
+  fin_ensure(is_aligned_by(data.values, 32));
 
   auto value = _mm256_set1_epi64x(_value);
 
@@ -22,7 +21,7 @@ static Option<usize> find_offset (const Slice<u64> &data, const u64 _value) {
 
   s32 idx = 0;
   while (idx <= limit) {
-    auto array  = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data.value + idx));
+    auto array  = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(data.values + idx));
     auto result = _mm256_cmpeq_epi64(array, value);
 
     auto match = _mm256_movemask_epi8(result);
@@ -37,7 +36,7 @@ static Option<usize> find_offset (const Slice<u64> &data, const u64 _value) {
   return opt_none;
 }
 
-static bool contains_key (const Slice<u64> &data, u64 key) {
+static bool contains_key (const Array<u64> &data, u64 key) {
   return find_offset(data, key).is_some();
 }
 

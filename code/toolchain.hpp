@@ -1,8 +1,8 @@
 
 #pragma once
 
-#include "anyfin/core/option.hpp"
-#include "anyfin/core/list.hpp"
+#include "anyfin/option.hpp"
+#include "anyfin/list.hpp"
 
 #include "cbuild_api.hpp"
 

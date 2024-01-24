@@ -1,15 +1,11 @@
 
 #pragma once
 
-#include "anyfin/core/allocator.hpp"
-#include "anyfin/core/atomics.hpp"
-#include "anyfin/core/arrays.hpp"
-#include "anyfin/core/list.hpp"
-#include "anyfin/core/result.hpp"
-
-#include "anyfin/platform/concurrent.hpp"
-#include "anyfin/platform/platform.hpp"
-#include "anyfin/platform/threads.hpp"
+#include "anyfin/atomics.hpp"
+#include "anyfin/array.hpp"
+#include "anyfin/concurrent.hpp"
+#include "anyfin/platform.hpp"
+#include "anyfin/threads.hpp"
 
 #include "cbuild.hpp"
 
@@ -26,8 +22,6 @@ struct Task_Queue {
 
   static_assert(sizeof(Node) == CACHE_LINE_SIZE);
 
-  Allocator_View allocator;
-
   Array<Node> tasks_queue;
 
   cas64 write_index = 0;
@@ -36,9 +30,8 @@ struct Task_Queue {
   cau32 tasks_submitted = 0;
   cau32 tasks_completed = 0;
 
-  Task_Queue (Allocator auto &_allocator, const usize queue_size)
-    : allocator   { _allocator },
-      tasks_queue { reserve_array<Node>(allocator, align_forward_to_pow_2(queue_size)) }
+  Task_Queue (Memory_Arena &arena, const usize queue_size)
+    : tasks_queue { reserve_array<Node>(arena, align_forward_to_pow_2(queue_size)) }
   {
     for (s32 idx = 0; auto &node: tasks_queue) {
       node.sequence_number = idx++;
@@ -97,7 +90,7 @@ struct Task_Queue {
       auto diff     = sequence - (index + 1);
 
       if (diff == 0) {
-        if (atomic_compare_and_set<Whatever, Whatever>(this->read_index, index, index + 1)) break;
+        if (atomic_compare_and_set<Relaxed, Relaxed>(this->read_index, index, index + 1)) break;
       }
       else if (diff < 0) return {};
       else index = atomic_load(this->read_index);
@@ -110,11 +103,6 @@ struct Task_Queue {
     return Option(move(task));
   }
 };
-
-template <typename T>
-static void destroy (Task_Queue<T> &queue) {
-  destroy(queue.tasks_queue);
-}
 
 /*
   Task system is designed to support concurrent execution with ability to execute tasks on the main thread as well, avoiding
@@ -133,14 +121,14 @@ struct Task_System {
 
   abool terminating = false;
 
-  Task_System (Allocator auto &allocator, const usize queue_size, const usize builders_count, Handler &&_func)
-    : queue     { allocator, queue_size },
-      semaphore { create_semaphore().take("Failed to create a semaphore resource for the build queue system") },
+  Task_System (Memory_Arena &arena, const usize queue_size, const usize builders_count, Handler &&_func)
+    : queue     { arena, queue_size },
+      semaphore { unwrap(create_semaphore(), "Failed to create a semaphore resource for the build queue system") },
       func      { _func }
   {
     if (builders_count) {
-      builders = reserve_array<Thread>(allocator, builders_count);
-      for (auto &builder: builders) builder = *spawn_thread(task_system_loop, this); 
+      builders = reserve_array<Thread>(arena, builders_count);
+      for (auto &builder: builders) builder = unwrap(spawn_thread(task_system_loop, this)); 
     }
   }
 
@@ -160,7 +148,7 @@ struct Task_System {
     auto completed = atomic_load(this->queue.tasks_completed);
     auto submitted = atomic_load(this->queue.tasks_submitted);
 
-    assert(completed <= submitted);
+    fin_ensure(completed <= submitted);
 
     return (submitted != completed);
   }
@@ -172,7 +160,7 @@ struct Task_System {
     auto option = this->queue.pop_task();
     if (!option) return;
 
-    auto task = option.take();
+    auto &task = option.value;
 
     this->func(*this, context, task);
 
@@ -188,7 +176,7 @@ struct Task_System {
 };
 
 template <typename T, typename BC>
-static void destroy (Task_System<T, BC> &system) {
+static void shutdown (Task_System<T, BC> &system) {
   atomic_store<Memory_Order::Release>(system.terminating, true);
     
   // TODO: This shows that current approach has some flaws as the task system shouldn't do this
@@ -197,6 +185,5 @@ static void destroy (Task_System<T, BC> &system) {
   increment_semaphore(system.semaphore, system.builders.count);
 
   destroy(system.semaphore);
-  destroy(system.queue);
 }
 

@@ -1,25 +1,26 @@
 
-#include "anyfin/core/meta.hpp"
-#include "anyfin/core/slice.hpp"
-
-#include "anyfin/platform/file_system.hpp"
+#include "anyfin/meta.hpp"
+#include "anyfin/file_system.hpp"
 
 #include "cbuild_api.hpp"
 #include "registry.hpp"
 
-Registry load_registry (Memory_Arena &arena, const File_Path &registry_file_path) {
+Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
   using enum File_System_Flags;
 
-  auto registry_file = open_file(arena, String::copy(arena,registry_file_path), Write_Access | Create_Missing);
-  auto file_size     = get_file_size(registry_file).or_default(0);
+  Registry registry {};
 
-  // If the file was just created or it's empty there are no records to load.
-  if (file_size == 0) return {};
+  auto [open_error, registry_file] = open_file(registry_file_path, Write_Access | Create_Missing);
+  if (open_error) panic("Couldn't open the registry file at %, due to an error: %\n", registry_file_path, open_error.value);
 
-  Registry registry;
+  auto file_size = get_file_size(registry_file).or_default(0);
+  if (file_size == 0) return registry; // If the file was just created or it's empty there are no records to load.
+
   auto &records = registry.records;
 
-  auto mapping = map_file_into_memory(registry_file).take("Failed to map the file into memory.");
+  auto [mapping_error, mapping] = map_file_into_memory(registry_file);
+  if (mapping_error) log("ERROR: Couldn't map registry file % due to an error: %\n", registry_file_path, mapping_error.value);
+    
   registry.registry_file_mapping = mapping;
 
   auto buffer        = reinterpret_cast<u8 *>(mapping.memory);
@@ -75,7 +76,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     if (new_aligned_total > aligned_files_count) aligned_files_count = new_aligned_total;
   }
 
-  assert(is_aligned_by(aligned_files_count, 4));
+  fin_ensure(is_aligned_by(aligned_files_count, 4));
 
   if (aligned_files_count > max_supported_files_count) 
     panic("At the moment cbuild is limited to support 250k files.");
@@ -108,8 +109,8 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     auto reservation = reserve(arena, reservation_size, 32);
     if (reservation == nullptr) panic("Not enough memory to allocate buffer for registry update set");
 
-    assert((void*)reservation == (void*)update_set_buffer);
-    assert((void*)(update_set_buffer + reservation_size) == (void*)get_memory_at_current_offset(arena));
+    fin_ensure((void*)reservation == (void*)update_set_buffer);
+    fin_ensure((void*)(update_set_buffer + reservation_size) == (void*)get_memory_at_current_offset(arena));
   }
 
   zero_memory(update_set_buffer, reservation_size);
@@ -162,7 +163,7 @@ void flush_registry (Registry &registry, const Update_Set &update_set) {
 
   auto flush_buffer_size = usize(records + count) - usize(update_set.buffer);
 
-  write_buffer_to_file(registry.registry_file, Slice(update_set.buffer, flush_buffer_size));
+  write_bytes_to_file(registry.registry_file, update_set.buffer, flush_buffer_size);
 
   close_file(registry.registry_file);
 }

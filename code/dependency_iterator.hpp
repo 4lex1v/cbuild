@@ -3,11 +3,11 @@
 
 #include "anyfin/base.hpp"
 
-#include "anyfin/core/meta.hpp"
-#include "anyfin/core/result.hpp"
-#include "anyfin/core/strings.hpp"
+#include "anyfin/meta.hpp"
+#include "anyfin/result.hpp"
+#include "anyfin/strings.hpp"
 
-#include "anyfin/platform/file_system.hpp"
+#include "anyfin/file_system.hpp"
 
 #include "cbuild.hpp"
 
@@ -43,4 +43,4 @@ enum struct Parse_Error {
   Iterates over all user-defined #include directives in the mapped source file retrieving the provided value as-is.
   Resolution of the retrieved file path is left for the caller.
  */
-Option<String_View> get_next_include_value (Dependency_Iterator &iterator);
+Option<String> get_next_include_value (Dependency_Iterator &iterator);
