@@ -36,7 +36,7 @@ static void basic_clean_command_usage (Memory_Arena &arena) {
   auto clean_cmd_result = run_system_command(arena, clean_command);
   require(clean_cmd_result);
 
-  require(check_directory_exists(output_build_folder).value);
+  require(check_directory_exists(output_build_folder).value == false);
   require(check_directory_exists(output_project_folder).value);
 }
 
