@@ -1,9 +1,6 @@
 
-#define FIN_EMBED_STATE
-
 #include "anyfin/startup.hpp"
-#include "anyfin/concurrent.hpp"
-
+#include "code/cbuild.hpp"
 #include "test_suite.hpp"
 
 File_Path working_directory; // Path to the root directory where the 'verify' program has been called
@@ -20,6 +17,8 @@ static void test_configuration_failure (u32 exit_code) {
   require(false);
 }
 
+Panic_Handler panic_handler = test_configuration_failure;
+
 static int find_arg (const char * arg, const int argc, const char * const * const argv) {
   for (auto idx = 0; idx < argc; idx++) {
     if (!_stricmp(arg, argv[idx])) return idx;
@@ -35,24 +34,7 @@ static String find_arg_value (const char * arg, const int argc, const char * con
   return {};
 }
 
-namespace Fin {
-
-void trap (const char *msg, usize length, Callsite callsite) {
-  
-}
-
-}
-
-static Spin_Lock log_lock;
-void log (Fin::String message) {
-  log_lock.lock();
-  write_to_stdout(message);
-  log_lock.unlock();
-}
-
 int main (int argc, char **argv) {
-  //set_crash_handler(test_configuration_failure);
-
   Memory_Arena arena { reserve_virtual_memory(megabytes(8)) };
 
   auto args = get_startup_args(arena);
@@ -83,7 +65,6 @@ int main (int argc, char **argv) {
   run_suite(init_command);
   run_suite(build_command);
   run_suite(clean_command);
-  //run_suite(subprojects); 
 
   return suite_runner.report();
 }

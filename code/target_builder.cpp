@@ -291,16 +291,6 @@ static void schedule_downstream_linkage (Build_System &build_system, const Targe
   }
 }
 
-static File_Path get_target_object_folder_path (Memory_Arena &arena, const Target &target) {
-  auto external = target.flags.external ? target.project.name : "";
-  return make_file_path(arena, object_folder_path, external, target.name);
-}
-
-static File_Path get_target_output_folder_path (Memory_Arena &arena, const Target &target) {
-  auto external = target.flags.external ? target.project.name : "";
-  return make_file_path(arena, out_folder_path, external, target.name);
-}
-
 static void link_target (Memory_Arena &arena, Build_System &build_system, Target_Tracker &tracker) {
   using TLS = Target_Link_Status;
 
@@ -348,12 +338,9 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
   if (needs_linking) {
     if (!global_flags.silenced) log("Linking target: %\n", target.name);
 
-    auto target_object_folder = get_target_object_folder_path(arena, target);
-    auto target_output_folder = get_target_output_folder_path(arena, target);
-    auto output_file_path     = get_output_file_path_for_target(arena, target);
-    auto object_extension     = get_object_extension();
-
-    ensure(create_directory(target_output_folder));
+    auto output_file_name     = concat_string(arena, target.name, ".", get_target_extension(target));
+    auto target_object_folder = make_file_path(arena, object_folder_path, target.name);
+    auto output_file_path     = make_file_path(arena, out_folder_path, output_file_name);
 
     String_Builder builder { arena };
 
@@ -384,8 +371,8 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
       };
     }
 
-    for (auto &path: target.files) {
-      auto file_name = concat_string(arena, unwrap(get_resource_name(path)), ".", object_extension);
+    for (auto ext = get_object_extension(); auto &path: target.files) {
+      auto file_name = concat_string(arena, unwrap(get_resource_name(path)), ".", ext);
       builder += make_file_path(arena, target_object_folder, file_name);
     }
 
@@ -452,7 +439,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto file_id   = unwrap(get_file_id(file));
   auto timestamp = unwrap(get_last_update_timestamp(file));
 
-  auto target_object_folder = get_target_object_folder_path(arena, target);
+  auto target_object_folder = make_file_path(arena, object_folder_path, target.name);
   auto object_file_path     = make_file_path(arena, target_object_folder, concat_string(arena, unwrap(get_resource_name(file.path)), ".", get_object_extension()));
 
   bool should_rebuild = true;
@@ -725,7 +712,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
       continue;
     }
 
-    ensure(create_directory(get_target_object_folder_path(arena, target)));
+    ensure(create_directory(make_file_path(arena, object_folder_path, target.name)));
 
     for (const auto &file_path: target.files) {
       Build_Task task {
@@ -783,6 +770,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
   if (registry_enabled) flush_registry(registry, update_set);
 
+  u32 exit_code = 0;
   for (auto tracker: build_plan.selected_targets) {
     fin_ensure(tracker.compile_status.value != Target_Compile_Status::Compiling);
     fin_ensure(tracker.link_status.value != Target_Link_Status::Waiting);
@@ -790,9 +778,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     if ((tracker.compile_status.value != Target_Compile_Status::Success) ||
         (tracker.link_status.value    != Target_Link_Status::Success)) {
       log("Building target '%' finished with errors\n", tracker.target.name);
+      exit_code = 1;
     }
   }
 
-  return 0;
+  return exit_code;
 }
 

@@ -18,14 +18,10 @@
 
 using u32 = uint32_t;
 
-static std::string_view config;
-static std::string_view platform;
-
 /*
   Custom Commands
  */
 static int generate_headers (const Arguments *args);
-static int generate_tags    (const Arguments *args);
 
 // static void print_hashes (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
 //   if (!strstr(get_argument_or_default(args, "config", "debug"), "release")) return;
@@ -74,59 +70,36 @@ static bool read_versions (u32 *tool, u32 *api) {
 }
 
 extern "C" bool setup_project (const Arguments *args, Project *project) {
-  config    = get_argument_or_default(args, "config",   "debug");
-  platform  = get_argument_or_default(args, "platform", "win32");
+  std::string_view config   = get_argument_or_default(args, "config",   "debug");
+  std::string_view platform = get_argument_or_default(args, "platform", "win32");
+
+  const bool debug_build = config == "debug";
+
+  register_action(project, "generate", generate_headers);
+
+  set_toolchain(project, Toolchain_Type_LLVM);
 
   char output_location[256];
   snprintf(output_location, 256, "%s/%s", config.data(), platform.data());
   set_output_location(project, output_location);
 
-  set_toolchain(project, Toolchain_Type_LLVM);
-
-  //disable_registry(project);
-  register_action(project, "generate", generate_headers);
-  register_action(project, "tags",     generate_tags);
-
-  bool is_debug = config == "debug";
 
   u32 tool_version = 0, api_version = 0;
   if (!read_versions(&tool_version, &api_version)) return false;
   char versions[256];
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
+  add_global_include_search_paths(project, ".", "libs/anyfin");
   add_global_compiler_options(project, "-std=c++2b",
                               versions,
-                              "-DFIN_CPU_ARCH_X64 -DFIN_PLATFORM_WIN32",
+                              "-DCPU_ARCH_X64 -DPLATFORM_WIN32 -DPLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
                               "-nostdlib -nostdlib++ -nostdinc++");
-  //add_global_compiler_options(project, "-H");
 
-  // add_global_compiler_options(project,
-  //                             "-Wpedantic -Wall",
-  //                             "-Wno-unused-variable -Wno-unused-function",
-  //                             // TODO: These issues should be addressed
-  //                             "-Wno-zero-length-array");
+  add_global_compiler_option(project, debug_build ? "-O0 -DDEV_BUILD -g -gcodeview" : "-O3");
 
-  add_global_include_search_path(project, "libs/anyfin");
-
-  if (is_debug) add_global_compiler_option(project, "-O0 -DDEV_BUILD -g -gcodeview");
-  else          add_global_compiler_option(project, "-O3");
-
+  if (debug_build) add_global_linker_option(project, "/debug:full");
   add_global_linker_options(project, "/nologo /subsystem:console");
-  if (is_debug) add_global_linker_option(project, "/debug:full");
-
-  add_global_include_search_path(project, ".");
-
-  // auto cbuild = add_executable(project, "cbuild");
-  // {
-  //   add_all_sources_from_directory(cbuild, "code", "cpp", false);
-  //   add_compiler_options(cbuild, "-fno-exceptions");
-
-  //   char exports_option[256] = "/def:";
-  //   snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
-  //   add_linker_option(cbuild, exports_option);
-  //   link_with(cbuild, "kernel32.lib", "libcmt.lib", "advapi32.lib");
-  // }
 
   auto cbuild = add_executable(project, "cbuild");
   {
@@ -138,12 +111,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/target_builder.cpp");
     add_source_file(cbuild, "code/c_runtime_compat.cpp");
     add_source_file(cbuild, "code/main.cpp");
+    add_source_file(cbuild, "code/logger.cpp");
 
     add_compiler_options(cbuild, "-fno-exceptions");
 
-    char exports_option[256] = "/def:";
-    snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
-    add_linker_option(cbuild, exports_option);
+    if (platform == "win32") {
+      char exports_option[256] = "/def:";
+      snprintf(exports_option + 5, 256-5, "%s\\cbuild.def", std::filesystem::current_path().string().c_str());
+      add_linker_option(cbuild, exports_option);
+    }
 
     link_with(cbuild, "kernel32.lib", "advapi32.lib", "shell32.lib", "winmm.lib");
   }
@@ -151,9 +127,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   auto tests = add_executable(project, "tests");
   {
     add_all_sources_from_directory(tests, "tests", "cpp", false);
-    add_source_files(tests,
-                     "code/cbuild_api.cpp",
-                     "code/toolchain_win32.cpp");
+    add_source_files(tests, "code/cbuild_api.cpp", "code/toolchain_win32.cpp", "code/logger.cpp");
 
     link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib", "libcmt.lib");
   }
@@ -178,6 +152,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 }
 
 static int generate_headers (const Arguments *args) {
+  std::string_view platform = get_argument_or_default(args, "platform", "win32");
+
   u32 tool_version = 0, api_version = 0;
   if (!read_versions(&tool_version, &api_version)) {
     return EXIT_FAILURE;
@@ -249,8 +225,7 @@ static int generate_headers (const Arguments *args) {
     fclose(api_template_content);
   }
 
-  {
-    // experimental api
+  { // experimental api
     auto file_path = "./code/cbuild_api_experimental.hpp";
     auto content   = fopen(file_path, "rb+");
     if (content == nullptr) {
@@ -290,8 +265,7 @@ static int generate_headers (const Arguments *args) {
     fclose(content);
   }
 
-  {
-    // build_template
+  { // build_template
     auto build_template_file_path = "./code/build_template.hpp";
     auto build_template_content   = fopen(build_template_file_path, "rb+");
     if (build_template_content == nullptr) {
@@ -331,8 +305,7 @@ static int generate_headers (const Arguments *args) {
     fclose(build_template_content);
   }
 
-  {
-    // main_cpp_template
+  { // main_cpp_template
     auto main_cpp_file_path = "./code/main_cpp_template.hpp";
     auto main_cpp_content   = fopen(main_cpp_file_path, "rb+");
     if (main_cpp_content == nullptr) {
@@ -372,11 +345,11 @@ static int generate_headers (const Arguments *args) {
     fclose(main_cpp_content);
   }
 
-#ifdef _WIN32
-  {
-    if (std::filesystem::create_directory(".cbuild/tmp") &&
-        system("lib.exe /nologo /def:cbuild.def /out:.cbuild\\tmp\\cbuild.lib /machine:x64")) {
-      printf("FATAL ERROR: cbuild import lib generation failed\n");
+  if (platform == "win32") {
+    if (!std::filesystem::exists(".cbuild/tmp")) std::filesystem::create_directory(".cbuild/tmp");
+    auto status_code = system("lib.exe /nologo /def:cbuild.def /out:.cbuild\\tmp\\cbuild.lib /machine:x64");
+    if (status_code != 0) {
+      printf("FATAL ERROR: cbuild import lib generation failed, errno: %i\n", errno);
       return EXIT_FAILURE;
     }
 
@@ -420,29 +393,10 @@ static int generate_headers (const Arguments *args) {
     free(buffer);
     fclose(cbuild_lib_content);
   }
-#endif
 
   fclose(output_file);
 
   return EXIT_SUCCESS;
 }
 
-static int generate_tags (const Arguments *args) {
-  printf("Generating TAGS file for Emacs\n");
-
-  std::filesystem::remove("TAGS");
-
-  auto build_tags = [&](const std::filesystem::path &folder, const std::string &extension) {
-    for (const auto &entry: std::filesystem::directory_iterator(folder)) {
-      if (entry.path().extension() == "." + extension) {
-        std::system(("etags -a " + entry.path().string()).c_str());
-      }
-    }
-  };
-
-  build_tags("./code", "hpp");
-  build_tags("./code", "cpp");
-
-  return EXIT_SUCCESS;
-}
 

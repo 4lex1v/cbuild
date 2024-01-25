@@ -533,6 +533,15 @@ static void add_global_linker_options (Project *project, const char *option, T&&
 }
 
 /*
+  C++ helper function for `add_global_include_search_path`
+ */
+template <typename... T>
+static void add_global_include_search_paths (Project *project, const char *path, T&&... more_paths) {
+  const char *options [] { path, more_paths... };
+  for (auto it: options) add_global_include_search_path(project, it);
+}
+
+/*
   C++ helper function for `add_compiler_option`.
  */
 template <typename... T>
@@ -632,4 +641,14 @@ static void link_with (Target *target, T1 dependency, T&&... more_dependencies) 
   }
 }
 
-#endif
+/*
+  C++ helper function for `add_include_search_path`
+ */
+template <typename... T>
+static void add_include_search_paths (Target *target, const char *path, T&&... more_paths) {
+  const char *options [] { path, more_paths... };
+  for (auto it: options) add_include_search_path(target, it);
+}
+
+
+#endif //ifdef c++

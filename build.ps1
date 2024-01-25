@@ -2,7 +2,7 @@ $versions = Get-Content (Resolve-Path ".\versions").Path | Select-Object -First 
 $TOOL_VERSION = $versions[0]
 $API_VERSION  = $versions[1]
 
-$CXX_FLAGS = @("-DPLATFORM_WIN32", "-DPLATFORM_X64", "-DTOOL_VERSION=$TOOL_VERSION", "-DAPI_VERSION=$API_VERSION", "-DDEV_BUILD", "-I..", "-I../libs/anyfin", "-std=c++2b", "-O0", "-g", "-gcodeview", "-march=native", "-masm=intel", "-fno-exceptions", "-fdiagnostics-absolute-paths", "-Wno-switch", "-Wno-deprecated-declarations", "-Wno-inconsistent-dllimport", "-nostdlib", "-nostdlib++")
+$CXX_FLAGS = @("-DPLATFORM_WIN32", "-DCPU_ARCH_X64", "-DTOOL_VERSION=$TOOL_VERSION", "-DAPI_VERSION=$API_VERSION", "-DDEV_BUILD", "-I..", "-I../libs/anyfin", "-std=c++2b", "-O0", "-g", "-gcodeview", "-march=native", "-masm=intel", "-fno-exceptions", "-fdiagnostics-absolute-paths", "-Wno-switch", "-Wno-deprecated-declarations", "-Wno-inconsistent-dllimport", "-nostdlib", "-nostdlib++")
 
 if (!(Test-Path -Path ".\out")) {
     New-Item -ItemType Directory -Path ".\out" | Out-Null

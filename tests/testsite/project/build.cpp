@@ -24,9 +24,9 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   auto cache     = get_argument_or_default(args, "cache",     "on");
 
   // NOTE: Test checks these printf to ensure that values are passed correctly. DON'T REMOVE
-  printf("Selected toolchain - %s\n", toolchain);
-  printf("Selected configuration - %s\n", config);
-  printf("Cache - %s\n", cache);
+  fprintf(stdout, "Selected toolchain - %s\n", toolchain);
+  fprintf(stdout, "Selected configuration - %s\n", config);
+  fprintf(stdout, "Cache - %s\n", cache);
 
   setup_toolchain(project, toolchain);
 
@@ -42,8 +42,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   }
 
   auto apply_common_settings = [&] (Target *target) {
-    add_include_search_path(target, "code");
     add_include_search_path(target, ".");
+    add_include_search_path(target, "code");
 
     if (strstr(toolchain, "llvm")) link_with(target, "libcmt.lib");
   };
@@ -114,6 +114,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_all_sources_from_directory(bin3, "code/binary3", "c", false);
     //link_with(bin3, ext_lib);
   }
+
+  fflush(stdout); // This is needed for tests to properly capture the stdout output
 
   return true;
 }

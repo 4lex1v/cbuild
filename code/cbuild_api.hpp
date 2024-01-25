@@ -7,8 +7,6 @@
 #include "anyfin/strings.hpp"
 #include "anyfin/prelude.hpp"
 #include "anyfin/slice.hpp"
-
-#include "anyfin/console.hpp"
 #include "anyfin/startup.hpp"
 #include "anyfin/file_system.hpp"
 
@@ -16,9 +14,6 @@
 #include "cbuild_api_experimental.hpp"
 
 #include "cbuild.hpp"
-
-using namespace Fin;
-using namespace Fin;
 
 struct Target_Tracker;
 

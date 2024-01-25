@@ -394,8 +394,7 @@ String get_target_extension (const Target &target) {
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target) {
   auto extension = get_target_extension(target);
   auto file_name = concat_string(arena, target.name, ".", extension);
-  auto external  = target.flags.external ? target.project.name : "";
-  return make_file_path(arena, target.project.build_location_path, "out", external, target.name, file_name);
+  return make_file_path(arena, target.project.build_location_path, "out", file_name);
 }
 
 const char * get_generated_binary_file_path (const Target *target) {

@@ -1,12 +1,9 @@
 
 #include "anyfin/arena.hpp"
-#include "anyfin/callsite.hpp"
 #include "anyfin/memory.hpp"
 #include "anyfin/option.hpp"
 #include "anyfin/strings.hpp"
-#include "anyfin/concurrent.hpp"
 #include "anyfin/startup.hpp"
-#include "anyfin/console.hpp"
 #include "anyfin/timers.hpp"
 #include "anyfin/slice.hpp"
 
@@ -16,14 +13,7 @@
 #include "target_builder.hpp"
 
 CLI_Flags global_flags;
-
-namespace Fin {
-
-void trap (const char *msg, usize length, Callsite callsite) {
-  
-}
-
-}
+Panic_Handler panic_handler = terminate;
 
 enum struct CLI_Command {
   Init,
@@ -41,8 +31,10 @@ static Option<String> find_argument_value (const Iterable<Startup_Argument> auto
       Calling find_argument_value implicitly presumes the fact that we need a key-value setting. If it's a plain value
       instead, that's deemed as invalid input.
     */
-    if (arg.is_value()) panic("ERROR: Invalid option value for the key 'type', expected format: <key>=<value>");
-    if (arg.key == name) return String(arg.value);
+    if (arg.key == name) {
+      if (arg.is_value())  panic("ERROR: Invalid option value for the key 'type', expected format: <key>=<value>");
+      return String(arg.value);
+    }
   }
 
   return opt_none;
@@ -54,8 +46,10 @@ static bool find_option_flag (const Iterable<Startup_Argument> auto &args, Strin
       Calling find_option_flag implicitly presumes the fact that we need a singular key (flag) setting.
       If it's a key-value pair instead, it's considered an input error.
     */
-    if (arg.is_pair()) panic("ERROR: Unexpected input type of the '%' flag", name);
-    if (arg.key == name) return true;
+    if (arg.key == name) {
+      if (arg.is_pair()) panic("ERROR: Unexpected input type of the '%' flag", name);
+      return true;
+    }
   }
 
   return false;
@@ -67,32 +61,33 @@ struct Build_Command {
   static Build_Command parse (Memory_Arena &arena, const Iterable<Startup_Argument> auto &command_arguments) {
     Build_Command command;
 
-    find_argument_value(command_arguments, "builders")
-      .handle_value([&command](auto &value) {
-        if (value[0] == '-') panic("Invalid value for the 'builders' option, this value cannot be negative");
-        if (value[0] == '0') panic("Invalid value for the 'builders' option, this value cannot be '0'");
+    auto [builders_defined, builders] = find_argument_value(command_arguments, "builders");
+    if (builders_defined) { 
+      if (builders[0] == '-') panic("Invalid value for the 'builders' option, this value cannot be negative");
+      if (builders[0] == '0') panic("Invalid value for the 'builders' option, this value cannot be '0'");
 
-        s32 count = 0;
-        for (auto digit: value) count = (count * 10) + (digit - '0');
+      s32 count = 0;
+      for (auto digit: builders) count = (count * 10) + (digit - '0');
 
-        command.config.builders_count = count;
-      });
+      command.config.builders_count = count;
+    };
 
-    find_argument_value(command_arguments, "cache")
-      .handle_value([&command](auto &value) {
-        if      (is_empty(value))                 command.config.cache = Build_Config::Cache_Behavior::On;
-        else if (value == "on")    command.config.cache = Build_Config::Cache_Behavior::On;
-        else if (value == "off")   command.config.cache = Build_Config::Cache_Behavior::Off;
-        else if (value == "flush") command.config.cache = Build_Config::Cache_Behavior::Flush;
-        else panic("Invalid paramter value % for the 'cache' option", value);
-      });
+    auto [cache_defined, cache] = find_argument_value(command_arguments, "cache");
+    if (cache_defined) {
+      if      (is_empty(cache))  command.config.cache = Build_Config::Cache_Behavior::On;
+      else if (cache == "on")    command.config.cache = Build_Config::Cache_Behavior::On;
+      else if (cache == "off")   command.config.cache = Build_Config::Cache_Behavior::Off;
+      else if (cache == "flush") command.config.cache = Build_Config::Cache_Behavior::Flush;
+      else panic("Invalid paramter value % for the 'cache' option", cache);
+    };
 
-    find_argument_value(command_arguments, "targets").handle_value([&](auto targets) {
+    auto [targets_defined, targets] = find_argument_value(command_arguments, "targets");
+    if (targets_defined) {
       command.config.selected_targets = List<String> { arena };
-      split_string(targets, ',').for_each([&] (auto target) {
-        if (!is_empty(target)) list_push_copy(command.config.selected_targets, target);
+      split_string(targets, ',').for_each([&] (auto it) {
+        if (!is_empty(it)) list_push_copy(command.config.selected_targets, it);
       });
-    });
+    };
 
     return command;
   }
@@ -104,12 +99,12 @@ struct Init_Command {
   static Init_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
     Init_Command command;
 
-    find_argument_value(command_arguments, "type")
-      .handle_value([&command] (auto value) {
-        if      (value == "cpp") command.type = Configuration_Type::Cpp;
-        else if (value == "c")   command.type = Configuration_Type::C;
-        else panic("ERROR: Unrecognized argument value for the 'type' option: %", value);
-      });
+    auto [type_defined, type] = find_argument_value(command_arguments, "type");
+    if (type_defined) {
+      if      (type == "cpp") command.type = Configuration_Type::Cpp;
+      else if (type == "c")   command.type = Configuration_Type::C;
+      else panic("ERROR: Unrecognized argument value for the 'type' option: '%'\n", type);
+    }
 
     return command;
   }
@@ -278,17 +273,11 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   return CLI_Command::Dynamic;
 }
 
-static Spin_Lock log_lock;
-void log (Fin::String message) {
-  log_lock.lock();
-  write_to_stdout(message);
-  log_lock.unlock();
-}
-
 u32 run_cbuild () {
+  // TODO: #perf check what's the impact from page faults is. How would large pages affect?
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
     
-  auto args = get_startup_args(arena);
+  auto args        = get_startup_args(arena);
   auto args_cursor = slice(args);
 
   bool silence_report = false;
@@ -354,24 +343,18 @@ u32 run_cbuild () {
 
   fin_ensure(command_type == CLI_Command::Dynamic);
 
-  //   exit_status = Status_Code(Status_Code::User_Command_Error,
-  //                             format_string(&arena, "Unrecognized cli_input '%'", argv[1]));
+  auto command_name = args[0].key;
+  for (auto cmd: project.user_defined_commands) {
+    if (cmd.name == command_name) {
+      const Arguments arguments { arena, args_cursor };
+      return cmd.proc(&arguments);
+    }
+  }
 
-  //   String command_name = argv[1];
-  //   for (auto cmd: project.user_defined_commands) {
-  //     if (compare_strings(cmd.name, command_name)) {
-  //       auto status_code = cmd.proc(&args_cursor);
-  //       if (status_code == 0) exit_status = Status_Code::Success;
-  //       else {
-  //         exit_status.value = Status_Code::User_Command_Error;
-  //         exit_status.code  = status_code;
-  //       }
+  log("Unknown command passed: %\n", command_name);
+  log(help_message);
 
-  //       break;
-  //     }
-  //   }
-
-  return 0;
+  return 1;
 }
 
 int mainCRTStartup () {

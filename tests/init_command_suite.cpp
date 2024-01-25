@@ -70,7 +70,7 @@ static void init_unknown_project_type_test (Memory_Arena &arena) {
   require(!init_cmd_has_failed);
   require(status.status_code != 0);
 
-  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: rust"),
+  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: 'rust'"),
            concat_string(arena, "status.output = ", status.output));
 }
 
@@ -79,10 +79,9 @@ static void init_with_unset_type_parameter_test (Memory_Arena &arena) {
 
   auto [init_cmd_has_failed, status] = run_system_command(arena, command);
   require(!init_cmd_has_failed);
-  require(status.status_code != 0);
+  require(status.status_code == 1);
 
-  frequire(has_substring(status.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"),
-           concat_string(arena, "status.output = ", status.output));
+  require(has_substring(status.output, "ERROR: Invalid option value for the key 'type', expected format: <key>=<value>"));
 }
 
 static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
@@ -90,10 +89,9 @@ static void init_with_unset_type_parameter_2_test (Memory_Arena &arena) {
 
   auto [init_cmd_has_failed, status] = run_system_command(arena, command);
   require(!init_cmd_has_failed);
-  require(status.status_code != 0);
+  require(status.status_code == 1);
 
-  frequire(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option:"),
-           concat_string(arena, "status.output = ", status.output));
+  require(has_substring(status.output, "ERROR: Unrecognized argument value for the 'type' option: ''"));
 }
 
 static Test_Case init_command_tests [] {

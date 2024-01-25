@@ -40,7 +40,7 @@ void init_workspace (Memory_Arena &arena, File_Path working_directory, Configura
   auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
 
   if (auto [error, exists] = check_file_exists(build_file_path); error)
-    trap(concat_string(arena, "System error occured while checking the project's folder: ", error.value));
+    panic("System error occured while checking the project's folder: %\n", error.value);
   else if (exists) {
     log("It looks like this workspace already has a project configuration file at %", build_file_path);
     return;
@@ -79,29 +79,29 @@ static inline void load_project_from_library (Project &project, Slice<Startup_Ar
     If there's something wrong with the library that we load, like some expected symbols are missing, it's fine to ignore
     some of them, like 'cbuild_api_version'.
    */
-  lookup_symbol<unsigned char>(*library, "cbuild_api_version")
-    .handle_value([] (auto symbol) {
-      if (!symbol) {
-        log("Expected symbol 'cbuild_api_version' wasn't found in the loaded configuration file\n"
-              "This is not expected and could be a sign of some larger issue. Please report this issue.\n");
-        return;
-      }
+  auto [version_symbol_found, symbol] = lookup_symbol<unsigned char>(*library, "cbuild_api_version");
+  if (version_symbol_found) {
+    if (!symbol) {
+      log("Expected symbol 'cbuild_api_version' wasn't found in the loaded configuration file\n"
+          "This is not expected and could be a sign of some larger issue. Please report this issue.\n");
+      return;
+    }
 
-      const auto config_api_version_value = *symbol;
+    const auto config_api_version_value = *symbol;
 
-      if (api_version > config_api_version_value) {
-        log("It looks like your project configuration uses an older API.\n"
-              "You may update API version using `cbuild update` command.\n");
-      }
+    if (api_version > config_api_version_value) {
+      log("It looks like your project configuration uses an older API.\n"
+          "You may update API version using `cbuild update` command.\n");
+    }
 
-      if (api_version < config_api_version_value) {
-        log("Project configuration uses a newer cbuild API (tool: %, config: %).\n"
-              "While it's not a violation of the cbuild usage, compatibility is not guaranteed in this case.\n"
-              "Please download a newer version at https://github.com/4lex1v/cbuild/releases\n",
-              api_version,
-              config_api_version_value);
-      }
-    });
+    if (api_version < config_api_version_value) {
+      log("Project configuration uses a newer cbuild API (tool: %, config: %).\n"
+          "While it's not a violation of the cbuild usage, compatibility is not guaranteed in this case.\n"
+          "Please download a newer version at https://github.com/4lex1v/cbuild/releases\n",
+          api_version,
+          config_api_version_value);
+    }
+  };
 
   auto loader = unwrap(lookup_symbol<project_func>(*library, "setup_project"),
                        "Failed to load the 'setup_project' symbol from a shared library.\n");
@@ -139,6 +139,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
     }
 
     auto compilation_command = build_string_with_separator(local, builder, ' ');
+    if (global_flags.tracing) log("Project build configuration compile command: %\n", compilation_command);
 
     auto [cmd_error, status] = run_system_command(local, compilation_command);
     if (cmd_error) panic("Failed to compile configuration file due to a system error: %\n", cmd_error.value);
@@ -162,25 +163,26 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
 
     builder += String(toolchain.linker_path);
 
-#ifdef FIN_PLATFORM_WIN32
+#ifdef PLATFORM_WIN32
     {
-      auto cbuild_import_path = make_file_path(local, project.project_output_location,
-                                               concat_string(local, "cbuild.", get_static_library_extension()));
+      auto cbuild_import_path = make_file_path(local, project.project_output_location, "cbuild.lib");
 
-      auto [open_error, export_file] = open_file(move(cbuild_import_path), Write_Access | Create_Missing);
+      auto [open_error, export_file] = open_file(cbuild_import_path, Write_Access | Create_Missing);
       if (open_error) panic("Couldn't create export file to write data to due to an error: %.\n", open_error.value);
       defer { close_file(export_file); };
 
-      expect(write_bytes_to_file(export_file, cbuild_lib_content),
+      ensure(write_bytes_to_file(export_file, cbuild_lib_content),
              "Failed to write win32 export data into a file");
 
-      builder += format_string(local, "/nologo /dll /debug:full /export:cbuild_api_version /export:setup_project /subsystem:console \"%\" \"%\" /out:\"%\"",
-                               project_obj_file_path, export_file.path, project.project_library_path);
+      builder += format_string(local, "/nologo /dll /debug:full /export:cbuild_api_version /export:setup_project /subsystem:console "
+                               "\"%\" \"%\" /out:\"%\"", project_obj_file_path, export_file.path, project.project_library_path);
     }
+#else
+#error "Unsupported platform"
 #endif
 
     auto linking_command = build_string_with_separator(local, builder, ' ');
-    //log(concat_string(local, "Linking project's configuration with: ", linking_command));
+    if (global_flags.tracing) log("Project build configuration link command: %\n", linking_command);
 
     auto [cmd_error, status] = run_system_command(local, linking_command);
     if (cmd_error) panic("Failed to execute system command, details: %, command: %.\n", cmd_error.value, linking_command);
@@ -242,8 +244,8 @@ void update_cbuild_api_file (Memory_Arena &arena, File_Path working_directory) {
     auto [open_error, file] = open_file(move(file_path), Write_Access | Create_Missing);
     if (open_error) panic("Couldn't open file % due to an error: %.\n", file_path_view, open_error.value);
 
-    expect(write_bytes_to_file(file, data), "Failed to write data to the generated header file");
-    expect(close_file(file), "Failed to close the generate header file's handle");
+    ensure(write_bytes_to_file(file, data), "Failed to write data to the generated header file");
+    ensure(close_file(file), "Failed to close the generate header file's handle");
   }
 }
 
@@ -312,7 +314,7 @@ void load_project (Memory_Arena &arena, Project &project, Slice<Startup_Argument
   build_project_configuration(arena, project, build_file);
   
   // TODO: Perhaps it's worth to add overwrite option to the write function instead?
-  expect(reset_file_cursor(tag_file), "Failed to reset tag's file pointer");
+  ensure(reset_file_cursor(tag_file), "Failed to reset tag's file pointer");
 
   if (auto result = write_bytes_to_file(tag_file, reinterpret_cast<u8*>(&build_file_timestamp), sizeof(build_file_timestamp));
       result.is_error()) {

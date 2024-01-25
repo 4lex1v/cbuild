@@ -72,7 +72,7 @@ static String get_msvc_installation_path (Memory_Arena &arena) {
 
   WIN32_FIND_DATA data;
   auto search_handle = FindFirstFile(msvc_folder_query, &data);
-  if (search_handle == INVALID_HANDLE_VALUE) trap("MSVC installation not found\n");
+  if (search_handle == INVALID_HANDLE_VALUE) panic("MSVC installation not found\n");
 
   int max_major = 0, max_minor = 0, max_patch = 0;
   do {
@@ -117,7 +117,7 @@ static Option<Toolchain_Configuration> load_llvm_toolchain (Memory_Arena &arena,
 }
 
 static Option<Toolchain_Configuration> load_gcc_toolchain (Memory_Arena &arena) {
-  trap("GCC Platform is not supported on Win32 at this moment\n");
+  panic("GCC Platform is not supported on Win32 at this moment\n");
 
   return {};
 }
@@ -200,7 +200,7 @@ struct Windows_SDK {
 
 static Windows_SDK find_windows_sdk (Memory_Arena &arena) {
   const auto trap_no_sdk_found = [] {
-    trap("Windows SDK is not found, please check that it's installed.\n"
+    panic("Windows SDK is not found, please check that it's installed.\n"
          "CBuild checked Windows' registry at 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots\\KitsRoot10'\n"
          "and if it's not found in the registry the most command path is C:\\Program Files (x86)\\Windows Kits\\10\n."
          "If you do have SDK installed and any of the above entries exists on the host machine, this is likely a bug with a program.\n"
