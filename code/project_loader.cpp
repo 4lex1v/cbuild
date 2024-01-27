@@ -10,7 +10,7 @@
 #include "anyfin/shared_library.hpp"
 #include "anyfin/commands.hpp"
 
-#include "generated.h"
+#include "templates/generated.h"
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"

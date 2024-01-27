@@ -10,8 +10,8 @@
 #include "anyfin/startup.hpp"
 #include "anyfin/file_system.hpp"
 
-#include "cbuild_api_template.hpp"
-#include "cbuild_api_experimental.hpp"
+#include "templates/cbuild_api_template.hpp"
+#include "templates/cbuild_api_experimental_template.hpp"
 
 #include "cbuild.hpp"
 
@@ -198,8 +198,6 @@ struct Target {
     return reserve<Target>(arena);
   }
 };
-
-const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
 
 String get_target_extension (const Target &target);
 File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &target);

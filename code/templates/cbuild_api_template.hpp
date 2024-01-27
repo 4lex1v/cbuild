@@ -18,6 +18,12 @@ unsigned int cbuild_api_version = CBUILD_API_VERSION;
 
 #endif // CBUILD_PROJECT_CONFIGURATION
 
+#ifdef __cplusplus
+  #define CBUILD_NO_EXCEPT noexcept
+#else 
+  #define CBUILD_NO_EXCEPT
+#endif
+
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif
@@ -86,7 +92,7 @@ extern "C" {
     }
 
  */
-CBUILD_API const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value);
+CBUILD_API const char * get_argument_or_default (const Arguments *args, const char *key, const char *default_value) CBUILD_NO_EXCEPT;
 
 /*
   Sets the toolchain of a specified type for a project.
@@ -109,7 +115,7 @@ CBUILD_API const char * get_argument_or_default (const Arguments *args, const ch
     }
 
  */
-CBUILD_API void set_toolchain (Project *project, Toolchain_Type type);
+CBUILD_API void set_toolchain (Project *project, Toolchain_Type type) CBUILD_NO_EXCEPT;
 
 /*
   Disables artifact caching for the specified project. When the registry is disabled, the entire project will be rebuilt each time a build is triggered.
@@ -118,14 +124,14 @@ CBUILD_API void set_toolchain (Project *project, Toolchain_Type type);
   Note that this setting does not affect the build of the project's configuration. This means that the configuration build process will continue to use cached results if available.
 
  */
-CBUILD_API void disable_registry (Project *project);
+CBUILD_API void disable_registry (Project *project) CBUILD_NO_EXCEPT;
 
 /*
   Defines a type for user-defined actions that can be called via a command line interface.
   These actions are expected to take a set of arguments and return an integer as status code.
   '0' represents success and non-zero values represent error conditions.
  */
-typedef int (*Action_Type) (const Arguments *args);
+typedef int (*Action_Type) (const Arguments *args) CBUILD_NO_EXCEPT;
 
 /*
   Registers a user-defined action under a specified name within a project.
@@ -148,7 +154,7 @@ typedef int (*Action_Type) (const Arguments *args);
   With the above setup, the action can now be called from the command line as: `cbuild hello`.
   
  */
-CBUILD_API void register_action (Project *project, const char *name, Action_Type proc);
+CBUILD_API void register_action (Project *project, const char *name, Action_Type proc) CBUILD_NO_EXCEPT;
 
 /*
   Overwrites the default output location for all produced artifacts within a project.
@@ -173,22 +179,22 @@ CBUILD_API void register_action (Project *project, const char *name, Action_Type
     }
 
  */
-CBUILD_API void set_output_location (Project *project, const char *folder_path);
+CBUILD_API void set_output_location (Project *project, const char *folder_path) CBUILD_NO_EXCEPT;
 
 /*
   Create a new target that will produce a static library.
  */
-CBUILD_API Target * add_static_library (Project *project, const char *name);
+CBUILD_API Target * add_static_library (Project *project, const char *name) CBUILD_NO_EXCEPT;
 
 /*
   Create a new target that will produce a shared library. 
  */
-CBUILD_API Target * add_shared_library (Project *project, const char *name);
+CBUILD_API Target * add_shared_library (Project *project, const char *name) CBUILD_NO_EXCEPT;
 
 /*
   Create a new target that will produce an executable
  */
-CBUILD_API Target * add_executable (Project *project, const char *name);
+CBUILD_API Target * add_executable (Project *project, const char *name) CBUILD_NO_EXCEPT;
 
 /*
   Add global options that will be passed to the compiler executable as-is.
@@ -206,7 +212,7 @@ CBUILD_API Target * add_executable (Project *project, const char *name);
     }
 
  */
-CBUILD_API void add_global_compiler_option (Project *project, const char *option);
+CBUILD_API void add_global_compiler_option (Project *project, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Add global options that will be passed to the archiver executable as-is.
@@ -226,7 +232,7 @@ CBUILD_API void add_global_compiler_option (Project *project, const char *option
     }
 
  */
-CBUILD_API void add_global_archiver_option (Project *project, const char *option);
+CBUILD_API void add_global_archiver_option (Project *project, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Add global options that will be passed to the linker executable as-is.
@@ -251,7 +257,7 @@ CBUILD_API void add_global_archiver_option (Project *project, const char *option
     }
 
  */
-CBUILD_API void add_global_linker_option (Project *project, const char *option);
+CBUILD_API void add_global_linker_option (Project *project, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Additional include path to the list global list that will be passed to the compiler.
@@ -272,7 +278,7 @@ CBUILD_API void add_global_linker_option (Project *project, const char *option);
     }
 
  */
-CBUILD_API void add_global_include_search_path (Project *project, const char *path);
+CBUILD_API void add_global_include_search_path (Project *project, const char *path) CBUILD_NO_EXCEPT;
 
 /*
   Add options that will be passed to the compiler executable as-is.
@@ -291,7 +297,7 @@ CBUILD_API void add_global_include_search_path (Project *project, const char *pa
     }
 
  */
-CBUILD_API void add_compiler_option (Target *target, const char *option);
+CBUILD_API void add_compiler_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Remove options that were previously added to the compiler executable.
@@ -312,7 +318,7 @@ CBUILD_API void add_compiler_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void remove_compiler_option (Target *target, const char *option);
+CBUILD_API void remove_compiler_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Add options that will be passed to the archiver executable as-is.
@@ -333,7 +339,7 @@ CBUILD_API void remove_compiler_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void add_archiver_option (Target *target, const char *option);
+CBUILD_API void add_archiver_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Remove options that were previously added for the archiver executable.
@@ -354,7 +360,7 @@ CBUILD_API void add_archiver_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void remove_archiver_option (Target *target, const char *option);
+CBUILD_API void remove_archiver_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Add options that will be passed to the linker executable as-is.
@@ -377,7 +383,7 @@ CBUILD_API void remove_archiver_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void add_linker_option (Target *target, const char *option);
+CBUILD_API void add_linker_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Remove options that were previously added for the linker executable.
@@ -398,7 +404,7 @@ CBUILD_API void add_linker_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void remove_linker_option (Target *target, const char *option);
+CBUILD_API void remove_linker_option (Target *target, const char *option) CBUILD_NO_EXCEPT;
 
 /*
   Add a C/C++ source file to the target.
@@ -415,7 +421,7 @@ CBUILD_API void remove_linker_option (Target *target, const char *option);
     }
 
  */
-CBUILD_API void add_source_file (Target *target, const char *file_path);
+CBUILD_API void add_source_file (Target *target, const char *file_path) CBUILD_NO_EXCEPT;
 
 /*
   Adds all C or C++ source files from the specified directory, optionally including all files from subdirectories.
@@ -430,7 +436,7 @@ CBUILD_API void add_source_file (Target *target, const char *file_path);
     }
 
  */
-CBUILD_API void add_all_sources_from_directory (Target *target, const char *directory, const char *extension, bool recurse);
+CBUILD_API void add_all_sources_from_directory (Target *target, const char *directory, const char *extension, bool recurse) CBUILD_NO_EXCEPT;
 
 /*
   Exclude a C/C++ source file from the target.
@@ -447,7 +453,7 @@ CBUILD_API void add_all_sources_from_directory (Target *target, const char *dire
       exclude_source_file(main, "code/main.cpp"); 
     }
  */
-CBUILD_API void exclude_source_file (Target *target, const char *_file_path);
+CBUILD_API void exclude_source_file (Target *target, const char *_file_path) CBUILD_NO_EXCEPT;
 
 /*
   Specify upstream 'dependency' for the given 'target' that it should be linked with.
@@ -464,7 +470,7 @@ CBUILD_API void exclude_source_file (Target *target, const char *_file_path);
     }
 
  */
-CBUILD_API void link_with_target (Target *target, Target *dependency);
+CBUILD_API void link_with_target (Target *target, Target *dependency) CBUILD_NO_EXCEPT;
 
 /*
   Specify a library for the linked to link the "target" with.
@@ -479,7 +485,7 @@ CBUILD_API void link_with_target (Target *target, Target *dependency);
     }
 
  */
-CBUILD_API void link_with_library (Target *target, const char *library_name);
+CBUILD_API void link_with_library (Target *target, const char *library_name) CBUILD_NO_EXCEPT;
 
 /*
   Additional include paths for the tool to check when resolving local headers.
@@ -495,12 +501,12 @@ CBUILD_API void link_with_library (Target *target, const char *library_name);
     }
 
  */
-CBUILD_API void add_include_search_path (Target *target, const char *include_path);
+CBUILD_API void add_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
 
 /*
   Returns target's name.
  */
-CBUILD_API const char * get_target_name (const Target *target);
+CBUILD_API const char * get_target_name (const Target *target) CBUILD_NO_EXCEPT;
 
 #ifdef __cplusplus
 }
@@ -509,7 +515,7 @@ CBUILD_API const char * get_target_name (const Target *target);
   C++ helper function for `add_global_compiler_option`.
  */
 template <typename... T>
-static void add_global_compiler_options (Project *project, const char *option, T&&... more_options) {
+static void add_global_compiler_options (Project *project, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_global_compiler_option(project, it);
 }
@@ -518,7 +524,7 @@ static void add_global_compiler_options (Project *project, const char *option, T
   C++ helper function for `add_global_archiver_option`.
  */
 template <typename... T>
-static void add_global_archiver_options (Project *project, const char *option, T&&... more_options) {
+static void add_global_archiver_options (Project *project, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_global_archiver_option(project, it);
 }
@@ -527,7 +533,7 @@ static void add_global_archiver_options (Project *project, const char *option, T
   C++ helper function for `add_global_linker_option`.
  */
 template <typename... T>
-static void add_global_linker_options (Project *project, const char *option, T&&... more_options) {
+static void add_global_linker_options (Project *project, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_global_linker_option(project, it);
 }
@@ -536,7 +542,7 @@ static void add_global_linker_options (Project *project, const char *option, T&&
   C++ helper function for `add_global_include_search_path`
  */
 template <typename... T>
-static void add_global_include_search_paths (Project *project, const char *path, T&&... more_paths) {
+static void add_global_include_search_paths (Project *project, const char *path, T&&... more_paths) noexcept {
   const char *options [] { path, more_paths... };
   for (auto it: options) add_global_include_search_path(project, it);
 }
@@ -545,7 +551,7 @@ static void add_global_include_search_paths (Project *project, const char *path,
   C++ helper function for `add_compiler_option`.
  */
 template <typename... T>
-static void add_compiler_options (Target *target, const char *option, T&&... more_options) {
+static void add_compiler_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_compiler_option(target, it);
 }
@@ -554,7 +560,7 @@ static void add_compiler_options (Target *target, const char *option, T&&... mor
   C++ helper function for `remove_compiler_option`.
  */
 template <typename... T>
-static void remove_compiler_options (Target *target, const char *option, T&&... more_options) {
+static void remove_compiler_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) remove_compiler_option(target, it);
 }
@@ -563,7 +569,7 @@ static void remove_compiler_options (Target *target, const char *option, T&&... 
   C++ helper function for `add_archiver_option`.
  */
 template <typename... T>
-static void add_archiver_options (Target *target, const char *option, T&&... more_options) {
+static void add_archiver_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_archiver_option(target, it);
 }
@@ -572,7 +578,7 @@ static void add_archiver_options (Target *target, const char *option, T&&... mor
   C++ helper function for `remove_archiver_option`.
  */
 template <typename... T>
-static void remove_archiver_options (Target *target, const char *option, T&&... more_options) {
+static void remove_archiver_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) remove_archiver_option(target, it);
 }
@@ -581,7 +587,7 @@ static void remove_archiver_options (Target *target, const char *option, T&&... 
   C++ helper function for `add_linker_option`.
  */
 template <typename... T>
-static void add_linker_options (Target *target, const char *option, T&&... more_options) {
+static void add_linker_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) add_linker_option(target, it);
 }
@@ -590,7 +596,7 @@ static void add_linker_options (Target *target, const char *option, T&&... more_
   C++ helper function for `remove_linker_option`.
  */
 template <typename... T>
-static void remove_linker_options (Target *target, const char *option, T&&... more_options) {
+static void remove_linker_options (Target *target, const char *option, T&&... more_options) noexcept {
   const char *options[] { option, more_options... };
   for (auto it: options) remove_linker_option(target, it);
 }
@@ -599,7 +605,7 @@ static void remove_linker_options (Target *target, const char *option, T&&... mo
   C++ helper function for `add_source_file`.
  */
 template <typename... T>
-static void add_source_files (Target *target, const char *file_path, T&&... more_paths) {
+static void add_source_files (Target *target, const char *file_path, T&&... more_paths) noexcept {
   const char *paths[] { file_path, more_paths... };
   for (auto it: paths) add_source_file(target, it);
 }
@@ -608,7 +614,7 @@ static void add_source_files (Target *target, const char *file_path, T&&... more
   C++ helper function for `exclude_source_file`.
  */
 template <typename... T>
-static void exclude_source_files (Target *target, const char *file_path, T&&... more_paths) {
+static void exclude_source_files (Target *target, const char *file_path, T&&... more_paths) noexcept {
   const char *paths[] { file_path, more_paths... };
   for (auto it: paths) exclude_source_file(target, it);
 }
@@ -617,7 +623,7 @@ static void exclude_source_files (Target *target, const char *file_path, T&&... 
   C++ helper function for `link_with_target` and `link_with_library`.
  */
 template <typename T1, typename... T>
-static void link_with (Target *target, T1 dependency, T&&... more_dependencies) {
+static void link_with (Target *target, T1 dependency, T&&... more_dependencies) noexcept {
   struct Link_Target {
     enum Kind { Kind_Target, Kind_String };
 
@@ -645,7 +651,7 @@ static void link_with (Target *target, T1 dependency, T&&... more_dependencies) 
   C++ helper function for `add_include_search_path`
  */
 template <typename... T>
-static void add_include_search_paths (Target *target, const char *path, T&&... more_paths) {
+static void add_include_search_paths (Target *target, const char *path, T&&... more_paths) noexcept {
   const char *options [] { path, more_paths... };
   for (auto it: options) add_include_search_path(target, it);
 }

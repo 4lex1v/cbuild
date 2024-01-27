@@ -21,7 +21,7 @@ using u32 = uint32_t;
 /*
   Custom Commands
  */
-static int generate_headers (const Arguments *args);
+static int generate_headers (const Arguments *args) noexcept;
 
 // static void print_hashes (const Project *project, const Target *target, const Arguments *args, Hook_Type type) {
 //   if (!strstr(get_argument_or_default(args, "config", "debug"), "release")) return;
@@ -151,7 +151,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   return true;
 }
 
-static int generate_headers (const Arguments *args) {
+static int generate_headers (const Arguments *args) noexcept {
   std::string_view platform = get_argument_or_default(args, "platform", "win32");
 
   u32 tool_version = 0, api_version = 0;
@@ -164,7 +164,7 @@ static int generate_headers (const Arguments *args) {
 
   printf("Generating header for version: %u\n", api_version);
 
-  auto output_file_path = "./code/generated.h";
+  auto output_file_path = "./code/templates/generated.h";
   auto output_file      = fopen(output_file_path, "wb+");
   if (output_file == nullptr) {
     printf("FATAL ERROR: Couldn't open a file handle for %s\n", output_file_path);
@@ -172,7 +172,7 @@ static int generate_headers (const Arguments *args) {
   }
 
   {
-    auto api_template_file_path = "./code/cbuild_api_template.hpp";
+    auto api_template_file_path = "./code/templates/cbuild_api_template.hpp";
     auto api_template_content   = fopen(api_template_file_path, "rb+");
     if (api_template_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", api_template_file_path);
@@ -226,7 +226,7 @@ static int generate_headers (const Arguments *args) {
   }
 
   { // experimental api
-    auto file_path = "./code/cbuild_api_experimental.hpp";
+    auto file_path = "./code/templates/cbuild_api_experimental_template.hpp";
     auto content   = fopen(file_path, "rb+");
     if (content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", file_path);
@@ -266,7 +266,7 @@ static int generate_headers (const Arguments *args) {
   }
 
   { // build_template
-    auto build_template_file_path = "./code/build_template.hpp";
+    auto build_template_file_path = "./code/templates/build_template.hpp";
     auto build_template_content   = fopen(build_template_file_path, "rb+");
     if (build_template_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", build_template_file_path);
@@ -306,7 +306,7 @@ static int generate_headers (const Arguments *args) {
   }
 
   { // main_cpp_template
-    auto main_cpp_file_path = "./code/main_cpp_template.hpp";
+    auto main_cpp_file_path = "./code/templates/main_cpp_template.hpp";
     auto main_cpp_content   = fopen(main_cpp_file_path, "rb+");
     if (main_cpp_content == nullptr) {
       printf("FATAL ERROR: Failed to find the header file at: %s\n", main_cpp_file_path);
