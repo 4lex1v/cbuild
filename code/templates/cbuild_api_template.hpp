@@ -6,6 +6,14 @@
 
 #pragma once
 
+#ifndef CBUILD_NO_EXCEPT
+#if defined(__cplusplus) && !defined(CBUILD_ENABLE_EXCEPTIONS)
+  #define CBUILD_NO_EXCEPT noexcept
+#else 
+  #define CBUILD_NO_EXCEPT
+#endif
+#endif
+
 #if defined(CBUILD_PROJECT_CONFIGURATION) && defined(_WIN32)
   #define CBUILD_API __declspec(dllimport)
 #else
@@ -14,17 +22,12 @@
 
 #ifdef CBUILD_PROJECT_CONFIGURATION
 
-extern "C" const unsigned int cbuild_api_version = CBUILD_API_VERSION;
+#ifdef __cplusplus
+extern "C"
+#endif
+const unsigned int cbuild_api_version = CBUILD_API_VERSION;
 
 #endif // CBUILD_PROJECT_CONFIGURATION
-
-#ifndef CBUILD_NO_EXCEPT
-#if defined(__cplusplus) && !defined(CBUILD_ENABLE_EXCEPTIONS)
-  #define CBUILD_NO_EXCEPT noexcept
-#else 
-  #define CBUILD_NO_EXCEPT
-#endif
-#endif
 
 #ifndef __cplusplus
 #include <stdbool.h>

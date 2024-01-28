@@ -198,7 +198,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
 }
 
 static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &workspace_directory_path) {
-  const String files [] { "project/build.cpp", "projectbuild.c" };
+  const String files [] { "project/build.cpp", "project/build.c",  };
 
   for (auto build_file_name: files) {
     auto build_file_path = make_file_path(arena, workspace_directory_path, build_file_name);

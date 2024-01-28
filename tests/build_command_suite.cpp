@@ -81,8 +81,15 @@ static void build_init_project_st_test (Memory_Arena &arena) {
   validate_binary(arena, "main", "Thank you for trying cbuild!");
 }
 
-static void build_init_project_tests (Memory_Arena &arena) {
+static void build_init_cpp_project_tests (Memory_Arena &arena) {
   run_command(arena, binary_path, "init");
+  run_command(arena, binary_path, "build");
+
+  validate_binary(arena, "main", "Thank you for trying cbuild!");
+}
+
+static void build_init_c_project_tests (Memory_Arena &arena) {
+  run_command(arena, binary_path, "init type=c");
   run_command(arena, binary_path, "build");
 
   validate_binary(arena, "main", "Thank you for trying cbuild!");
@@ -421,8 +428,9 @@ static Test_Case build_command_tests [] {
     functionality works as expected. We don't need to prepare the testsite for these, just a dedicated
     workspace that we can cleanup later.
    */
-  define_test_case_ex(build_init_project_st_test, setup_workspace,  cleanup_workspace),
-  define_test_case_ex(build_init_project_tests,   setup_workspace,  cleanup_workspace),
+  define_test_case_ex(build_init_project_st_test,   setup_workspace, cleanup_workspace),
+  define_test_case_ex(build_init_cpp_project_tests, setup_workspace, cleanup_workspace),
+  define_test_case_ex(build_init_c_project_tests,   setup_workspace, cleanup_workspace),
 
   define_test_case_ex(build_testsite_tests,        setup_testsite, cleanup_workspace),
   define_test_case_ex(build_registry_tests,        setup_testsite, cleanup_workspace),
