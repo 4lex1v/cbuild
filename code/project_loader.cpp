@@ -79,7 +79,7 @@ static inline void load_project_from_library (Project &project, Slice<Startup_Ar
     If there's something wrong with the library that we load, like some expected symbols are missing, it's fine to ignore
     some of them, like 'cbuild_api_version'.
    */
-  auto [version_symbol_found, symbol] = lookup_symbol<unsigned char>(*library, "cbuild_api_version");
+  auto [version_symbol_found, symbol] = lookup_symbol<const unsigned char>(*library, "cbuild_api_version");
   if (version_symbol_found) {
     if (!symbol) {
       log("Expected symbol 'cbuild_api_version' wasn't found in the loaded configuration file\n"

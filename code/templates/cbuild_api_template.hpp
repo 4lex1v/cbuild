@@ -14,7 +14,7 @@
 
 #ifdef CBUILD_PROJECT_CONFIGURATION
 
-unsigned int cbuild_api_version = CBUILD_API_VERSION;
+extern "C" const unsigned int cbuild_api_version = CBUILD_API_VERSION;
 
 #endif // CBUILD_PROJECT_CONFIGURATION
 
