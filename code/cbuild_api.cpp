@@ -169,7 +169,8 @@ static Target * create_target (Project *project, Target::Type type, const char *
     if (not ((value >= 'a' && value <= 'z') ||
              (value >= 'A' && value <= 'Z') ||
              (value >= '0' && value <= '9') ||
-             (value == '_'))) {
+             (value == '_') ||
+             (value == ' '))) {
       panic("FATAL ERROR: Target name contains disallowed characters, only alphanumeric characters are allow and '_'\n");
     }
   }

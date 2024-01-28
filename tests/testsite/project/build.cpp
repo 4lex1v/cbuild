@@ -115,6 +115,15 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     //link_with(bin3, ext_lib);
   }
 
+#ifdef _WIN32
+  auto win32_special = add_executable(project, "win32_special");
+  {
+    apply_common_settings(win32_special);
+    add_all_sources_from_directory(win32_special, "code/win32 special/test", "cpp", false);
+    add_source_file(win32_special, "code/win32 special/spaced file.cpp");
+  }
+#endif
+
   fflush(stdout); // This is needed for tests to properly capture the stdout output
 
   return true;

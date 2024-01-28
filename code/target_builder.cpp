@@ -373,7 +373,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
     for (auto ext = get_object_extension(); auto &path: target.files) {
       auto file_name = concat_string(arena, unwrap(get_resource_name(path)), ".", ext);
-      builder += make_file_path(arena, target_object_folder, file_name);
+      builder += concat_string(arena, "\"", make_file_path(arena, target_object_folder, file_name), "\"");
     }
 
     for (auto upstream_target: target.depends_on) {

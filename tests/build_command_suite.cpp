@@ -415,6 +415,16 @@ static void build_targets_tests (Memory_Arena &arena) {
 
 }
 
+#ifdef PLATFORM_WIN32
+static void build_win32_special_tests (Memory_Arena &arena) {
+  auto output = build_testsite(arena, "targets=win32_special");
+  count_lines_starting_with(output, "Building file",  2); // spaced file, test file
+  count_lines_starting_with(output, "Linking target", 1);
+
+  validate_binary(arena, "win32_special", "file with spaces");
+}
+#endif
+
 static Test_Case build_command_tests [] {
   /*
     Unlike other tests these just build the project generated with init to ensure that the basic
@@ -431,6 +441,10 @@ static Test_Case build_command_tests [] {
   define_test_case_ex(build_project_tests,         setup_testsite, cleanup_workspace),
   define_test_case_ex(build_cache_tests,           setup_testsite, cleanup_workspace),
   define_test_case_ex(build_targets_tests,         setup_testsite, cleanup_workspace),
+
+#ifdef PLATFORM_WIN32
+  define_test_case_ex(build_win32_special_tests, setup_testsite, cleanup_workspace),
+#endif
 };
 
 define_test_suite(build_command, build_command_tests)
