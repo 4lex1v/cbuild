@@ -18,7 +18,7 @@ static void __require_non_empty (const char *value, String function_name, String
   if (value && !value[0]) panic("Invalid '%' value passed to '%': value must NOT BE empty\n", parameter_name, function_name);
 }
 
-const char * get_argument_or_default (const Arguments *arguments, const char *key, const char *default_value) noexcept {
+const char * get_argument_or_default (const Arguments *arguments, const char *key, const char *default_value) CBUILD_NO_EXCEPT {
   if (is_empty(arguments->args))        return default_value;
   if (key == nullptr || key[0] == '\0') return default_value;
 
@@ -32,7 +32,7 @@ const char * get_argument_or_default (const Arguments *arguments, const char *ke
   return default_value;
 }
 
-bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Configuration *out_configuration) noexcept {
+bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Configuration *out_configuration) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(out_configuration);
 
@@ -44,7 +44,7 @@ bool find_toolchain_by_type (Project *project, Toolchain_Type type, Toolchain_Co
   return true;
 }
 
-void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) noexcept {
+void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) CBUILD_NO_EXCEPT {
   require_non_null(project);
 
   /*
@@ -61,7 +61,7 @@ void overwrite_toolchain (Project *project, Toolchain_Configuration toolchain) n
   project->toolchain = toolchain;
 }
 
-void set_toolchain (Project *project, Toolchain_Type type) noexcept {
+void set_toolchain (Project *project, Toolchain_Type type) CBUILD_NO_EXCEPT {
   require_non_null(project);
 
   auto [found, toolchain] = lookup_toolchain_by_type(project->arena, type);
@@ -70,13 +70,13 @@ void set_toolchain (Project *project, Toolchain_Type type) noexcept {
   overwrite_toolchain(project, toolchain);
 }
 
-void disable_registry (Project *project) noexcept {
+void disable_registry (Project *project) CBUILD_NO_EXCEPT {
   require_non_null(project);
 
   project->registry_disabled = true;
 }
 
-void register_action (Project *project, const char *name, Action_Type action) noexcept {
+void register_action (Project *project, const char *name, Action_Type action) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(name);
   require_non_empty(name);
@@ -87,7 +87,7 @@ void register_action (Project *project, const char *name, Action_Type action) no
   });
 }
 
-void set_output_location (Project *project, const char *folder_path) noexcept {
+void set_output_location (Project *project, const char *folder_path) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(folder_path);
   require_non_empty(folder_path);
@@ -95,7 +95,7 @@ void set_output_location (Project *project, const char *folder_path) noexcept {
   project->build_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String(folder_path));
 }
 
-void set_install_location (Project *project, const char *folder_path) noexcept {
+void set_install_location (Project *project, const char *folder_path) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(folder_path);
   require_non_empty(folder_path);
@@ -115,7 +115,7 @@ void set_install_location (Project *project, const char *folder_path) noexcept {
   project->install_location_path = move(install_path);
 }
 
-void add_global_compiler_option (Project *project, const char *option) noexcept {
+void add_global_compiler_option (Project *project, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(option);
   require_non_empty(option);
@@ -123,7 +123,7 @@ void add_global_compiler_option (Project *project, const char *option) noexcept 
   list_push(project->compiler, copy_string(project->arena, option));
 }
 
-void add_global_archiver_option (Project *project, const char *option) noexcept {
+void add_global_archiver_option (Project *project, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(option);
   require_non_empty(option);
@@ -131,7 +131,7 @@ void add_global_archiver_option (Project *project, const char *option) noexcept 
   list_push(project->archiver, copy_string(project->arena, option));
 }
 
-void add_global_linker_option (Project *project, const char *option) noexcept {
+void add_global_linker_option (Project *project, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(option);
   require_non_empty(option);
@@ -139,7 +139,7 @@ void add_global_linker_option (Project *project, const char *option) noexcept {
   list_push(project->linker, copy_string(project->arena, option));
 }
 
-void add_global_include_search_path (Project *project, const char *path) noexcept {
+void add_global_include_search_path (Project *project, const char *path) CBUILD_NO_EXCEPT {
   require_non_null(project);
   require_non_null(path);
   require_non_empty(path);
@@ -183,19 +183,19 @@ static Target * create_target (Project *project, Target::Type type, const char *
   return &list_push(project->targets, Target(*project, type, move(name)));
 }
 
-Target * add_static_library (Project *project, const char *name) noexcept {
+Target * add_static_library (Project *project, const char *name) CBUILD_NO_EXCEPT {
   return create_target(project, Target::Type::Static_Library, name);
 }
 
-Target * add_shared_library (Project *project, const char *name) noexcept {
+Target * add_shared_library (Project *project, const char *name) CBUILD_NO_EXCEPT {
   return create_target(project, Target::Type::Shared_Library, name);
 }
 
-Target * add_executable (Project *project, const char *name) noexcept {
+Target * add_executable (Project *project, const char *name) CBUILD_NO_EXCEPT {
   return create_target(project, Target::Type::Executable, name);
 }
 
-void add_source_file (Target *target, const char *path) noexcept {
+void add_source_file (Target *target, const char *path) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(path);
   require_non_empty(path);
@@ -214,7 +214,7 @@ void add_source_file (Target *target, const char *path) noexcept {
   target->project.total_files_count += 1;
 }
 
-void exclude_source_file (Target *target, const char *path) noexcept {
+void exclude_source_file (Target *target, const char *path) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(path);
   require_non_empty(path);
@@ -233,7 +233,7 @@ void exclude_source_file (Target *target, const char *path) noexcept {
   target->project.total_files_count -= 1;
 }
 
-void add_include_search_path (Target *target, const char *path) noexcept {
+void add_include_search_path (Target *target, const char *path) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(path);
   require_non_empty(path);
@@ -247,7 +247,7 @@ void add_include_search_path (Target *target, const char *path) noexcept {
   list_push(target->include_paths, move(include_path));
 }
 
-void add_all_sources_from_directory (Target *target, const char *_directory, const char *extension, bool recurse) noexcept {
+void add_all_sources_from_directory (Target *target, const char *_directory, const char *extension, bool recurse) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(_directory);
   require_non_empty(_directory);
@@ -292,7 +292,7 @@ static void remove_option (List<String> &options, String values) {
   });
 }
 
-void add_compiler_option (Target *target, const char *option) noexcept {
+void add_compiler_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -301,7 +301,7 @@ void add_compiler_option (Target *target, const char *option) noexcept {
   add_options(arena, target->compiler, String(option));
 }
 
-void remove_compiler_option (Target *target, const char *option) noexcept {
+void remove_compiler_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -309,7 +309,7 @@ void remove_compiler_option (Target *target, const char *option) noexcept {
   remove_option(target->compiler, String(option));
 }
 
-void add_archiver_option (Target *target, const char *option) noexcept {
+void add_archiver_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -318,7 +318,7 @@ void add_archiver_option (Target *target, const char *option) noexcept {
   add_options(arena, target->archiver, String(option));
 }
 
-void remove_archiver_option (Target *target, const char *option) noexcept {
+void remove_archiver_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -326,7 +326,7 @@ void remove_archiver_option (Target *target, const char *option) noexcept {
   remove_option(target->archiver, String(option));
 }
 
-void add_linker_option (Target *target, const char *option) noexcept {
+void add_linker_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -335,7 +335,7 @@ void add_linker_option (Target *target, const char *option) noexcept {
   add_options(arena, target->linker, String(option));
 }
 
-void remove_linker_option (Target *target, const char *option) noexcept {
+void remove_linker_option (Target *target, const char *option) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(option);
   require_non_empty(option);
@@ -343,7 +343,7 @@ void remove_linker_option (Target *target, const char *option) noexcept {
   remove_option(target->linker, String(option));
 }
 
-void link_with_target (Target *target, Target *dependency) noexcept {
+void link_with_target (Target *target, Target *dependency) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(dependency);
 
@@ -357,7 +357,7 @@ void link_with_target (Target *target, Target *dependency) noexcept {
   list_push_copy(dependency->required_by, target);
 }
 
-void link_with_library (Target *target, const char *library_name) noexcept {
+void link_with_library (Target *target, const char *library_name) CBUILD_NO_EXCEPT {
   require_non_null(target);
   require_non_null(library_name);
   require_non_empty(library_name);
@@ -366,7 +366,7 @@ void link_with_library (Target *target, const char *library_name) noexcept {
   list_push(target->link_libraries, copy_string(arena, library_name));
 }
 
-void add_target_hook (Target *target, Hook_Type type, Hook_Func func) noexcept {
+void add_target_hook (Target *target, Hook_Type type, Hook_Func func) CBUILD_NO_EXCEPT {
   require_non_null(target);
   
   switch (type) {
@@ -377,7 +377,7 @@ void add_target_hook (Target *target, Hook_Type type, Hook_Func func) noexcept {
   }
 }
 
-const char * get_target_name (const Target *target) noexcept {
+const char * get_target_name (const Target *target) CBUILD_NO_EXCEPT {
   require_non_null(target);
   return target->name.value;
 }
@@ -397,7 +397,7 @@ File_Path get_output_file_path_for_target (Memory_Arena &arena, const Target &ta
   return make_file_path(arena, target.project.build_location_path, "out", file_name);
 }
 
-const char * get_generated_binary_file_path (const Target *target) noexcept {
+const char * get_generated_binary_file_path (const Target *target) CBUILD_NO_EXCEPT {
   require_non_null(target);
 
   auto &project = target->project;
@@ -406,7 +406,7 @@ const char * get_generated_binary_file_path (const Target *target) noexcept {
   return path.value;
 }
 
-Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path) noexcept {
+Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path) CBUILD_NO_EXCEPT {
   auto &arena = project->global_arena;
 
   auto sub_project_path = make_file_path(arena, project->project_root, String(external_project_path));
@@ -456,7 +456,7 @@ Project_Ref * register_external_project (Project *project, const Arguments *args
 //   add(&project->arena, &project->targets, target);
 // }
 
-Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) noexcept {
+Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) CBUILD_NO_EXCEPT {
   auto external = reinterpret_cast<const Project *>(external_project);
 
   // auto external_target = external->targets.find([&] (auto target) {
@@ -472,6 +472,6 @@ Target * get_external_target (Project *project, const Project_Ref *external_proj
   return nullptr;
 }
 
-void install_target (Target *target) noexcept {
+void install_target (Target *target) CBUILD_NO_EXCEPT {
   target->flags.install = true;
 }

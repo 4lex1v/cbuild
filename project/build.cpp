@@ -129,6 +129,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_all_sources_from_directory(tests, "tests", "cpp", false);
     add_source_files(tests, "code/cbuild_api.cpp", "code/toolchain_win32.cpp", "code/logger.cpp");
 
+    add_compiler_option(tests, "-DCBUILD_ENABLE_EXCEPTIONS");
+
     link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib", "libcmt.lib");
   }
 

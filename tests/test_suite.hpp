@@ -1,6 +1,4 @@
 
-#define WIN32_DEBUG_OUTPUT_ENABLE
-
 #include "anyfin/base.hpp"
 #include "anyfin/arena.hpp"
 #include "anyfin/result.hpp"
@@ -95,7 +93,7 @@ struct Test_Suite_Runner {
 
   List<String> failed_suites { arena };
 
-  Status execute_step (const Test_Case::Case_Step step) {
+  Status execute_step (Test_Case::Case_Step step) {
     auto local = this->arena;
 
     try { step(local); }

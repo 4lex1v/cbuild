@@ -14,10 +14,12 @@
 #define CBUILD_EXPERIMENTAL_API
 #endif
 
-#ifdef __cplusplus
+#ifndef CBUILD_NO_EXCEPT
+#if defined(__cplusplus) && !defined(CBUILD_ENABLE_EXCEPTIONS)
   #define CBUILD_NO_EXCEPT noexcept
 #else 
   #define CBUILD_NO_EXCEPT
+#endif
 #endif
 
 typedef struct Project Project;

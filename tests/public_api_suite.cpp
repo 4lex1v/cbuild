@@ -1,11 +1,10 @@
 
 #include "anyfin/base.hpp"
 
+#define CBUILD_API_VERSION 1
+
 #include "code/cbuild_api.hpp"
 #include "code/toolchain.hpp"
-
-#define CBUILD_API_VERSION 1
-#include "code/templates/cbuild_api_template.hpp"
 
 #include "test_suite.hpp"
 
@@ -93,7 +92,7 @@ static void disable_registry_test (Memory_Arena &arena) {
   require(project.registry_disabled);
 }
 
-static int test_action (const Arguments *args) noexcept {
+static int test_action (const Arguments *args) {
   return 0;
 }
 
