@@ -134,13 +134,13 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib", "libcmt.lib");
   }
 
-  // auto rdump = add_executable(project, "rdump");
-  // {
-  //   add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
-  //   add_source_files(rdump, "code/platform_win32.cpp", "code/registry.cpp");
-  //   add_compiler_options(cbuild, "-fno-exceptions");
-  //   link_with(rdump, "kernel32.lib", "advapi32.lib");
-  // }
+  auto rdump = add_executable(project, "rdump");
+  {
+    add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
+    add_source_files(rdump, "code/registry.cpp", "code/c_runtime_compat.cpp",  "code/logger.cpp");
+    add_compiler_options(cbuild, "-fno-exceptions");
+    link_with(rdump, "kernel32.lib", "advapi32.lib");
+  }
 
   // if (config == "release") {
   //   char release_folder[128];

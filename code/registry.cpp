@@ -11,12 +11,10 @@ Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
   Registry registry {};
 
   auto [open_error, registry_file] = open_file(registry_file_path, Write_Access | Create_Missing);
-  if (open_error) panic("Couldn't open the registry file at %, due to an error: %\n", registry_file_path, open_error.value);
+  if (open_error) panic("ERROR: Couldn't open the registry file at %, due to an error: %\n", registry_file_path, open_error.value);
 
   auto file_size = get_file_size(registry_file).or_default(0);
   if (file_size == 0) return registry; // If the file was just created or it's empty there are no records to load.
-
-  auto &records = registry.records;
 
   auto [mapping_error, mapping] = map_file_into_memory(registry_file);
   if (mapping_error) log("ERROR: Couldn't map registry file % due to an error: %\n", registry_file_path, mapping_error.value);
@@ -26,26 +24,18 @@ Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
   auto buffer        = reinterpret_cast<u8 *>(mapping.memory);
   auto buffer_cursor = buffer;
 
-  const auto read_header_field = [&buffer_cursor] <typename T> (T &field) {
-    field          = *reinterpret_cast<T *>(buffer_cursor);
-    buffer_cursor += sizeof(T);
-  };
-
   auto set_field = [&buffer_cursor] <typename T> (T &field, usize count, usize align = 0) {
     if (align > 0) buffer_cursor = align_forward(buffer_cursor, align);
 
-    auto value_size = sizeof(remove_ptr<T>) * count;
-
     field         = reinterpret_cast<T>(buffer_cursor);
-    buffer_cursor += value_size;
+    buffer_cursor += sizeof(remove_ptr<T>) * count; // T type are pointer fields in the records struct
   };
 
-  read_header_field(records.header.version);
-  read_header_field(records.header.targets_count);
-  read_header_field(records.header.aligned_total_files_count);
-  read_header_field(records.header.dependencies_count);
+  auto &records = registry.records;
 
-  buffer_cursor += sizeof(records.header._reserved);
+  records.header = *reinterpret_cast<Registry::Header *>(buffer_cursor);
+
+  buffer_cursor += sizeof(Registry::Header);
 
   set_field(records.targets,            records.header.targets_count);
   set_field(records.files,              records.header.aligned_total_files_count, 32);
