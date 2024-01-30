@@ -13,11 +13,13 @@ Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
   auto [open_error, registry_file] = open_file(registry_file_path, Write_Access | Create_Missing);
   if (open_error) panic("ERROR: Couldn't open the registry file at %, due to an error: %\n", registry_file_path, open_error.value);
 
+  registry.registry_file = registry_file;
+
   auto file_size = get_file_size(registry_file).or_default(0);
   if (file_size == 0) return registry; // If the file was just created or it's empty there are no records to load.
 
   auto [mapping_error, mapping] = map_file_into_memory(registry_file);
-  if (mapping_error) log("ERROR: Couldn't map registry file % due to an error: %\n", registry_file_path, mapping_error.value);
+  if (mapping_error) panic("ERROR: Couldn't load registry file % due to an error: %\n", registry_file_path, mapping_error.value);
     
   registry.registry_file_mapping = mapping;
 
@@ -54,8 +56,8 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
     u16 new_aligned_total = 0;
 
     /*
-      It's aligned by 4 to put the size of the allocated buffer on a 32-byte boundary, each file record is 8 bytes.
-    */
+      Each record is 8 bytes. For the purposes of a faster SIMD based lookup, these records should be aligned on a 32-byte boundary.
+     */
     for (auto &target: project.targets) new_aligned_total += align_forward(target.files.count, 4);
 
     /*
@@ -69,7 +71,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
   fin_ensure(is_aligned_by(aligned_files_count, 4));
 
   if (aligned_files_count > max_supported_files_count) 
-    panic("At the moment cbuild is limited to support 250k files.");
+    panic("ERROR: At the moment cbuild is limited to support 250k files.");
 
   Update_Set update_set;
 
@@ -81,10 +83,8 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
   auto set_field = [&buffer_cursor] <typename T> (T &field, usize count, usize align = 0) {
     if (align > 0) buffer_cursor = align_forward(buffer_cursor, align);
 
-    auto value_size = sizeof(remove_ptr<T>) * count;
-
     field         = reinterpret_cast<T>(buffer_cursor);
-    buffer_cursor += value_size;
+    buffer_cursor += sizeof(remove_ptr<T>) * count;
   };
 
   set_field(update_set.header,             1);
@@ -97,7 +97,7 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
   auto reservation_size = buffer_cursor - update_set_buffer;
   {
     auto reservation = reserve(arena, reservation_size, 32);
-    if (reservation == nullptr) panic("Not enough memory to allocate buffer for registry update set");
+    if (!reservation) panic("ERROR: Not enough memory to allocate buffer for registry update set");
 
     fin_ensure((void*)reservation == (void*)update_set_buffer);
     fin_ensure((void*)(update_set_buffer + reservation_size) == (void*)get_memory_at_current_offset(arena));
@@ -145,15 +145,20 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
 }
 
 void flush_registry (Registry &registry, const Update_Set &update_set) {
-  reset_file_cursor(registry.registry_file);
-
-  auto count = update_set.header->dependencies_count;
+  /*
+    For the processing purposes we reserve a big chunk of space to hold dependencies information (approx. for 250k files),
+    but most of this space will likely be empty. To avoid this, we "compact" all the records by copying all records right
+    after a list of dependency file ids. The reverse of this information would be taken care of when we load the registry.
+   */
+  auto count   = update_set.header->dependencies_count;
   auto records = reinterpret_cast<Registry::Record *>(update_set.dependencies + count);
   copy_memory(records, update_set.dependency_records, count);
 
   auto flush_buffer_size = usize(records + count) - usize(update_set.buffer);
 
-  write_bytes_to_file(registry.registry_file, update_set.buffer, flush_buffer_size);
+  ensure(reset_file_cursor(registry.registry_file), "Failed to reset registry file pointer\n");
+  ensure(write_bytes_to_file(registry.registry_file, update_set.buffer, flush_buffer_size),
+         "Failed to persiste build information into a cache file. Full rebuild will likely happen next run\n");
 
   close_file(registry.registry_file);
 }

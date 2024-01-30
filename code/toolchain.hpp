@@ -17,4 +17,4 @@ struct Env_Var {
 
 List<Env_Var> setup_system_sdk (Memory_Arena &arena, Target_Arch architecture);
 
-void reset_environment (List<Env_Var> env);
+void reset_environment (const List<Env_Var> &env);

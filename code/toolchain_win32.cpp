@@ -313,7 +313,7 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
   return previous;
 }
 
-void reset_environment (List<Env_Var> env) {
+void reset_environment (const List<Env_Var> &env) {
   for (auto &[key, value]: env)
     if (!SetEnvironmentVariable(key.value, value.value)) [[unlikely]]
       panic("Failed to set the '%' envvar", String(key.value));

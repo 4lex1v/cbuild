@@ -24,8 +24,8 @@ extern CLI_Flags global_flags;
 enum struct Chain_Status: u32 {
   Unchecked,
   Checking,
-  Checked_Has_Updates,
-  Checked_No_Updates,
+  Updated,
+  Unchanged,
 };
 
 enum struct Target_Compile_Status: u32   { Compiling, Failed, Success };
@@ -61,10 +61,6 @@ struct Target_Tracker {
   {
     fin_ensure(_target.build_context.tracker == nullptr);
   }
-
-  void * operator new (usize size, Memory_Arena &arena) {
-    return reserve<Target_Tracker>(arena);
-  }
 };
 
 struct Build_Task {
@@ -72,10 +68,10 @@ struct Build_Task {
   using enum Type;
 
   /*
-    REMINDER: The ordering of these fields is important to keep tasks separated on cache lines.
+    REMINDER: The ordering of these fields is important to keep individual tasks separate on cache lines.
    */
   Type type;
-  bool dependencies_updated;
+  b32  dependencies_updated;
   Target_Tracker *tracker;
   File file;
 };
@@ -87,154 +83,122 @@ static Registry   registry {};
 static bool       registry_enabled;
 static Update_Set update_set {};
 
-static Option<File_Path> try_resolve_include_path (Memory_Arena &arena, File_Path path, const Option<File_Path> &folder, Slice<File_Path> include_paths) {
-  if (folder) {
-    auto current_folder_path = make_file_path(arena, folder.value, path);
-    if (auto check = check_file_exists(current_folder_path); check.is_ok() && check.value)
-      return current_folder_path;
+static Chain_Status scan_dependency_chain (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const List<File_Path> &extra_include_directories, const File &file, bool is_included_file = false) {
+  if (global_flags.tracing && !is_included_file) log("Scanning file: %\n", file.path);
+  
+  auto file_id = unwrap(get_file_id(file));
+
+  usize dependency_file_index = 0; // Only for included files
+  if (is_included_file) {
+    /*
+      Protection from recursive includes.
+
+      If we see this file for the first time, add it into the cache as 'Checking'. If the scanner sees this file included
+      in the upstream chain of this file, i.e recursive include, we prevent infinite looping by returning the 'Checking'
+      status.
+     */
+
+    auto [found, index] = find_offset(get_dependencies(update_set), file_id);
+    if (found) return chain_status_cache[index];
+
+    dependency_file_index = update_set.header->dependencies_count++;
+
+    update_set.dependencies[dependency_file_index] = file_id;
+    chain_status_cache[dependency_file_index]      = Chain_Status::Checking;
   }
 
-  for (auto &prefix: include_paths) {
-    auto full_path = make_file_path(arena, prefix, path);
-    auto [error, exists] = check_file_exists(full_path);
-    if (error || !exists) {
-      if (error) log("WARNING: System error occured while checking file %\n", error.value);
-      continue;
+  List<File_Path> include_directories(arena, extra_include_directories);
+
+  auto [error, path] = get_folder_path(arena, file.path);
+  if (!error) list_push_front_copy(include_directories, path);
+  else log("WARNING: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+           "Build process will continue, but this may cause issues with include files lookup.",
+           file.path, error);
+
+  Chain_Status chain_status = Chain_Status::Unchanged;
+
+  auto mapping = unwrap(map_file_into_memory(file));
+  defer { unmap_file(mapping); };
+
+  const auto try_resolve_include_path = [&] (Memory_Arena &arena, File_Path path) {
+    for (auto &prefix: include_directories) {
+      auto full_path = make_file_path(arena, prefix, path);
+
+      auto [error, exists] = check_file_exists(full_path);
+      if (!exists) continue;
+      else if (error) {
+        log("WARNING: System error occured while checking file %\n", error.value);
+        continue;
+      }
+
+      return full_path;
     }
 
-    return full_path;
-  }
+    return File_Path {};
+  };
 
-  return opt_none;
-}
-
-static Chain_Status scan_dependency_chains (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path> include_directories) {
-  using enum Chain_Status;
-
-  const auto &records = registry.records;
-
-  auto file_id = unwrap(get_file_id(source_file));
-
-  if (auto result = find_offset(get_dependencies(update_set), file_id); result) {
-    return chain_status_cache[result.value];
-  }
-
-  const usize index = update_set.header->dependencies_count++;
-
-  update_set.dependencies[index] = file_id;
-  chain_status_cache[index]      = Chain_Status::Checking;
-
-  fin_ensure(chain_status_cache[index] == Chain_Status::Checking);
-
-  Option<File_Path> source_file_folder_path = opt_none;
-  {
-    auto [error, path] = get_folder_path(arena, source_file.path);
-    if (!error) source_file_folder_path = Option(move(path));
-    else log("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-               "Build process will continue, but this may cause issues with include files lookup.",
-               source_file.path, error);
-  }
-
-  bool chain_has_updates = false;
-
-  auto iterator = Dependency_Iterator(source_file, unwrap(map_file_into_memory(source_file)));
+  auto iterator = Dependency_Iterator(file, mapping);
   while (auto include_value = get_next_include_value(iterator)) {
     auto local = arena;
 
-    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.value, source_file_folder_path, include_directories);
-    if (!is_defined) {
+    auto resolved_path = try_resolve_include_path(local, include_value.value);
+    if (!resolved_path) {
       String_Builder builder { local };
-      builder.add(local, Callsite(), ": Couldn't resolve the include file ", include_value, " from file ", source_file.path, " the following paths were checked:\n");
+      builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", file.path, " the following paths were checked:\n");
       for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
 
-      log(build_string(local, builder));
-
-      continue;
-    }
-
-    auto [open_error, dependency_file] = open_file(move(resolved_path));
-    if (open_error) log("Couldn't open included header file for scanning due to an error: %", open_error.value);
-
-    defer { close_file(dependency_file); };
-    
-    auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
-    fin_ensure(chain_scan_result != Chain_Status::Unchecked);
-
-    if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
-  }
-
-  auto timestamp = unwrap(get_last_update_timestamp(source_file));
-
-  {
-    // Attempt to find the offset for the given file_id if the chain has no updates.
-    auto [offset_found, offset] = !chain_has_updates ? find_offset(get_dependencies(registry), file_id) : opt_none;
-    if (offset_found) {
-      auto &record = records.dependency_records[offset];
-      chain_has_updates = (timestamp != record.timestamp);
-    }
-    else {
-      /*
-        If the chain already has updates or the file_id is not found in the records, it implies that this is a new dependency.
-        This requires a rebuild of the source file, hence we set chain_has_updates to true.
-      */
-      chain_has_updates = true;
-    }
-  }
-
-  auto status = chain_has_updates ? Checked_Has_Updates : Checked_No_Updates;
-
-  update_set.dependency_records[index] = Registry::Record { .timestamp = timestamp };
-  chain_status_cache[index]            = status;
-
-  return status;
-}
-
-static bool scan_file_dependencies (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const File &source_file, Slice<File_Path> include_directories) {
-  bool chain_has_updates = false;
-
-  auto file_mapping = unwrap(map_file_into_memory(source_file));
-  defer { unmap_file(file_mapping); };
-
-  Option<File_Path> source_file_folder_path = opt_none;
-  {
-    auto [error, path] = get_folder_path(arena, source_file.path);
-    if (!error) source_file_folder_path = Option(move(path));
-    else log("ERROR: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-             "Build process will continue, but this may cause issues with include files lookup.",
-             source_file.path, error.value);
-  }
-
-  auto iterator = Dependency_Iterator(source_file, file_mapping);
-  while (auto include_value = get_next_include_value(iterator)) {
-    auto local = arena;
-    
-    auto [is_defined, resolved_path] = try_resolve_include_path(local, include_value.value, source_file_folder_path, include_directories);
-    if (!is_defined) {
-      String_Builder builder { local };
-      builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", source_file.path, " the following paths were checked:\n");
-      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
-
-      log("%\n", build_string(local, builder));
-
+      log("\n%\n", build_string(local, builder));
+      chain_status = Chain_Status::Updated;
       continue;
     }
 
     auto [open_error, dependency_file] = open_file(resolved_path);
     if (open_error) {
       log("WARNING: Couldn't open included header file for scanning due to a system error: %.", open_error.value);
-      chain_has_updates = true;
+      chain_status = Chain_Status::Updated;
       continue;
     }
 
     defer { close_file(dependency_file); };
 
-    auto chain_scan_result = scan_dependency_chains(local, chain_status_cache, dependency_file, include_directories);
+    auto chain_scan_result = scan_dependency_chain(local, chain_status_cache, extra_include_directories, dependency_file, true);
     fin_ensure(chain_scan_result != Chain_Status::Unchecked);
 
-    if (chain_scan_result == Chain_Status::Checked_Has_Updates) chain_has_updates = true;
+    if (chain_scan_result == Chain_Status::Updated) chain_status = Chain_Status::Updated;
   }
 
-  return chain_has_updates;
+  if (!is_included_file) return chain_status; // That's all that we need to do for a translation unit
+
+  auto timestamp = unwrap(get_last_update_timestamp(file));
+
+  /*
+    If the upstream chain hasn't been updated, we must also consider the current file for any changes.
+   */
+  if (chain_status != Chain_Status::Updated) {
+    fin_ensure((chain_status == Chain_Status::Checking) || (chain_status == Chain_Status::Unchanged));
+
+    auto registry_dependencies = get_dependencies(registry);
+
+    auto [existing_entry_found, index] = find_offset(registry_dependencies, file_id);
+    if (existing_entry_found) {
+      auto record_timestamp = registry.records.dependency_records[index].timestamp;
+      if (timestamp != record_timestamp) {
+        if (global_flags.tracing) log("Included file '%' has newer timestamp\n", file.path);
+        chain_status = Chain_Status::Updated;
+      }
+    }
+    else {
+      /*
+        If the file_id is not found in the records, this must be a new dependency (or a bug?).
+      */
+      chain_status = Chain_Status::Updated;
+    }
+  }
+
+  update_set.dependency_records[dependency_file_index] = Registry::Record { .timestamp = timestamp };
+  chain_status_cache[dependency_file_index]            = chain_status;
+
+  return chain_status;
 }
 
 static bool is_msvc (Toolchain_Type type) {
@@ -335,7 +299,9 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
   auto link_result = Link_Result::Ignore;
 
   auto needs_linking = tracker.needs_linking || upstream_status == Upstream_Targets_Status::Updated;
-  if (needs_linking) {
+  if (!needs_linking && global_flags.tracing)
+    log("Target '%' linking cancelled, linking is not required\n", target.name);
+  else {
     if (!global_flags.silenced) log("Linking target: %\n", target.name);
 
     auto output_file_name     = concat_string(arena, target.name, ".", get_target_extension(target));
@@ -443,11 +409,22 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto object_file_path     = make_file_path(arena, target_object_folder, concat_string(arena, unwrap(get_resource_name(file.path)), ".", get_object_extension()));
 
   bool should_rebuild = true;
-  if (!project.rebuild_required && !dependencies_updated && target.build_context.last_info) {
+
+  /*
+    If there are existing records for the given target, we should check if this file was
+    compiled previously and if there were any changes from the last time.
+
+    - If registry has been disabled, we should always build all files.
+    - If any of the included files was updated in the chain, we should also rebuild this file (unless we can get
+      smarter about checking for semantic changes at some point).
+    - If no previous information is available, which should be the case if we build this target for the first time,
+      also rebuild.
+  */
+  if (!project.rebuild_required && !dependencies_updated && target_last_info) {
     auto &records = registry.records;
 
     auto section      = records.files + target_last_info->files_offset;
-    auto section_size = target_last_info->files_count.value;
+    auto section_size = target_last_info->aligned_max_files_count;//target_last_info->files_count.value;
 
     auto [record_found, index] = find_offset(Array(section, section_size), file_id);
     if (record_found) {
@@ -457,6 +434,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
       auto [error, exists] = check_file_exists(object_file_path);
 
       should_rebuild = (timestamp != record_timestamp) || (error || !exists);
+      if (global_flags.tracing && !should_rebuild) log("No changes in file %, skipping compilation\n", file.path);
     }
   }
 
@@ -543,7 +521,11 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   if (!needs_linking) {
     // If no files were compiled, check that the binary exists
     auto output_file_path = get_output_file_path_for_target(arena, target);
-    needs_linking         = unwrap(check_file_exists(output_file_path)); 
+
+    auto [error, exists] = check_file_exists(output_file_path);
+    if (error) log("WARNING: Couldn't verify target output file at % due to an error: %\n", file.path, error.value);
+
+    needs_linking = error || !exists; // force linking in case of a system error check (unlikely) or if doesn't exist
   }
 
   tracker.needs_linking = needs_linking;
@@ -699,7 +681,6 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   }
 
   auto task_system = create_task_system(arena, project, config);
-  //defer { shutdown(task_system); };
 
   auto deps_cache  = reserve_array<Chain_Status>(arena, max_supported_files_count);
   auto build_plan  = prepare_build_plan(arena, project, config);
@@ -725,18 +706,17 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         */
         .dependencies_updated = !registry_enabled,
         .tracker = &tracker,
-        .file    = unwrap(open_file(copy_string(arena, file_path))),
+        .file    = unwrap(open_file(file_path)),
       };
 
       if (registry_enabled) {
         auto local = arena;
 
-        auto include_paths = reserve_seq<File_Path>(local, target.include_paths.count + project.include_paths.count);
+        List<File_Path> include_paths { local };
+        for (auto &path: target.include_paths)  list_push_copy(include_paths, path);
+        for (auto &path: project.include_paths) list_push_copy(include_paths, path);
 
-        for (auto &path: target.include_paths)  seq_push_copy(include_paths, path);
-        for (auto &path: project.include_paths) seq_push_copy(include_paths, path);
-
-        task.dependencies_updated = scan_file_dependencies(local, deps_cache, task.file, include_paths);
+        task.dependencies_updated = (scan_dependency_chain(local, deps_cache, include_paths, task.file) == Chain_Status::Updated);
       }
 
       task_system.add_task(move(task));
@@ -753,27 +733,21 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
     auto info = reinterpret_cast<Registry::Target_Info *>(target->build_context.info);
 
-    copy_memory(update_set.files + last_info->files_offset,
-                registry.records.files + last_info->files_offset,
-                last_info->files_count.value);
-
-    copy_memory(update_set.file_records + last_info->files_offset,
-                registry.records.file_records + last_info->files_offset,
-                last_info->files_count.value);
+    copy_memory(update_set.files        + last_info->files_offset, registry.records.files        + last_info->files_offset, last_info->files_count.value);
+    copy_memory(update_set.file_records + last_info->files_offset, registry.records.file_records + last_info->files_offset, last_info->files_count.value);
 
     *info = *last_info;
   }
 
   auto main_thread_local_context = Target_Builder_Context(make_sub_arena(arena, Target_Builder_Context::RESERVATION_SIZE));
-  while (task_system.has_unfinished_tasks())
-    task_system.execute_task(main_thread_local_context);
+  while (task_system.has_unfinished_tasks()) task_system.execute_task(main_thread_local_context);
 
   if (registry_enabled) flush_registry(registry, update_set);
 
   u32 exit_code = 0;
   for (auto tracker: build_plan.selected_targets) {
     fin_ensure(tracker.compile_status.value != Target_Compile_Status::Compiling);
-    fin_ensure(tracker.link_status.value != Target_Link_Status::Waiting);
+    fin_ensure(tracker.link_status.value    != Target_Link_Status::Waiting);
 
     if ((tracker.compile_status.value != Target_Compile_Status::Success) ||
         (tracker.link_status.value    != Target_Link_Status::Success)) {

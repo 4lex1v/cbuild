@@ -193,10 +193,6 @@ struct Target {
       project { _project },
       flags   { .external = project.is_external }
   {}
-
-  void * operator new (usize size, Memory_Arena &arena) {
-    return reserve<Target>(arena);
-  }
 };
 
 String get_target_extension (const Target &target);

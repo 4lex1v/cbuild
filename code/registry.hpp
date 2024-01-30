@@ -41,7 +41,7 @@ struct Registry {
     u32  aligned_max_files_count;
   };
 
-  File  registry_file;
+  File         registry_file;
   File_Mapping registry_file_mapping;
 
   struct {

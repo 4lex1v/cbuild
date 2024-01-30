@@ -58,8 +58,11 @@ static bool find_option_flag (const Iterable<Startup_Argument> auto &args, Strin
 struct Build_Command {
   Build_Config config;
 
+  constexpr Build_Command (Memory_Arena &arena)
+    : config { arena } {}
+
   static Build_Command parse (Memory_Arena &arena, const Iterable<Startup_Argument> auto &command_arguments) {
-    Build_Command command;
+    Build_Command command { arena };
 
     auto [builders_defined, builders] = find_argument_value(command_arguments, "builders");
     if (builders_defined) { 
@@ -83,7 +86,6 @@ struct Build_Command {
 
     auto [targets_defined, targets] = find_argument_value(command_arguments, "targets");
     if (targets_defined) {
-      command.config.selected_targets = List<String> { arena };
       split_string(targets, ',').for_each([&] (auto it) {
         if (!is_empty(it)) list_push_copy(command.config.selected_targets, it);
       });
@@ -273,7 +275,7 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   return CLI_Command::Dynamic;
 }
 
-u32 run_cbuild () {
+u32 run_cbuild () { 
   // TODO: #perf check what's the impact from page faults is. How would large pages affect?
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
     
@@ -338,7 +340,7 @@ u32 run_cbuild () {
 
   if (command_type == CLI_Command::Build) {
     auto command = Build_Command::parse(arena, args_cursor);
-    return build_project(arena, project, command.config);
+    return build_project(arena, project, move(command.config));
   }
 
   fin_ensure(command_type == CLI_Command::Dynamic);

@@ -237,7 +237,7 @@ static bool is_include_directive (Dependency_Iterator &iterator) {
   fin_ensure(iterator.cursor[0] == '#');
 
   const char directive[] = "#include";
-  auto directive_length   = array_count_elements(directive);
+  auto directive_length   = array_count_elements(directive) - 1;
 
   if (directive_length > (iterator.end - iterator.cursor)) return false;
 

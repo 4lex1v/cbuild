@@ -37,4 +37,7 @@ struct Build_Config {
     Only these targets (and their upstream dependencies) should be built by CBuild.
    */
   List<String> selected_targets;
+
+  constexpr Build_Config (Memory_Arena &arena)
+    : selected_targets { arena } {}
 };
