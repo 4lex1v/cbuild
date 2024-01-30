@@ -109,7 +109,6 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/dependency_iterator.cpp");
     add_source_file(cbuild, "code/registry.cpp");
     add_source_file(cbuild, "code/target_builder.cpp");
-    add_source_file(cbuild, "code/c_runtime_compat.cpp");
     add_source_file(cbuild, "code/main.cpp");
     add_source_file(cbuild, "code/logger.cpp");
 
@@ -137,7 +136,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   auto rdump = add_executable(project, "rdump");
   {
     add_all_sources_from_directory(rdump, "tools/registry_dump", "cpp", false);
-    add_source_files(rdump, "code/registry.cpp", "code/c_runtime_compat.cpp",  "code/logger.cpp");
+    add_source_files(rdump, "code/registry.cpp", "code/logger.cpp");
     add_compiler_options(cbuild, "-fno-exceptions");
     link_with(rdump, "kernel32.lib", "advapi32.lib");
   }

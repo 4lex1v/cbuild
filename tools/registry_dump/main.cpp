@@ -4,6 +4,8 @@
 
 #include "code/registry.hpp"
 
+#include "anyfin/c_runtime_compat.hpp"
+
 Panic_Handler panic_handler = terminate;
 
 int mainCRTStartup () {

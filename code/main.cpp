@@ -12,6 +12,8 @@
 #include "project_loader.hpp"
 #include "target_builder.hpp"
 
+#include "anyfin/c_runtime_compat.hpp"
+
 CLI_Flags global_flags;
 Panic_Handler panic_handler = terminate;
 

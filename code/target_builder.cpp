@@ -1,23 +1,23 @@
 
 #include "anyfin/base.hpp"
 #include "anyfin/atomics.hpp"
-#include "anyfin/seq.hpp"
 #include "anyfin/list.hpp"
 #include "anyfin/math.hpp"
 #include "anyfin/result.hpp"
 #include "anyfin/string_builder.hpp"
 #include "anyfin/array.hpp"
+#include "anyfin/array_ops.hpp"
 #include "anyfin/platform.hpp"
 #include "anyfin/commands.hpp"
 #include "anyfin/file_system.hpp"
+#include "anyfin/threads.hpp"
+#include "anyfin/concurrent.hpp"
 
 #include "cbuild_api.hpp"
 #include "dependency_iterator.hpp"
 #include "driver.hpp"
 #include "registry.hpp"
 #include "target_builder.hpp"
-#include "task_system.hpp"
-#include "toolbox.hpp"
 
 extern CLI_Flags global_flags;
 
@@ -69,11 +69,140 @@ struct Build_Task {
 
   /*
     REMINDER: The ordering of these fields is important to keep individual tasks separate on cache lines.
-   */
+  */
   Type type;
   b32  dependencies_updated;
   Target_Tracker *tracker;
   File file;
+};
+
+struct Build_System {
+  struct Node {
+    Build_Task task;
+    as32 sequence_number;
+
+    char cache_line_pad[CACHE_LINE_SIZE - sizeof(Build_Task) - sizeof(as32)];
+  };
+
+  static_assert(sizeof(Node) == CACHE_LINE_SIZE);
+
+  static constexpr usize RESERVATION_SIZE = megabytes(1);
+
+  Array<Node> queue;
+  cas64 write_index = 0;
+  cas64 read_index  = 0;
+  cau32 submitted   = 0;
+  cau32 completed   = 0;
+
+  Array<Thread> builders {};
+  Semaphore     tasks_available {};
+
+  Build_System (Memory_Arena &arena, const usize queue_size, const usize builders_count)
+    : queue { reserve_array<Node>(arena, align_forward_to_pow_2(queue_size)) }
+  {
+    for (s32 idx = 0; auto &node: this->queue) node.sequence_number = idx++;
+
+    if (builders_count) {
+      tasks_available = unwrap(create_semaphore(), "Failed to create a semaphore resource for the build queue\n");
+      builders        = reserve_array<Thread>(arena, builders_count);
+
+      for (auto &builder: builders) builder = unwrap(spawn_thread(task_system_loop, this)); 
+    }
+  }
+
+  static void task_system_loop (Build_System *system) {
+    Memory_Arena builder_arena { reserve_virtual_memory(RESERVATION_SIZE) };
+
+    while (true) {
+      wait_for_semaphore_signal(system->tasks_available);
+
+      reset_arena(builder_arena);
+      system->execute_task(builder_arena);
+    }
+  }
+
+  void execute_task (this Build_System &self, Memory_Arena &arena) {
+    auto [defined, task] = self.pull_next_task_for_execution();
+    if (!defined) return;
+
+    void build_target_task (Memory_Arena&, Build_System&, Build_Task);
+    build_target_task(arena, self, move(task));
+
+    atomic_fetch_add(self.completed, 1);
+  }
+
+  bool has_unfinished_tasks (this const auto &self) {
+    auto completed = atomic_load(self.completed);
+    auto submitted = atomic_load(self.submitted);
+
+    fin_ensure(completed <= submitted);
+
+    return (submitted != completed);
+  }
+
+  Option<Build_Task> pull_next_task_for_execution (this Build_System &self) {
+    using enum Memory_Order;
+  
+    auto index = atomic_load(self.read_index);
+
+    const auto tasks_count = self.queue.count;
+    const auto mask        = tasks_count - 1;
+
+    Node *node = nullptr;
+    while (true) {
+      node = &self.queue[index & mask];
+
+      auto sequence = atomic_load<Acquire>(node->sequence_number);
+      auto diff     = sequence - (index + 1);
+
+      if (diff == 0) {
+        if (atomic_compare_and_set<Relaxed, Relaxed>(self.read_index, index, index + 1)) break;
+      }
+      else if (diff < 0) return {};
+      else index = atomic_load(self.read_index);
+    }
+
+    auto task = move(node->task);
+
+    atomic_store<Release>(node->sequence_number, index + tasks_count);
+
+    return Option(move(task));
+  }
+
+  void submit_task (this Build_System &self, Build_Task &&task) {
+    using enum Memory_Order;
+  
+    auto index = atomic_load(self.write_index);
+
+    const auto tasks_count = self.queue.count;
+    const auto mask        = tasks_count - 1;
+
+    Node *node = nullptr;
+    while (true) {
+      node = &self.queue[index & mask];
+
+      auto sequence = atomic_load<Acquire>(node->sequence_number);
+      auto diff     = sequence - index;
+    
+      if (diff == 0) {
+        if (atomic_compare_and_set(self.write_index, index, index + 1)) break;
+      }
+      else if (diff < 0) continue;
+      else index = atomic_load(self.write_index);
+    }
+
+    /*
+      The submitted count is only checked to see if there are unfinished tasks in the queue or not,
+      so we want to increment it as early as possible.
+    */
+    atomic_fetch_add(self.submitted, 1);
+
+    zero_memory(&node->task);
+    node->task = move(task);
+
+    atomic_store<Release>(node->sequence_number, index + 1);
+    increment_semaphore(self.tasks_available);
+  }
 };
 
 static File_Path out_folder_path;
@@ -211,32 +340,6 @@ static bool is_msvc (const Toolchain_Configuration &config) {
   return is_msvc(config.type);
 }
 
-struct Target_Builder_Context {
-  constexpr static auto RESERVATION_SIZE = megabytes(1);
-
-  Memory_Arena arena;
-
-  /*
-    REMINDER:
-      This constructor will be called on a dedicated builder thread, by the task system and
-      owned by that thread.
-   */
-  Target_Builder_Context ()
-    : arena { reserve_virtual_memory(RESERVATION_SIZE) }
-  {}
-
-  /*
-    This version would only be used for a short period of time on the main thread,
-    while it executes some of the tasks itself. In this context it's fine to use a local
-    copy of the arena.
-   */
-  Target_Builder_Context (Memory_Arena _arena)
-    : arena { _arena }
-  {}
-};
-
-using Build_System = Task_System<Build_Task, Target_Builder_Context>;
-
 static void schedule_downstream_linkage (Build_System &build_system, const Target &target, const Invocable<void, Target_Tracker &> auto &update_tracker) {
   for (auto downstream: target.required_by) {
     auto downstream_tracker = downstream->build_context.tracker;
@@ -247,7 +350,7 @@ static void schedule_downstream_linkage (Build_System &build_system, const Targe
     update_tracker(*downstream_tracker);
 
     if ((atomic_fetch_sub(downstream_tracker->waiting_on_counter, 1) - 1) == 0) {
-      build_system.add_task(Build_Task {
+      build_system.submit_task(Build_Task {
         .type    = Build_Task::Type::Link,
         .tracker = downstream_tracker
       });
@@ -299,8 +402,9 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
   auto link_result = Link_Result::Ignore;
 
   auto needs_linking = tracker.needs_linking || upstream_status == Upstream_Targets_Status::Updated;
-  if (!needs_linking && global_flags.tracing)
-    log("Target '%' linking cancelled, linking is not required\n", target.name);
+  if (!needs_linking) {
+    if (global_flags.tracing) log("Target '%' linking cancelled, linking is not required\n", target.name);
+  }
   else {
     if (!global_flags.silenced) log("Linking target: %\n", target.name);
 
@@ -534,9 +638,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   atomic_store<Memory_Order::Release>(tracker.compile_status, Target_Compile_Status::Success);
 }
 
-static void build_target_task (Build_System &build_system, Target_Builder_Context &context, Build_Task &task) {
-  reset_arena(context.arena);
-
+static void build_target_task (Memory_Arena &arena, Build_System &build_system, Build_Task task) {
   const u32 thread_id = get_current_thread_id();
 
   auto &tracker = *task.tracker;
@@ -549,13 +651,13 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
         log("TRACE(#%): Picking up file % for target % for compilation\n",
               thread_id, task.file.path, target.name);
 
-      compile_file(context.arena, tracker, task.file, task.dependencies_updated);
+      compile_file(arena, tracker, task.file, task.dependencies_updated);
 
       auto status = atomic_load(tracker.compile_status);
       if (status == Target_Compile_Status::Compiling) break;
 
       task.type = Build_Task::Link;
-      build_system.add_task(move(task));
+      build_system.submit_task(move(task));
 
       break;
     }
@@ -563,7 +665,7 @@ static void build_target_task (Build_System &build_system, Target_Builder_Contex
       if (global_flags.tracing)
         log("TRACE(#%): Picking up target % for linkage\n", thread_id, target.name);
 
-      link_target(context.arena, build_system, tracker);
+      link_target(arena, build_system, tracker);
       break;
     }
   }
@@ -583,7 +685,7 @@ static auto create_task_system (Memory_Arena &arena, const Project &project, con
 
   const auto builders_count = number_of_extra_builders_to_spawn(config);
 
-  return Build_System(arena, queue_size, builders_count, build_target_task);
+  return Build_System(arena, queue_size, builders_count);
 }
 
 struct Build_Plan {
@@ -719,7 +821,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
         task.dependencies_updated = (scan_dependency_chain(local, deps_cache, include_paths, task.file) == Chain_Status::Updated);
       }
 
-      task_system.add_task(move(task));
+      task_system.submit_task(move(task));
     }
   }
 
@@ -739,7 +841,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
     *info = *last_info;
   }
 
-  auto main_thread_local_context = Target_Builder_Context(make_sub_arena(arena, Target_Builder_Context::RESERVATION_SIZE));
+  auto main_thread_local_context = make_sub_arena(arena, Build_System::RESERVATION_SIZE);
   while (task_system.has_unfinished_tasks()) task_system.execute_task(main_thread_local_context);
 
   if (registry_enabled) flush_registry(registry, update_set);
