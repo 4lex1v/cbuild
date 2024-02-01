@@ -14,19 +14,12 @@
 #include "anyfin/concurrent.hpp"
 
 #include "cbuild_api.hpp"
-#include "dependency_iterator.hpp"
-#include "driver.hpp"
+#include "scanner.hpp"
 #include "registry.hpp"
-#include "target_builder.hpp"
+#include "builder.hpp"
 
-extern CLI_Flags global_flags;
-
-enum struct Chain_Status: u32 {
-  Unchecked,
-  Checking,
-  Updated,
-  Unchanged,
-};
+extern bool tracing_enabled_opt;
+extern bool silence_logs_opt;
 
 enum struct Target_Compile_Status: u32   { Compiling, Failed, Success };
 enum struct Target_Link_Status: u32      { Waiting, Linking, Failed, Success };
@@ -212,124 +205,6 @@ static Registry   registry {};
 static bool       registry_enabled;
 static Update_Set update_set {};
 
-static Chain_Status scan_dependency_chain (Memory_Arena &arena, Array<Chain_Status> &chain_status_cache, const List<File_Path> &extra_include_directories, const File &file, bool is_included_file = false) {
-  if (global_flags.tracing && !is_included_file) log("Scanning file: %\n", file.path);
-  
-  auto file_id = unwrap(get_file_id(file));
-
-  usize dependency_file_index = 0; // Only for included files
-  if (is_included_file) {
-    /*
-      Protection from recursive includes.
-
-      If we see this file for the first time, add it into the cache as 'Checking'. If the scanner sees this file included
-      in the upstream chain of this file, i.e recursive include, we prevent infinite looping by returning the 'Checking'
-      status.
-     */
-
-    auto [found, index] = find_offset(get_dependencies(update_set), file_id);
-    if (found) return chain_status_cache[index];
-
-    dependency_file_index = update_set.header->dependencies_count++;
-
-    update_set.dependencies[dependency_file_index] = file_id;
-    chain_status_cache[dependency_file_index]      = Chain_Status::Checking;
-  }
-
-  List<File_Path> include_directories(arena, extra_include_directories);
-
-  auto [error, path] = get_folder_path(arena, file.path);
-  if (!error) list_push_front_copy(include_directories, path);
-  else log("WARNING: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
-           "Build process will continue, but this may cause issues with include files lookup.",
-           file.path, error);
-
-  Chain_Status chain_status = Chain_Status::Unchanged;
-
-  auto mapping = unwrap(map_file_into_memory(file));
-  defer { unmap_file(mapping); };
-
-  const auto try_resolve_include_path = [&] (Memory_Arena &arena, File_Path path) {
-    for (auto &prefix: include_directories) {
-      auto full_path = make_file_path(arena, prefix, path);
-
-      auto [error, exists] = check_file_exists(full_path);
-      if (!exists) continue;
-      else if (error) {
-        log("WARNING: System error occured while checking file %\n", error.value);
-        continue;
-      }
-
-      return full_path;
-    }
-
-    return File_Path {};
-  };
-
-  auto iterator = Dependency_Iterator(file, mapping);
-  while (auto include_value = get_next_include_value(iterator)) {
-    auto local = arena;
-
-    auto resolved_path = try_resolve_include_path(local, include_value.value);
-    if (!resolved_path) {
-      String_Builder builder { local };
-      builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", file.path, " the following paths were checked:\n");
-      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
-
-      log("\n%\n", build_string(local, builder));
-      chain_status = Chain_Status::Updated;
-      continue;
-    }
-
-    auto [open_error, dependency_file] = open_file(resolved_path);
-    if (open_error) {
-      log("WARNING: Couldn't open included header file for scanning due to a system error: %.", open_error.value);
-      chain_status = Chain_Status::Updated;
-      continue;
-    }
-
-    defer { close_file(dependency_file); };
-
-    auto chain_scan_result = scan_dependency_chain(local, chain_status_cache, extra_include_directories, dependency_file, true);
-    fin_ensure(chain_scan_result != Chain_Status::Unchecked);
-
-    if (chain_scan_result == Chain_Status::Updated) chain_status = Chain_Status::Updated;
-  }
-
-  if (!is_included_file) return chain_status; // That's all that we need to do for a translation unit
-
-  auto timestamp = unwrap(get_last_update_timestamp(file));
-
-  /*
-    If the upstream chain hasn't been updated, we must also consider the current file for any changes.
-   */
-  if (chain_status != Chain_Status::Updated) {
-    fin_ensure((chain_status == Chain_Status::Checking) || (chain_status == Chain_Status::Unchanged));
-
-    auto registry_dependencies = get_dependencies(registry);
-
-    auto [existing_entry_found, index] = find_offset(registry_dependencies, file_id);
-    if (existing_entry_found) {
-      auto record_timestamp = registry.records.dependency_records[index].timestamp;
-      if (timestamp != record_timestamp) {
-        if (global_flags.tracing) log("Included file '%' has newer timestamp\n", file.path);
-        chain_status = Chain_Status::Updated;
-      }
-    }
-    else {
-      /*
-        If the file_id is not found in the records, this must be a new dependency (or a bug?).
-      */
-      chain_status = Chain_Status::Updated;
-    }
-  }
-
-  update_set.dependency_records[dependency_file_index] = Registry::Record { .timestamp = timestamp };
-  chain_status_cache[dependency_file_index]            = chain_status;
-
-  return chain_status;
-}
-
 static bool is_msvc (Toolchain_Type type) {
   return ((type == Toolchain_Type_MSVC_X86) ||
           (type == Toolchain_Type_MSVC_X64) ||
@@ -368,7 +243,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
   auto target_compilation_status = atomic_load(tracker.compile_status);
   if (target_compilation_status == Target_Compile_Status::Compiling) {
-    if (global_flags.tracing) log("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
+    if (tracing_enabled_opt) log("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
     return;
   }
 
@@ -380,7 +255,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     submitted to the queue by that thread.
   */
   if (auto counter = atomic_load<Memory_Order::Acquire>(tracker.waiting_on_counter); counter > 0) {
-    if (global_flags.tracing) log("TRACE(#%): Target % is waiting on % more targets to be linked\n", thread_id, target.name, counter);
+    if (tracing_enabled_opt) log("TRACE(#%): Target % is waiting on % more targets to be linked\n", thread_id, target.name, counter);
     return;
   }
 
@@ -403,10 +278,10 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
   auto needs_linking = tracker.needs_linking || upstream_status == Upstream_Targets_Status::Updated;
   if (!needs_linking) {
-    if (global_flags.tracing) log("Target '%' linking cancelled, linking is not required\n", target.name);
+    if (tracing_enabled_opt) log("Target '%' linking cancelled, linking is not required\n", target.name);
   }
   else {
-    if (!global_flags.silenced) log("Linking target: %\n", target.name);
+    if (!silence_logs_opt) log("Linking target: %\n", target.name);
 
     auto output_file_name     = concat_string(arena, target.name, ".", get_target_extension(target));
     auto target_object_folder = make_file_path(arena, object_folder_path, target.name);
@@ -460,7 +335,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     builder += concat_string(arena, is_win32() ? "/OUT:" : "-o ", output_file_path);
 
     auto link_command = build_string_with_separator(arena, builder, ' ');
-    if (global_flags.tracing) log("Linking target % with %\n", target.name, link_command);
+    if (tracing_enabled_opt) log("Linking target % with %\n", target.name, link_command);
 
     auto [error, status] = run_system_command(arena, link_command);
     if (error) {
@@ -538,7 +413,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
       auto [error, exists] = check_file_exists(object_file_path);
 
       should_rebuild = (timestamp != record_timestamp) || (error || !exists);
-      if (global_flags.tracing && !should_rebuild) log("No changes in file %, skipping compilation\n", file.path);
+      if (tracing_enabled_opt && !should_rebuild) log("No changes in file %, skipping compilation\n", file.path);
     }
   }
 
@@ -546,7 +421,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
   auto file_compilation_status = File_Compile_Status::Ignore;
 
   if (should_rebuild) {
-    if (!global_flags.silenced) log("Building file: %\n", file.path);
+    if (!silence_logs_opt) log("Building file: %\n", file.path);
 
     auto is_cpp_file = ends_with(file.path, "cpp");
     auto _msvc       = is_msvc(toolchain);
@@ -568,7 +443,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
 
     auto compilation_command = build_string_with_separator(arena, builder, ' ');
-    if (global_flags.tracing) log("Building file % with: %\n", file.path, compilation_command);
+    if (tracing_enabled_opt) log("Building file % with: %\n", file.path, compilation_command);
 
     auto [error, status] = run_system_command(arena, compilation_command);
     if (error) {
@@ -647,7 +522,7 @@ static void build_target_task (Memory_Arena &arena, Build_System &build_system, 
   switch (task.type) {
     case Build_Task::Type::Uninit: return;
     case Build_Task::Type::Compile: {
-      if (global_flags.tracing)
+      if (tracing_enabled_opt)
         log("TRACE(#%): Picking up file % for target % for compilation\n",
               thread_id, task.file.path, target.name);
 
@@ -662,7 +537,7 @@ static void build_target_task (Memory_Arena &arena, Build_System &build_system, 
       break;
     }
     case Build_Task::Type::Link: {
-      if (global_flags.tracing)
+      if (tracing_enabled_opt)
         log("TRACE(#%): Picking up target % for linkage\n", thread_id, target.name);
 
       link_target(arena, build_system, tracker);
@@ -671,21 +546,18 @@ static void build_target_task (Memory_Arena &arena, Build_System &build_system, 
   }
 }
 
-static u32 number_of_extra_builders_to_spawn (const Build_Config &config) {
+static u32 number_of_extra_builders_to_spawn (u32 builders_count) {
   // This number excludes main thread, which always exists
   auto cpu_count = get_logical_cpu_count();
-  auto count     = clamp<u32>(config.builders_count, 1, cpu_count);
+  auto count     = clamp<u32>(builders_count, 1, cpu_count);
 
   // This number specifies only the count of extra threads in addition to the main thread
   return count - 1;
 }
 
-static auto create_task_system (Memory_Arena &arena, const Project &project, const Build_Config &config) {
+static auto create_task_system (Memory_Arena &arena, const Project &project, u32 builders_count) {
   const auto queue_size = project.targets.count + project.total_files_count;
-
-  const auto builders_count = number_of_extra_builders_to_spawn(config);
-
-  return Build_System(arena, queue_size, builders_count);
+  return Build_System(arena, queue_size, number_of_extra_builders_to_spawn(builders_count));
 }
 
 struct Build_Plan {
@@ -698,10 +570,10 @@ struct Build_Plan {
   {}
 };
 
-static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &project, const Build_Config &config) {
+static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &project, const List<String> &selected_targets) {
   Build_Plan plan(arena);
   
-  if (is_empty(config.selected_targets)) {
+  if (is_empty(selected_targets)) {
     for (auto &it: project.targets) {
       it.build_context.tracker = &list_push(plan.selected_targets, it);
     }
@@ -717,7 +589,7 @@ static Build_Plan prepare_build_plan (Memory_Arena &arena, const Project &projec
     list_push_copy(list, target);
   };
 
-  for (auto target_name: config.selected_targets) {
+  for (auto target_name: selected_targets) {
     Target *selected_target = nullptr;
     for (auto &target: project.targets) {
       if (target.name == target_name) {
@@ -757,8 +629,10 @@ static void validate_toolchain (const Project &project) {
   if (!check_file_exists(tc.archiver_path).or_default(false))     panic("No archive tool found at %\n", tc.archiver_path);
 }
 
-u32 build_project (Memory_Arena &arena, const Project &project, Build_Config config) {
+u32 build_project (Memory_Arena &arena, const Project &project, const List<String> &selected_targets, Cache_Behavior cache, u32 builders_count) {
   using enum File_System_Flags;
+
+  const bool is_targeted_build = !is_empty(selected_targets);
 
   validate_toolchain(project);
 
@@ -772,20 +646,23 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
   ensure(create_directory(out_folder_path));
   ensure(create_directory(object_folder_path));
 
-  registry_enabled = !project.registry_disabled && config.cache != Build_Config::Cache_Behavior::Off;
-  if (registry_enabled && config.cache == Build_Config::Cache_Behavior::On) {
+  registry_enabled = !project.registry_disabled && cache != Cache_Behavior::Off;
+  if (registry_enabled) {
     auto registry_file_path = make_file_path(arena, project.build_location_path, "__registry");
-    registry = load_registry(arena, registry_file_path);
+    registry = create_registry(registry_file_path);
+
+    if (cache == Cache_Behavior::On) load_registry(arena, registry);
+
+    update_set = init_update_set(arena, project, registry, is_targeted_build); 
   }
 
-  if (registry_enabled && config.cache != Build_Config::Cache_Behavior::Off) {
-    update_set = init_update_set(arena, registry, project); 
-  }
+  auto task_system = create_task_system(arena, project, builders_count);
+  auto build_plan  = prepare_build_plan(arena, project, selected_targets);
 
-  auto task_system = create_task_system(arena, project, config);
+  Chain_Scanner scanner(arena, registry, update_set);
 
-  auto deps_cache  = reserve_array<Chain_Status>(arena, max_supported_files_count);
-  auto build_plan  = prepare_build_plan(arena, project, config);
+  List<File_Path> project_include_paths { arena };
+  for (auto &path: project.include_paths) list_push_copy(project_include_paths, path);
 
   for (auto &tracker: build_plan.selected_targets) {
     const auto &target = tracker.target;
@@ -799,7 +676,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
 
     for (const auto &file_path: target.files) {
       Build_Task task {
-        .type    = Build_Task::Compile,
+        .type = Build_Task::Compile,
         /*
           If the registry is disabled, it's expected that we do full rebuild of the project everytime, thus
           we consider that dependencies were updated (because we are not going to walk the includes tree),
@@ -814,11 +691,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, Build_Config con
       if (registry_enabled) {
         auto local = arena;
 
-        List<File_Path> include_paths { local };
-        for (auto &path: target.include_paths)  list_push_copy(include_paths, path);
-        for (auto &path: project.include_paths) list_push_copy(include_paths, path);
+        List<File_Path> include_paths(local, project_include_paths);
+        for (auto &path: target.include_paths) list_push_front_copy(include_paths, path);
 
-        task.dependencies_updated = (scan_dependency_chain(local, deps_cache, include_paths, task.file) == Chain_Status::Updated);
+        task.dependencies_updated = scan_dependency_chain(local, scanner, include_paths, task.file);
       }
 
       task_system.submit_task(move(task));

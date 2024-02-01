@@ -12,7 +12,7 @@
   at this point Linux Kernel has 63k files, so this limit should be more than enough, if
   anything it could be changed later.
  */
-static usize max_supported_files_count = 250'000;
+constexpr inline usize max_supported_files_count = 250'000;
 
 struct Registry {
   constexpr static usize Version = 1;
@@ -79,8 +79,10 @@ static Array<u64> get_dependencies (Update_Set &set) {
   return Array(set.dependencies, set.header->dependencies_count);
 }
 
-Registry load_registry (Memory_Arena &arena, File_Path registry_file_path);
+Registry create_registry (File_Path registry_file_path);
 
-Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const Project &project);
+void load_registry (Memory_Arena &arena, Registry &registry);
+
+Update_Set init_update_set (Memory_Arena &arena, const Project &project, const Registry &registry, bool targeted_build);
 
 void flush_registry (Registry &registry, const Update_Set &update_set);

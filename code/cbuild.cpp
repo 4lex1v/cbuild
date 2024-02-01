@@ -8,14 +8,15 @@
 #include "anyfin/slice.hpp"
 
 #include "cbuild.hpp"
-#include "driver.hpp"
 #include "project_loader.hpp"
-#include "target_builder.hpp"
+#include "builder.hpp"
 
 #include "anyfin/c_runtime_compat.hpp"
 
-CLI_Flags global_flags;
 Panic_Handler panic_handler = terminate;
+
+bool silence_logs_opt    = false;
+bool tracing_enabled_opt = false;
 
 enum struct CLI_Command {
   Init,
@@ -58,10 +59,12 @@ static bool find_option_flag (const Iterable<Startup_Argument> auto &args, Strin
 };
 
 struct Build_Command {
-  Build_Config config;
+  List<String> selected_targets;
+  Cache_Behavior cache = Cache_Behavior::On;
+  u32 builders_count   = static_cast<u32>(-1);
 
   constexpr Build_Command (Memory_Arena &arena)
-    : config { arena } {}
+    : selected_targets { arena } {}
 
   static Build_Command parse (Memory_Arena &arena, const Iterable<Startup_Argument> auto &command_arguments) {
     Build_Command command { arena };
@@ -74,22 +77,22 @@ struct Build_Command {
       s32 count = 0;
       for (auto digit: builders) count = (count * 10) + (digit - '0');
 
-      command.config.builders_count = count;
+      command.builders_count = count;
     };
 
     auto [cache_defined, cache] = find_argument_value(command_arguments, "cache");
     if (cache_defined) {
-      if      (is_empty(cache))  command.config.cache = Build_Config::Cache_Behavior::On;
-      else if (cache == "on")    command.config.cache = Build_Config::Cache_Behavior::On;
-      else if (cache == "off")   command.config.cache = Build_Config::Cache_Behavior::Off;
-      else if (cache == "flush") command.config.cache = Build_Config::Cache_Behavior::Flush;
+      if      (is_empty(cache))  command.cache = Cache_Behavior::On;
+      else if (cache == "on")    command.cache = Cache_Behavior::On;
+      else if (cache == "off")   command.cache = Cache_Behavior::Off;
+      else if (cache == "flush") command.cache = Cache_Behavior::Flush;
       else panic("Invalid paramter value % for the 'cache' option", cache);
     };
 
     auto [targets_defined, targets] = find_argument_value(command_arguments, "targets");
     if (targets_defined) {
       split_string(targets, ',').for_each([&] (auto it) {
-        if (!is_empty(it)) list_push_copy(command.config.selected_targets, it);
+        if (!is_empty(it)) list_push_copy(command.selected_targets, it);
       });
     };
 
@@ -191,10 +194,10 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
     String name;
     bool* flag;
   } table [] {
-    { 's',  "silence", &global_flags.silenced },
+    { 's',  "silence", &silence_logs_opt },
 
     // Internal flags
-    { '\0', "trace",   &global_flags.tracing },
+    { '\0', "trace",   &tracing_enabled_opt },
   };
 
   usize parsed_flags_count = 0;
@@ -298,7 +301,7 @@ u32 run_cbuild () {
   parse_global_flags(args_cursor);
   auto command_type = parse_command(args_cursor);
 
-  if (!global_flags.silenced || command_type == CLI_Command::Version) {
+  if (!silence_logs_opt || command_type == CLI_Command::Version) {
 #ifdef DEV_BUILD
     log("CBuild r% DEV\n", TOOL_VERSION);
 #else
@@ -312,7 +315,7 @@ u32 run_cbuild () {
   }
 
   auto working_directory_path = unwrap(get_working_directory(arena));
-  if (!global_flags.silenced) log("Working directory: %\n", working_directory_path);
+  if (!silence_logs_opt) log("Working directory: %\n", working_directory_path);
 
   if (command_type == CLI_Command::Init) {
     auto command = Init_Command::parse(args_cursor);
@@ -341,8 +344,8 @@ u32 run_cbuild () {
   load_project(arena, project, args_cursor);
 
   if (command_type == CLI_Command::Build) {
-    auto command = Build_Command::parse(arena, args_cursor);
-    return build_project(arena, project, move(command.config));
+    auto [targets, cache, builders_count] = Build_Command::parse(arena, args_cursor);
+    return build_project(arena, project, targets, cache, builders_count);
   }
 
   fin_ensure(command_type == CLI_Command::Dynamic);

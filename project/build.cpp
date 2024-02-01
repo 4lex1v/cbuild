@@ -106,10 +106,10 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_source_file(cbuild, "code/project_loader.cpp");
     add_source_file(cbuild, "code/toolchain_win32.cpp");
     add_source_file(cbuild, "code/cbuild_api.cpp");
-    add_source_file(cbuild, "code/dependency_iterator.cpp");
+    add_source_file(cbuild, "code/scanner.cpp");
     add_source_file(cbuild, "code/registry.cpp");
-    add_source_file(cbuild, "code/target_builder.cpp");
-    add_source_file(cbuild, "code/main.cpp");
+    add_source_file(cbuild, "code/builder.cpp");
+    add_source_file(cbuild, "code/cbuild.cpp");
     add_source_file(cbuild, "code/logger.cpp");
 
     add_compiler_options(cbuild, "-fno-exceptions");

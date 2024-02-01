@@ -22,7 +22,8 @@ int mainCRTStartup () {
     return 1;
   }
 
-  Registry registry = load_registry(arena, registry_file_path);
+  Registry registry = create_registry(registry_file_path);
+  load_registry(arena, registry);
 
   auto &records = registry.records;
   auto &header  = records.header;

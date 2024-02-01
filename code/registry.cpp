@@ -5,7 +5,7 @@
 #include "cbuild_api.hpp"
 #include "registry.hpp"
 
-Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
+Registry create_registry (File_Path registry_file_path) {
   using enum File_System_Flags;
 
   Registry registry {};
@@ -15,11 +15,15 @@ Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
 
   registry.registry_file = registry_file;
 
-  auto file_size = get_file_size(registry_file).or_default(0);
-  if (file_size == 0) return registry; // If the file was just created or it's empty there are no records to load.
+  return registry;
+}
 
-  auto [mapping_error, mapping] = map_file_into_memory(registry_file);
-  if (mapping_error) panic("ERROR: Couldn't load registry file % due to an error: %\n", registry_file_path, mapping_error.value);
+void load_registry (Memory_Arena &arena, Registry &registry) {
+  auto file_size = get_file_size(registry.registry_file).or_default(0);
+  if (file_size == 0) return; // If the file was just created or it's empty there are no records to load.
+
+  auto [mapping_error, mapping] = map_file_into_memory(registry.registry_file);
+  if (mapping_error) panic("ERROR: Couldn't load registry file % due to an error: %\n", registry.registry_file.path, mapping_error.value);
     
   registry.registry_file_mapping = mapping;
 
@@ -44,11 +48,9 @@ Registry load_registry (Memory_Arena &arena, File_Path registry_file_path) {
   set_field(records.file_records,       records.header.aligned_total_files_count);
   set_field(records.dependencies,       records.header.dependencies_count, 32);
   set_field(records.dependency_records, records.header.dependencies_count);
-
-  return registry;
 }
 
-Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const Project &project) {
+Update_Set init_update_set (Memory_Arena &arena, const Project &project, const Registry &registry, bool targeted_build) {
   auto &records = registry.records;
   
   auto aligned_files_count = records.header.aligned_total_files_count;
@@ -139,6 +141,24 @@ Update_Set init_update_set (Memory_Arena &arena, const Registry &registry, const
 
     target_index += 1;
     files_offset += info->aligned_max_files_count;
+  }
+
+  if (targeted_build) {
+    /*
+      Not sure if this is the best solution to the problem, but should suffice for now. The issue with targeted builds,
+      i.e when a user calls `build targets=foo`, and the current approach to registry management is that we overwrite
+      all discovered dependencies (included files) on each run. When we build only one target, only dependencies from that
+      target will be persisted in the registry. It's done this way to avoid stale includes in the registry. This approach
+      causes the issue if we do a full build, then a targeted build, on the next full build, since the information about
+      dependencies has been lost, other targets may be forced rebuild for no need. To avoid this, for targeted builds, we
+      copy all dependencies information. While this is succeptible to the same issue with stale information, on a subsequent
+      full build, those will be removed, so it shouldn't negatively affect the size of the registry file in  along period, but
+      would positively affect user's experience working with the tool. 
+     */
+    update_set.header->dependencies_count = registry.records.header.dependencies_count;
+
+    copy_memory(update_set.dependencies,       registry.records.dependencies,       registry.records.header.dependencies_count);
+    copy_memory(update_set.dependency_records, registry.records.dependency_records, registry.records.header.dependencies_count);
   }
 
   return update_set;

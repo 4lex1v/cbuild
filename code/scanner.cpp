@@ -1,9 +1,45 @@
 
 #include "anyfin/base.hpp"
-
 #include "anyfin/console.hpp"
+#include "anyfin/array_ops.hpp"
 
-#include "dependency_iterator.hpp"
+#include "scanner.hpp"
+
+extern bool tracing_enabled_opt;
+
+struct Dependency_Iterator {
+  const File   &file;
+  File_Mapping  mapping;
+  const char   *cursor;
+  const char   *end;
+
+  constexpr Dependency_Iterator (const File &_file, File_Mapping _mapping)
+    : file    { _file },
+      mapping { _mapping },
+      cursor  { mapping.memory },
+      end     { mapping.memory + mapping.size }
+  {}
+
+  constexpr auto & operator += (usize by) {
+    this->cursor += by;
+    return *this;
+  }
+
+  constexpr auto & operator ++ (int) {
+    this->cursor++;
+    return *this;
+  }
+};
+
+enum struct Parse_Error {
+  Invalid_Value
+};
+
+/*
+  Iterates over all user-defined #include directives in the mapped source file retrieving the provided value as-is.
+  Resolution of the retrieved file path is left for the caller.
+ */
+Option<String> get_next_include_value (Dependency_Iterator &iterator);
 
 static bool advance (Dependency_Iterator &iterator, usize by = 1) {
   if (iterator.cursor == iterator.end) return false;
@@ -306,4 +342,139 @@ Option<String> get_next_include_value (Dependency_Iterator &iterator) {
   }
 
   return opt_none;
+}
+
+static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<File_Path> &extra_include_directories, const File &file, bool is_included_file) {
+  if (tracing_enabled_opt && !is_included_file) log("Scanning file: %\n", file.path);
+  
+  auto file_id = unwrap(get_file_id(file));
+
+  usize dependency_file_index = 0; // Only for included files
+  if (is_included_file) {
+    /*
+      Protection from recursive includes.
+
+      If we see this file for the first time, add it into the cache as 'Checking'. If the scanner sees this file included
+      in the upstream chain of this file, i.e recursive include, we prevent infinite looping by returning the 'Checking'
+      status.
+     */
+
+    /*
+      For targeted builds we pre-load update set with dependency records from the existing registry. In this case we may
+      find a record that doesn't have a corresponding entry in the cache. For non-targeted builds, the number of entries in
+      the cache should reflect the number of dependencies in the update_set and this situation shouldn't arise.
+    */
+    auto [found, index] = find_offset(get_dependencies(scanner.update_set), file_id);
+    if (found) {
+      auto status = scanner.status_cache[index];
+      if (status != Chain_Status::Unchecked) return status;
+    }
+
+    /*
+      See the previous note regarding targeted builds. In a targeted build, we should update the
+      cache entry that corresponds to the dependecy file, which may be in the update_set, but whose
+      cache entry is Unchecked.
+    */
+    dependency_file_index = found ? index : scanner.update_set.header->dependencies_count++;  
+
+    scanner.update_set.dependencies[dependency_file_index] = file_id;
+    scanner.status_cache[dependency_file_index]      = Chain_Status::Checking;
+  }
+
+  List<File_Path> include_directories(arena, extra_include_directories);
+
+  auto [error, path] = get_folder_path(arena, file.path);
+  if (!error) list_push_front_copy(include_directories, path);
+  else log("WARNING: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
+           "Build process will continue, but this may cause issues with include files lookup.",
+           file.path, error);
+
+  Chain_Status chain_status = Chain_Status::Unchanged;
+
+  auto mapping = unwrap(map_file_into_memory(file));
+  defer { unmap_file(mapping); };
+
+  const auto try_resolve_include_path = [&] (Memory_Arena &arena, File_Path path) {
+    for (auto &prefix: include_directories) {
+      auto full_path = make_file_path(arena, prefix, path);
+
+      auto [error, exists] = check_file_exists(full_path);
+      if (!exists) continue;
+      else if (error) {
+        log("WARNING: System error occured while checking file %\n", error.value);
+        continue;
+      }
+
+      return full_path;
+    }
+
+    return File_Path {};
+  };
+
+  auto iterator = Dependency_Iterator(file, mapping);
+  while (auto include_value = get_next_include_value(iterator)) {
+    auto local = arena;
+
+    auto resolved_path = try_resolve_include_path(local, include_value.value);
+    if (!resolved_path) {
+      String_Builder builder { local };
+      builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", file.path, " the following paths were checked:\n");
+      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
+
+      log("\n%\n", build_string(local, builder));
+      chain_status = Chain_Status::Updated;
+      continue;
+    }
+
+    auto [open_error, dependency_file] = open_file(resolved_path);
+    if (open_error) {
+      log("WARNING: Couldn't open included header file for scanning due to a system error: %.", open_error.value);
+      chain_status = Chain_Status::Updated;
+      continue;
+    }
+
+    defer { close_file(dependency_file); };
+
+    auto chain_scan_result = scan_dependency_chain(local, scanner, extra_include_directories, dependency_file, true);
+    fin_ensure(chain_scan_result != Chain_Status::Unchecked);
+
+    if (chain_scan_result == Chain_Status::Updated) chain_status = Chain_Status::Updated;
+  }
+
+  if (!is_included_file) return chain_status; // That's all that we need to do for a translation unit
+
+  auto timestamp = unwrap(get_last_update_timestamp(file));
+
+  /*
+    If the upstream chain hasn't been updated, we must also consider the current file for any changes.
+   */
+  if (chain_status != Chain_Status::Updated) {
+    fin_ensure((chain_status == Chain_Status::Checking) || (chain_status == Chain_Status::Unchanged));
+
+    auto registry_dependencies = get_dependencies(scanner.registry);
+
+    auto [existing_entry_found, index] = find_offset(registry_dependencies, file_id);
+    if (existing_entry_found) {
+      auto record_timestamp = scanner.registry.records.dependency_records[index].timestamp;
+      if (timestamp != record_timestamp) {
+        if (tracing_enabled_opt) log("Included file '%' has newer timestamp\n", file.path);
+        chain_status = Chain_Status::Updated;
+      }
+    }
+    else {
+      /*
+        If the file_id is not found in the records, this must be a new dependency (or a bug?).
+      */
+      chain_status = Chain_Status::Updated;
+    }
+  }
+
+  scanner.update_set.dependency_records[dependency_file_index] = Registry::Record { .timestamp = timestamp };
+  scanner.status_cache[dependency_file_index] = chain_status;
+
+  return chain_status;
+}
+
+bool scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<File_Path> &extra_include_directories, const File &file) {
+  return scan_dependency_chain (arena, scanner, extra_include_directories, file, false) == Chain_Status::Updated;
 }

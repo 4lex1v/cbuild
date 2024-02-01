@@ -14,11 +14,11 @@
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
-#include "driver.hpp"
 #include "project_loader.hpp"
 #include "toolchain.hpp"
 
-extern CLI_Flags global_flags;
+extern bool silence_logs_opt;
+extern bool tracing_enabled_opt;
 
 struct Arguments;
 typedef bool project_func (const Arguments *args, Project &project);
@@ -139,7 +139,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
     }
 
     auto compilation_command = build_string_with_separator(local, builder, ' ');
-    if (global_flags.tracing) log("Project build configuration compile command: %\n", compilation_command);
+    if (tracing_enabled_opt) log("Project build configuration compile command: %\n", compilation_command);
 
     auto [cmd_error, status] = run_system_command(local, compilation_command);
     if (cmd_error) panic("Failed to compile configuration file due to a system error: %\n", cmd_error.value);
@@ -182,7 +182,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
 #endif
 
     auto linking_command = build_string_with_separator(local, builder, ' ');
-    if (global_flags.tracing) log("Project build configuration link command: %\n", linking_command);
+    if (tracing_enabled_opt) log("Project build configuration link command: %\n", linking_command);
 
     auto [cmd_error, status] = run_system_command(local, linking_command);
     if (cmd_error) panic("Failed to execute system command, details: %, command: %.\n", cmd_error.value, linking_command);
@@ -276,7 +276,7 @@ void load_project (Memory_Arena &arena, Project &project, Slice<Startup_Argument
     unwrap(discover_build_file(arena, project.project_root),
            concat_string(arena, "No project configuration at: ", project.project_root, "\n"));
 
-  if (!global_flags.silenced) log("Configuration file: %\n", build_file_path);
+  if (!silence_logs_opt) log("Configuration file: %\n", build_file_path);
 
   /*
     There are two parts to loading the project:
