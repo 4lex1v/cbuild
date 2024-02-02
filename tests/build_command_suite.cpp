@@ -1,4 +1,6 @@
 
+#include "anyfin/threads.hpp"
+
 #include "test_suite.hpp"
 
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
@@ -65,13 +67,13 @@ static void validate_binary (Memory_Arena &arena, String binary_name, String exp
   require(has_substring(output, expected_result));
 }
 
-static u32 count_lines_starting_with (String output, String start_with, u32 expected_count) {
+static void require_lines_count (String output, String start_with, u32 expected_count) {
   u32 count = 0;
 
   split_string(output, '\n')
     .for_each([&] (auto it) { if (starts_with(it, start_with)) count += 1; });
 
-  return count;
+  require(count == expected_count);
 }
 
 static void build_init_project_st_test (Memory_Arena &arena) {
@@ -110,7 +112,7 @@ static void build_testsite_tests (Memory_Arena &arena) {
       require(has_substring(output, concat_string(local, "Selected toolchain - ", toolchain)));
       require(has_substring(output, concat_string(local, "Selected configuration - ", config)));
 
-      count_lines_starting_with(output, "Building file", 9);
+      require_lines_count(output, "Building file", 10);
 
       require_path_exists(cbuild_output_folder);
 
@@ -126,20 +128,20 @@ static void build_registry_tests (Memory_Arena &arena) {
   auto executable_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
 
   auto output = build_testsite(arena);
-  count_lines_starting_with(output, "Building file", 9);
+  require_lines_count(output, "Building file", 10);
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
 
   for (int idx = 0; idx < 5; idx++) {
     auto output2 = build_testsite(arena);
-    count_lines_starting_with(output2, "Building file", 0);
+    require_lines_count(output2, "Building file", 0);
     validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2", "lib3,dyn3,bin2");
   }
 
   for (int idx = 0; idx < 5; idx++) {
     auto output2 = build_testsite(arena, "cache=off");
-    count_lines_starting_with(output2, "Building file", 9);
+    require_lines_count(output2, "Building file", 10);
 
     validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -147,7 +149,7 @@ static void build_registry_tests (Memory_Arena &arena) {
 
   for (int idx = 0; idx < 5; idx++) {
     auto output2 = build_testsite(arena);
-    count_lines_starting_with(output2, "Building file", 0);
+    require_lines_count(output2, "Building file", 0);
     validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2", "lib3,dyn3,bin2");
   }
@@ -157,7 +159,7 @@ static void build_changes_tests (Memory_Arena &arena) {
   using enum File_System_Flags;
 
   auto output = build_testsite(arena);
-  count_lines_starting_with(output, "Building file", 9);
+  require_lines_count(output, "Building file", 10);
 
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -183,8 +185,8 @@ void library2 () {
   {
     auto output = build_testsite(arena);
 
-    count_lines_starting_with(output, "Building file",  1); // library2.cpp
-    count_lines_starting_with(output, "Linking target", 3); // library2, dynamic2, binary1
+    require_lines_count(output, "Building file",  1); // library2.cpp
+    require_lines_count(output, "Linking target", 3); // library2, dynamic2, binary1
 
     validate_binary(arena, "binary1", "lib2_updated,dyn1,dyn2,bin1");
   }
@@ -214,8 +216,8 @@ void library2 () {
   {
     auto output = build_testsite(arena);
 
-    count_lines_starting_with(output, "Building file",  3); // dynamic1, dynamic2, dynamic3
-    count_lines_starting_with(output, "Linking target", 5); // dynamic1, dynamic2, dynamic3, binary1, binary2
+    require_lines_count(output, "Building file",  3); // dynamic1, dynamic2, dynamic3
+    require_lines_count(output, "Linking target", 5); // dynamic1, dynamic2, dynamic3, binary1, binary2
 
     validate_binary(arena, "binary1", "lib2_updated,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -226,7 +228,7 @@ static void build_errors_tests (Memory_Arena &arena) {
   using enum File_System_Flags;
 
   auto output = build_testsite(arena);
-  count_lines_starting_with(output, "Building file", 9);
+  require_lines_count(output, "Building file", 10);
 
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -268,9 +270,9 @@ void library2 () {
     require(build_result.is_ok());
     require(build_result.value.status_code != 0);
 
-    count_lines_starting_with(build_result.value.output, "Building file", 2); // dynamic1, library2
-    count_lines_starting_with(build_result.value.output, "Linking target", 1); // library2
-    count_lines_starting_with(build_result.value.output, "Program terminated with an error status", 1);
+    require_lines_count(build_result.value.output, "Building file", 2); // dynamic1, library2
+    require_lines_count(build_result.value.output, "Linking target", 1); // library2
+    require_lines_count(build_result.value.output, "WARNING: File compilation failed", 1);
   }
 
   for (int idx = 0; idx < 5; idx++) {
@@ -279,9 +281,9 @@ void library2 () {
     require(build_result.is_ok());
     require(build_result.value.status_code != 0);
 
-    count_lines_starting_with(build_result.value.output, "Building file", 1); // dynamic1
-    count_lines_starting_with(build_result.value.output, "Linking target", 0); 
-    count_lines_starting_with(build_result.value.output, "Program terminated with an error status", 1);
+    require_lines_count(build_result.value.output, "Building file", 1); // dynamic1
+    require_lines_count(build_result.value.output, "Linking target", 0); 
+    require_lines_count(build_result.value.output, "WARNING: File compilation failed", 1);
   }
 
   String fixed_code_impl = R"lib(
@@ -303,8 +305,8 @@ EXPORT_SYMBOL void dynamic1 () {
 
   auto output3 = build_testsite(arena);
 
-  count_lines_starting_with(output3, "Building file", 1); // dynamic1
-  count_lines_starting_with(output3, "Linking target", 3); // dynamic1, dynamic2, binary1
+  require_lines_count(output3, "Building file", 1); // dynamic1
+  require_lines_count(output3, "Linking target", 3); // dynamic1, dynamic2, binary1
 
   validate_binary(arena, "binary1", "lib2_updated,dyn1_updated,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -315,25 +317,26 @@ static void test_modify_file (Memory_Arena &arena, File_Path file_path) {
 
   auto file    = open_file(move(file_path), Write_Access).value;
   auto mapping = map_file_into_memory(file).value; 
-  defer {
-    unmap_file(mapping);
-    close_file(file);
-  };
 
   auto file_content = reserve<char>(arena, mapping.size + 2);
   copy_memory(file_content, mapping.memory, mapping.size);
   file_content[mapping.size] = ' ';
   file_content[mapping.size + 1] = '\0';
+  unmap_file(mapping);
+
+  // Short sleep in case things go too fast and the update won't be noticed?
+  thread_sleep(1000);
   
   reset_file_cursor(file);
-
   require(write_bytes_to_file(file, file_content, mapping.size + 2));
+
+  close_file(file);
 }
 
 static void build_project_tests (Memory_Arena &arena) {
   auto output = build_testsite(arena);
-  count_lines_starting_with(output, "Building file", 9);
-  count_lines_starting_with(output, "Linking target", 9);
+  require_lines_count(output, "Building file", 10);
+  require_lines_count(output, "Linking target", 10);
 
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -341,16 +344,16 @@ static void build_project_tests (Memory_Arena &arena) {
   test_modify_file(arena, make_file_path(arena, "project", "build.cpp"));
   
   auto output2 = build_testsite(arena);
-  count_lines_starting_with(output2, "Building file", 9);
-  count_lines_starting_with(output2, "Linking target", 9);
+  require_lines_count(output2, "Building file", 10);
+  require_lines_count(output2, "Linking target", 10);
 
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
 
   for (int idx = 0; idx < 5; idx++) {
     auto output3 = build_testsite(arena);
-    count_lines_starting_with(output3, "Building file", 0);
-    count_lines_starting_with(output3, "Linking target", 0);
+    require_lines_count(output3, "Building file", 0);
+    require_lines_count(output3, "Linking target", 0);
 
     validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
     validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -366,24 +369,24 @@ static void build_cache_tests (Memory_Arena &arena) {
   require_path_exists(registry_file);
 
   auto output = build_testsite(arena);
-  count_lines_starting_with(output, "Building file",  9); 
-  count_lines_starting_with(output, "Linking target", 9);
+  require_lines_count(output, "Building file",  10); 
+  require_lines_count(output, "Linking target", 10);
 
   require_path_exists(registry_file);
 
   auto output2 = build_testsite(arena, "cache=flush");
-  count_lines_starting_with(output2, "Building file",  9); 
-  count_lines_starting_with(output2, "Linking target", 9);
+  require_lines_count(output2, "Building file",  10); 
+  require_lines_count(output2, "Linking target", 10);
 
   require_path_exists(registry_file);
 
   auto output3 = build_testsite(arena);
-  count_lines_starting_with(output3, "Building file",  0); 
-  count_lines_starting_with(output3, "Linking target", 0);
+  require_lines_count(output3, "Building file",  0); 
+  require_lines_count(output3, "Linking target", 0);
 
   auto output4 = build_testsite(arena, "cache=off");
-  count_lines_starting_with(output4, "Building file",  9); 
-  count_lines_starting_with(output4, "Linking target", 9);
+  require_lines_count(output4, "Building file",  10); 
+  require_lines_count(output4, "Linking target", 10);
 
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
@@ -391,26 +394,27 @@ static void build_cache_tests (Memory_Arena &arena) {
 
 static void build_targets_tests (Memory_Arena &arena) {
   auto output = build_testsite(arena, "targets=library1");
-  count_lines_starting_with(output, "Building file",  1); // library1
-  count_lines_starting_with(output, "Linking target", 1); // library1
+  require_lines_count(output, "Building file",  1); // library1
+  require_lines_count(output, "Linking target", 1); // library1
 
   auto output3 = build_testsite(arena, "targets=binary2,library3");
-  count_lines_starting_with(output3, "Building file",  3); // binary2, dynamic3, library3
-  count_lines_starting_with(output3, "Linking target", 3);
+  require_lines_count(output3, "Building file",  3); // binary2, dynamic3, library3
+  require_lines_count(output3, "Linking target", 3);
 
   {
-    auto output = build_testsite(arena, "targets=,library1");
-    count_lines_starting_with(output, "Building file",  1); // library1
-    count_lines_starting_with(output, "Linking target", 1); // library1
+    // Thi was already build, we should not build it second time.
+    auto output = build_testsite(arena, "targets=library1");
+    require_lines_count(output, "Building file",  0);
+    require_lines_count(output, "Linking target", 0);
   }
 
   auto output2 = build_testsite(arena, "targets=dynamic2,");
-  count_lines_starting_with(output2, "Building file",  3); // library2, dynamic1, dynamic2
-  count_lines_starting_with(output2, "Linking target", 3); 
+  require_lines_count(output2, "Building file",  3); // library2, dynamic1, dynamic2
+  require_lines_count(output2, "Linking target", 3); 
 
   auto output4 = build_testsite(arena);
-  count_lines_starting_with(output4, "Building file",  2); // binary1, library4
-  count_lines_starting_with(output4, "Linking target", 2);
+  require_lines_count(output4, "Building file",  3); // binary1, library4, binary3
+  require_lines_count(output4, "Linking target", 3);
 
   {
     auto build_command = format_string(arena, "% build targets=nonexisting", binary_path);
@@ -420,6 +424,13 @@ static void build_targets_tests (Memory_Arena &arena) {
     require(has_substring(build_result.value.output, "Target 'nonexisting' not found in the project"));
   }
 
+  {
+    auto build_command = format_string(arena, "% build targets=library1,nonexisting", binary_path);
+    auto build_result = run_system_command(arena, build_command);
+    require(build_result.is_ok());
+    require(build_result.value.status_code != 0);
+    require(has_substring(build_result.value.output, "Target 'nonexisting' not found in the project"));
+  }
 }
 
 static Test_Case build_command_tests [] {

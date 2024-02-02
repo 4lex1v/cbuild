@@ -5,7 +5,7 @@
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
-#include "project_loader.hpp"
+#include "workspace.hpp"
 #include "toolchain.hpp"
 
 #define require_non_null(PARAM) __require_non_null(PARAM, __FUNCTION__, #PARAM)

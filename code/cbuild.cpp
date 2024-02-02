@@ -8,7 +8,7 @@
 #include "anyfin/slice.hpp"
 
 #include "cbuild.hpp"
-#include "project_loader.hpp"
+#include "workspace.hpp"
 #include "builder.hpp"
 
 #include "anyfin/c_runtime_compat.hpp"

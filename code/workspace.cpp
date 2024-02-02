@@ -14,7 +14,7 @@
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
-#include "project_loader.hpp"
+#include "workspace.hpp"
 #include "toolchain.hpp"
 
 extern bool silence_logs_opt;
@@ -323,6 +323,11 @@ void load_project (Memory_Arena &arena, Project &project, Slice<Startup_Argument
   }
 
   build_project_configuration(arena, project, build_file);
+
+  /*
+    Force rebuild of all targets if the project has been updated, since we don't know what kind of changes were made.
+   */
+  project.rebuild_required = true;
   
   // TODO: Perhaps it's worth to add overwrite option to the write function instead?
   ensure(reset_file_cursor(tag_file), "Failed to reset tag's file pointer");

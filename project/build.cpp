@@ -103,14 +103,14 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
 
   auto cbuild = add_executable(project, "cbuild");
   {
-    add_source_file(cbuild, "code/project_loader.cpp");
-    add_source_file(cbuild, "code/toolchain_win32.cpp");
-    add_source_file(cbuild, "code/cbuild_api.cpp");
-    add_source_file(cbuild, "code/scanner.cpp");
-    add_source_file(cbuild, "code/registry.cpp");
     add_source_file(cbuild, "code/builder.cpp");
     add_source_file(cbuild, "code/cbuild.cpp");
+    add_source_file(cbuild, "code/cbuild_api.cpp");
     add_source_file(cbuild, "code/logger.cpp");
+    add_source_file(cbuild, "code/registry.cpp");
+    add_source_file(cbuild, "code/scanner.cpp");
+    add_source_file(cbuild, "code/toolchain_win32.cpp");
+    add_source_file(cbuild, "code/workspace.cpp");
 
     add_compiler_options(cbuild, "-fno-exceptions");
 
