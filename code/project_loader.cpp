@@ -165,17 +165,28 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
 
 #ifdef PLATFORM_WIN32
     {
-      auto cbuild_import_path = make_file_path(local, project.project_output_location, "cbuild.lib");
+      auto cbuild_export_module_path = make_file_path(local, project.project_output_location, "cbuild.def");
+      auto cbuild_import_path        = make_file_path(local, project.project_output_location, "cbuild.lib");
 
-      auto [open_error, export_file] = open_file(cbuild_import_path, Write_Access | Create_Missing);
+      auto [open_error, export_module] = open_file(cbuild_export_module_path, Write_Access | Always_New);
       if (open_error) panic("Couldn't create export file to write data to due to an error: %.\n", open_error.value);
-      defer { close_file(export_file); };
 
-      ensure(write_bytes_to_file(export_file, cbuild_lib_content),
-             "Failed to write win32 export data into a file");
+      auto program_name = get_program_name();
+      
+      ensure(write_bytes_to_file(export_module, concat_string(local, "LIBRARY \"", program_name, "\"\n")));
+      ensure(write_bytes_to_file(export_module, cbuild_def_content), "Failed to write win32 export data into a file");
+
+      ensure(close_file(export_module));
+
+      auto [cbuild_lib_cmd_error, cbuild_lib_cmd_result] = 
+        run_system_command(local, concat_string(local, "lib.exe /nologo /machine:x64 ",
+                                                "/DEF:\"", cbuild_export_module_path, "\" ",
+                                                "/OUT:\"", cbuild_import_path, "\""));
+      if (cbuild_lib_cmd_error) panic("Couldn't generate export library for the executable % due a %\n", program_name, cbuild_lib_cmd_error.value);
+      if (cbuild_lib_cmd_result.status_code != 0) panic("Couldn't generate export library for the executable %:\n%\n", program_name, cbuild_lib_cmd_result.output);
 
       builder += format_string(local, "/nologo /dll /debug:full /export:cbuild_api_version /export:setup_project /subsystem:console "
-                               "\"%\" \"%\" /out:\"%\"", project_obj_file_path, export_file.path, project.project_library_path);
+                               "\"%\" \"%\" /out:\"%\"", project_obj_file_path, cbuild_import_path, project.project_library_path);
     }
 #else
 #error "Unsupported platform"

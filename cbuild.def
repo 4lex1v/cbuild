@@ -1,4 +1,3 @@
-LIBRARY "cbuild.exe"
 EXPORTS
     add_all_sources_from_directory
     add_archiver_option

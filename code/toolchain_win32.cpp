@@ -271,6 +271,15 @@ List<Env_Var> setup_system_sdk (Memory_Arena &arena, const Target_Arch architect
   List<Env_Var> previous(arena);
 
   {
+    auto [defined, path_env_var] = get_current_value("PATH");
+    if (defined) list_push(previous, Env_Var { "PATH", path_env_var });
+
+    auto local = arena;
+    auto msvc_tools = concat_string(local, msvc_path, "\\bin\\Hostx64\\x64;");
+    SetEnvironmentVariable("PATH", concat_string(local, msvc_tools, path_env_var));
+  }
+
+  {
     auto base_win_sdk_include_folder_path = concat_string(arena, windows_sdk.base_path, "\\Include\\", windows_sdk.version);
 
     auto [defined, include_env_var] = get_current_value("INCLUDE");

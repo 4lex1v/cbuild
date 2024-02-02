@@ -347,32 +347,24 @@ static int generate_headers (const Arguments *args) noexcept {
   }
 
   if (platform == "win32") {
-    if (!std::filesystem::exists(".cbuild/tmp")) std::filesystem::create_directory(".cbuild/tmp");
-    auto status_code = system("lib.exe /nologo /def:cbuild.def /out:.cbuild\\tmp\\cbuild.lib /machine:x64");
-    if (status_code != 0) {
-      printf("FATAL ERROR: cbuild import lib generation failed, errno: %i\n", errno);
-      return EXIT_FAILURE;
-    }
-
-    // cbuild.lib
-    auto cbuild_lib_file_path = ".\\.cbuild\\tmp\\cbuild.lib";
-    auto cbuild_lib_content   = fopen(cbuild_lib_file_path, "rb+");
-    if (cbuild_lib_content == nullptr) {
-      printf("FATAL ERROR: File not found: %s\n", cbuild_lib_file_path);
+    auto cbuild_def_file_path = "cbuild.def";
+    auto cbuild_def_content   = fopen(cbuild_def_file_path, "rb+");
+    if (cbuild_def_content == nullptr) {
+      printf("FATAL ERROR: File not found: %s\n", cbuild_def_file_path);
       fclose(output_file);
       return EXIT_FAILURE;
     }
 
-    fseek(cbuild_lib_content, 0, SEEK_END);
-    const long file_size = ftell(cbuild_lib_content);
-    fseek(cbuild_lib_content, 0, SEEK_SET);
+    fseek(cbuild_def_content, 0, SEEK_END);
+    const long file_size = ftell(cbuild_def_content);
+    fseek(cbuild_def_content, 0, SEEK_SET);
 
     char *buffer = reinterpret_cast<char *>(malloc(file_size + 1));
     // Read the file content into the buffer
-    size_t read_size = fread(buffer, sizeof(char), file_size, cbuild_lib_content);
+    size_t read_size = fread(buffer, sizeof(char), file_size, cbuild_def_content);
     buffer[read_size] = '\0'; // Null-terminate the buffer
 
-    auto header_start = "\n#ifdef PLATFORM_WIN32\nstatic const unsigned char cbuild_lib_content[] = { ";
+    auto header_start = "\n#ifdef PLATFORM_WIN32\nstatic const unsigned char cbuild_def_content[] = { ";
     auto header_end   = "};\n\n";
 
     fwrite(header_start, strlen(header_start), 1, output_file);
@@ -384,15 +376,15 @@ static int generate_headers (const Arguments *args) noexcept {
 
     fwrite(header_end, strlen(header_end), 1, output_file);
 
-    fprintf(output_file, "static const unsigned int cbuild_lib_content_size = %li;\n", file_size);
-    fprintf(output_file, "static_assert(cbuild_lib_content_size > 0);\n");
-    fprintf(output_file, "static_assert(cbuild_lib_content_size == (sizeof(cbuild_lib_content) / sizeof(cbuild_lib_content[0])));\n");
+    fprintf(output_file, "static const unsigned int cbuild_def_content_size = %li;\n", file_size);
+    fprintf(output_file, "static_assert(cbuild_def_content_size > 0);\n");
+    fprintf(output_file, "static_assert(cbuild_def_content_size == (sizeof(cbuild_def_content) / sizeof(cbuild_def_content[0])));\n");
     fprintf(output_file, "#endif\n");
 
     fflush(output_file);
 
     free(buffer);
-    fclose(cbuild_lib_content);
+    fclose(cbuild_def_content);
   }
 
   fclose(output_file);
