@@ -71,6 +71,7 @@ static void require_internal (bool result, String expression, String context = "
 }
 
 #define require(EXPR) require_internal((EXPR), stringify(EXPR))
+#define crequire(EXPR, CALLSITE) require_internal((EXPR), stringify(EXPR), "", (CALLSITE))
 #define frequire(EXPR, CONTEXT) require_internal((EXPR), stringify(EXPR), (CONTEXT))
 
 #define require_crash(EXPR)                     \

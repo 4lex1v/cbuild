@@ -344,7 +344,7 @@ Option<String> get_next_include_value (Dependency_Iterator &iterator) {
   return opt_none;
 }
 
-static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<File_Path> &extra_include_directories, const File &file, bool is_included_file) {
+static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<Include_Path> &extra_include_directories, const File &file, bool is_included_file) {
   if (tracing_enabled_opt && !is_included_file) log("Scanning file: %\n", file.path);
   
   auto file_id = unwrap(get_file_id(file));
@@ -381,10 +381,10 @@ static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &s
     scanner.status_cache[dependency_file_index]      = Chain_Status::Checking;
   }
 
-  List<File_Path> include_directories(arena, extra_include_directories);
+  List<Include_Path> include_directories(arena, extra_include_directories);
 
   auto [error, path] = get_folder_path(arena, file.path);
-  if (!error) list_push_front_copy(include_directories, path);
+  if (!error) list_push_front(include_directories, Include_Path::local(path));
   else log("WARNING: Couldn't resolve parent folder for the source file '%' due to a system error: %. "
            "Build process will continue, but this may cause issues with include files lookup.",
            file.path, error);
@@ -396,7 +396,14 @@ static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &s
 
   const auto try_resolve_include_path = [&] (Memory_Arena &arena, File_Path path) {
     for (auto &prefix: include_directories) {
-      auto full_path = make_file_path(arena, prefix, path);
+      /*
+        Perhaps at some point later checking system paths for changes would be helpful, but it this point it could
+        be a really deep rabbit hole with lots of issues (e.g perf, any form of macros that this tool doesn't support
+        at this point).
+       */
+      if (prefix.kind == Include_Path::System) continue;
+      
+      auto full_path = make_file_path(arena, prefix.value, path);
 
       auto [error, exists] = check_file_exists(full_path);
       if (!exists) continue;
@@ -419,7 +426,9 @@ static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &s
     if (!resolved_path) {
       String_Builder builder { local };
       builder.add(local, "Couldn't resolve the include file ", include_value.value, " from file ", file.path, " the following paths were checked:\n");
-      for (auto &path: include_directories) builder.add(local, "  - ", path, "\n");      
+      for (auto &path: include_directories)
+        if (path.kind == Include_Path::Local)
+          builder.add(local, "  - ", path.value, "\n");      
 
       log("\n%\n", build_string(local, builder));
       chain_status = Chain_Status::Updated;
@@ -475,6 +484,6 @@ static Chain_Status scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &s
   return chain_status;
 }
 
-bool scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<File_Path> &extra_include_directories, const File &file) {
+bool scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<Include_Path> &extra_include_directories, const File &file) {
   return scan_dependency_chain (arena, scanner, extra_include_directories, file, false) == Chain_Status::Updated;
 }

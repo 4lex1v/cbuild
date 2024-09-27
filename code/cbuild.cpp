@@ -18,6 +18,8 @@ Panic_Handler panic_handler = terminate;
 bool silence_logs_opt    = false;
 bool tracing_enabled_opt = false;
 
+String project_overwrite = "project";
+
 enum struct CLI_Command {
   Init,
   Build,
@@ -129,12 +131,17 @@ struct Clean_Command {
 
 static constexpr String help_message =
   R"help(
-Usage: cbuild [switches] <command> [command_args]
+Usage: cbuild [options] <command> [command_args]
 
-Switches:
+Options:
   -s, --silence
     Silence cbuild's output (e.g working directory, discovered path to the configuration file, etc..), keeping only
     the output from the compiler and the linker.
+
+  -p, --project <path>
+    Specify an alternative project configuration to load. If the specified <path> value is folder, it will be used to
+    load a build.(c/cpp) file, or as a folder where a new build configuration will be created. If <path> specifies a
+    file name, that file will be used to setup the project.
 
 Commands:
   init
@@ -186,18 +193,23 @@ Commands:
 /*
   Global flags are the very first argument values passed to the CBuild executable that go before all other options.
 */
-static void parse_global_flags (Slice<Startup_Argument> &args) {
+static void parse_global_options (Memory_Arena &arena, Slice<Startup_Argument> &args) {
   if (is_empty(args)) return;
+
+  enum Option_Type { Flag, Value };
   
   struct {
     char short_name;
     String name;
-    bool* flag;
+    Option_Type type;
+    void* slot;
+    bool seen = false;
   } table [] {
-    { 's',  "silence", &silence_logs_opt },
+    { 's', "silence", Flag,  &silence_logs_opt },
+    { 'p', "project", Value, &project_overwrite },
 
     // Internal flags
-    { '\0', "trace",   &tracing_enabled_opt },
+    { '\0', "trace", Flag, &tracing_enabled_opt },
   };
 
   usize parsed_flags_count = 0;
@@ -217,14 +229,27 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
     if (arg.key[1] != '-') {
       // Parsing single character switches
       bool found = false;
-      for (auto& option : table) {
+      for (auto& option: table) {
         if (arg.key[1] == option.short_name) {
-          if (*option.flag) log("Flag -%c is duplicated and has no effect\n", arg.key[1]);
+          if (option.seen) {
+            log("WARNING: Flag -%c is duplicated, latest value will be used\n", arg.key[1]);
+          }
+            
+          switch (option.type) {
+            case Flag: {
+              *static_cast<bool *>(option.slot) = true;
+              found = true;
 
-          *option.flag = true;
-          found        = true;
+              break;
+            }
+            case Value: {
+              *static_cast<String *>(option.slot) = copy_string(arena, arg.value);
+              found = true;
+              break;
+            }
+          }
 
-          break;
+          option.seen = true;
         }
       }
 
@@ -238,12 +263,23 @@ static void parse_global_flags (Slice<Startup_Argument> &args) {
       bool found = false;
       for (auto& option : table) {
         if (key_name == option.name) {
-          if (*option.flag) log("Flag %s is duplicated and has no effect\n", arg.key);
+          if (option.seen) log("Flag %s is duplicated and has no effect\n", arg.key);
 
-          *option.flag = true;
-          found        = true;
+          switch (option.type) {
+            case Flag: {
+              *static_cast<bool *>(option.slot) = true;
+              found = true;
 
-          break;
+              break;
+            }
+            case Value: {
+              *static_cast<String *>(option.slot) = arg.value;
+              found = true;
+              break;
+            }
+          }
+
+          option.seen = true;
         }
       }
 
@@ -280,6 +316,85 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
   return CLI_Command::Dynamic;
 }
 
+static bool ensure_relative_path (const File_Path &path) {
+  return path[0] != '/' && (path.length >= 2 && path[1] != ':');
+}
+
+static bool is_subdirectory (Memory_Arena &arena, const File_Path &work_dir, const File_Path &path) {
+  auto [error, abs_path] = get_absolute_path(arena, path);
+  if (error) panic("Couldn't get absolute path for '%' due to an error: %\n", path, error.value);
+  
+  return has_substring(abs_path, work_dir);
+}
+
+static File_Path resolve_project_output_dir_name (Memory_Arena &arena, const File_Path &work_dir) {
+  if (project_overwrite == "project") return "project";
+
+  auto normalize_path = [&arena] (File_Path path) -> File_Path {
+    if (ends_with(path, "\\") || ends_with(path, "/") || ends_with(path, "_")) {
+      path = File_Path(path.value, path.length - 1);
+    }
+
+    if (!contains(path, ".")) return concat_string(arena, "project_", path);
+    return concat_string(arena, "project_", string_replace(arena, path, ".", "_"));
+  };
+
+  auto file_config_overwrite = has_file_extension(project_overwrite);
+  bool only_file_name = false;
+  if (file_config_overwrite) {
+    only_file_name = true;
+    for (auto i: project_overwrite) {
+      if (i == '\\' || i == '/') {
+        only_file_name = false;
+        break;
+      }
+    }
+  }
+
+  if (only_file_name) return normalize_path(get_resource_name(work_dir).value);
+
+  auto directory_path = copy_string(arena, project_overwrite);
+
+  if (!ensure_relative_path(directory_path) || !is_subdirectory(arena, work_dir, directory_path))
+    panic("Specified --project value must be a path relative to the project's root folder.\n  Root:     %\n  Resolved: %\n",
+          work_dir, get_absolute_path(arena, directory_path).value);
+
+  char *buffer = nullptr;
+  usize length = 0;
+  if (file_config_overwrite) {
+    /*
+      Extract the folder portion of the path, dropping the configuration's file name and extension.
+     */
+
+    length = directory_path.length - 1;
+    while (length >= 0) {
+      auto value = directory_path[length];
+      if (value == '\\' || value == '/') break;
+      length -= 1;
+    }
+
+    buffer = reserve<char>(arena, length + 1);
+    for (int i = 0; i < length; i++) {
+      auto value = directory_path[i];
+      buffer[i] = (value == '\\' || value == '/') ? '_' : value;
+    }
+
+    buffer[length] = '\0';
+  }
+  else {
+    length = directory_path.length;
+    
+    buffer = reserve<char>(arena, length + 1);
+    for (int idx = 0; auto value: directory_path) {
+      buffer[idx++] = (value == '\\' || value == '/') ? '_' : value;
+    }
+
+    buffer[directory_path.length] = '\0';
+  }
+
+  return normalize_path(String(buffer, length));
+}
+
 u32 run_cbuild () { 
   // TODO: #perf check what's the impact from page faults is. How would large pages affect?
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
@@ -298,7 +413,7 @@ u32 run_cbuild () {
     }
   };
 
-  parse_global_flags(args_cursor);
+  parse_global_options(arena, args_cursor);
   auto command_type = parse_command(args_cursor);
 
   if (!silence_logs_opt || command_type == CLI_Command::Version) {
@@ -328,20 +443,30 @@ u32 run_cbuild () {
     return 0;
   }
 
-  if (command_type == CLI_Command::Clean) {
-    auto command = Clean_Command::parse(args_cursor);
-    cleanup_workspace(arena, command.all);
-    return 0;
-  }
-
   if (command_type == CLI_Command::Help) {
     silence_report = true;
     log(help_message);
     return 0;
   }
 
-  Project project { arena, "project", working_directory_path, make_file_path(arena, working_directory_path, ".cbuild") };
+  auto cache_dir = make_file_path(arena, working_directory_path, ".cbuild");
+
+  /*
+    This would allow having different project setups working simultaneously. Instead of building the configuration
+    into .cbuild/project, name of this folder would base on the name of the path to the alternative build configuration.
+    E.g calling `cbuild -p=alt/ver2 ...` would produce build files under `.cbuild/project_alt_ver2/`, if for some reason
+    configuration file is in the root of the project, root's name will be added to the name, like `.cbuild/project_cbuild`
+   */
+  auto project_output_dir = resolve_project_output_dir_name(arena, working_directory_path);
+
+  Project project { arena, "project", working_directory_path, cache_dir, project_output_dir };
   load_project(arena, project, args_cursor);
+
+  if (command_type == CLI_Command::Clean) {
+    auto command = Clean_Command::parse(args_cursor);
+    cleanup_workspace(project, command.all);
+    return 0;
+  }
 
   if (command_type == CLI_Command::Build) {
     auto [targets, cache, builders_count] = Build_Command::parse(arena, args_cursor);

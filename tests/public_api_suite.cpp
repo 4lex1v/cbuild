@@ -9,7 +9,7 @@
 #include "test_suite.hpp"
 
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
-extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
+extern File_Path testspace_directory;         // Path to the workspace folder where all intermediary files and folders are created
 
 static bool ensure_list_content (const Iterable<String> auto &list, String value, Convertible_To<String> auto&&... more_values) {
   String values [] { value, static_cast<String>(more_values)... };
@@ -26,19 +26,19 @@ static bool ensure_list_content (const Iterable<String> auto &list, String value
 static void setup_workspace (Memory_Arena &arena) {
   auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
 
-  require(delete_directory(workspace));
-  require(copy_directory(testsite_path, workspace));
+  require(delete_directory(testspace_directory));
+  require(copy_directory(testsite_path, testspace_directory));
 
-  require(set_working_directory(workspace));
+  require(set_working_directory(testspace_directory));
 }
 
 static void cleanup_workspace (Memory_Arena &arena) {
   require(set_working_directory(working_directory));
-  require(delete_directory(workspace));
+  require(delete_directory(testspace_directory));
 }
 
 static Project create_project (Memory_Arena &arena) {
-  return Project(arena, "test_project", workspace, make_file_path(arena, workspace, ".cbuild"));
+  return Project(arena, "test_project", testspace_directory, make_file_path(arena, testspace_directory, ".cbuild"));
 }
 
 // TODO: Need to rewrite the arguments API for the next release
@@ -119,7 +119,7 @@ static void output_location_test (Memory_Arena &arena) {
   String path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(project.build_location_path == make_file_path(arena, workspace, ".cbuild", "build", path));
+  require(project.build_location_path == make_file_path(arena, testspace_directory, ".cbuild", "build", path));
 }
 
 static void add_static_library_test (Memory_Arena &arena) {
@@ -463,9 +463,9 @@ static void add_global_include_search_path_test (Memory_Arena &arena) {
   add_global_include_search_path(&project, "./libs");
 
   require(project.include_paths.count == 2);
-  require(ensure_list_content(project.include_paths,
-                              get_absolute_path(arena, "./includes").value,
-                              get_absolute_path(arena, "./libs").value));
+
+  require(project.include_paths.contains(Include_Path::local(get_absolute_path(arena, "./includes").value)));
+  require(project.include_paths.contains(Include_Path::local(get_absolute_path(arena, "./libs").value)));
 }
 
 static Test_Case public_api_tests [] {

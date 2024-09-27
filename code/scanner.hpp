@@ -33,4 +33,4 @@ struct Chain_Scanner {
 
   Returns true if the chain has any updates, false otherwise.
  */
-bool scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<File_Path> &extra_include_directories, const File &file);
+bool scan_dependency_chain (Memory_Arena &arena, Chain_Scanner &scanner, const List<Include_Path> &extra_include_directories, const File &file);

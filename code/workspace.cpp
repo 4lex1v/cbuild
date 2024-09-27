@@ -17,32 +17,65 @@
 #include "workspace.hpp"
 #include "toolchain.hpp"
 
-extern bool silence_logs_opt;
-extern bool tracing_enabled_opt;
+extern bool   silence_logs_opt;
+extern bool   tracing_enabled_opt;
+extern String project_overwrite;
 
 struct Arguments;
-typedef bool project_func (const Arguments *args, Project &project);
+using project_func = bool (const Arguments *, Project &);
 
 static const u32 api_version = (API_VERSION);
 
+static File_Path resolve_project_folder (Memory_Arena &arena, File_Path working_directory) {
+  auto resolved_overwrite_path = make_file_path(arena, working_directory, project_overwrite);
+
+  auto project_directory_path = resolved_overwrite_path;
+
+  if (has_file_extension(project_directory_path)) {
+    auto [error, path] = get_folder_path(arena, project_directory_path);
+    if (error) panic("Couldn't resolve folder path for a provided project file path '%' due to an error: %", resolved_overwrite_path, error);
+
+    project_directory_path = path;
+  }
+
+  return project_directory_path;
+}
+
+static File_Path resolve_build_file (Option<Configuration_Type> config_type = opt_none) {
+  File_Path file_name = "build.cpp";
+  if (config_type.or_default(Configuration_Type::Cpp) == Configuration_Type::C) {
+    file_name = "build.c";
+  }
+
+  if (has_file_extension(project_overwrite)) {
+    file_name = get_resource_name(project_overwrite).or_default(file_name);
+  }
+
+  return file_name;
+}
+
 void init_workspace (Memory_Arena &arena, File_Path working_directory, Configuration_Type config_file_type) {
-  auto project_directory_path = make_file_path(arena, working_directory, "project");
-  if (auto result = create_directory(project_directory_path); result.is_error()) {
-    panic("Couldn't create directory: % due to an error: %\n", project_directory_path, result.error);
+  using File_System_Flags::Force;
+  
+  auto project_directory_path = resolve_project_folder(arena, working_directory);
+  auto build_file_name        = resolve_build_file(move(config_file_type));
+
+  if (auto result = create_directory(project_directory_path, Force); result.is_error()) {
+    panic("Couldn't create directory: % due to an error: %\n", project_directory_path, result.error.value);
   }
 
   auto code_directory_path = make_file_path(arena, working_directory, "code");
   if (auto result = create_directory(code_directory_path); result.is_error()) {
-    panic("Couldn't create directory % due to an error: %\n", code_directory_path, result.error);
+    panic("Couldn't create directory % due to an error: %\n", code_directory_path, result.error.value);
   };
 
-  auto build_file_name = (config_file_type == Configuration_Type::C) ? String("build.c") : String("build.cpp");
   auto build_file_path = make_file_path(arena, project_directory_path, build_file_name);
 
-  if (auto [error, exists] = check_file_exists(build_file_path); error)
+  if (auto [error, exists] = check_file_exists(build_file_path); error) {
     panic("System error occured while checking the project's folder: %\n", error.value);
+  }
   else if (exists) {
-    log("It looks like this workspace already has a project configuration file at %", build_file_path);
+    log("It looks like this workspace already has a project configuration file at %\n", build_file_path);
     return;
   }
 
@@ -66,14 +99,21 @@ void init_workspace (Memory_Arena &arena, File_Path working_directory, Configura
   log("Project initialized\n");
 }
 
-void cleanup_workspace (Memory_Arena &arena, bool full_cleanup) {
-  ensure(delete_directory(make_file_path(arena, ".cbuild", "build")));
-  if (full_cleanup) ensure(delete_directory(make_file_path(arena, ".cbuild", "project")));
+void cleanup_workspace (const Project &project, bool full_cleanup) {
+  if (full_cleanup) {
+    ensure(delete_directory(project.project_build_location));
+    log("All produced files under '%' were removed\n", project.project_build_location);
+    return;
+  }
+
+  ensure(delete_directory(project.build_location_path));
+  log("All produced files under '%' were removed\n", project.build_location_path);
 }
 
 static inline void load_project_from_library (Project &project, Slice<Startup_Argument> arguments) {
   auto [load_error, library] = load_shared_library(project.project_library_path);
   if (load_error) panic("ERROR: Project % configuration file load failed due to an error - %\n", project.name, load_error.value);
+  defer { unload_library(*library); };
 
   /*
     If there's something wrong with the library that we load, like some expected symbols are missing, it's fine to ignore
@@ -116,7 +156,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
   auto &toolchain = project.toolchain;
 
   auto project_obj_file_name = concat_string(arena, project.name, ".", get_object_extension());
-  auto project_obj_file_path = make_file_path(arena, project.project_output_location, project_obj_file_name);
+  auto project_obj_file_path = make_file_path(arena, project.project_config_build_location, project_obj_file_name);
 
   {
     auto local = arena;
@@ -132,7 +172,7 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
     if ((toolchain.type == Toolchain_Type_MSVC_X64) ||
         (toolchain.type == Toolchain_Type_MSVC_X86) ||
         (toolchain.type == Toolchain_Type_LLVM_CL)) {
-      builder += format_string(local, "/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:\"%\" /c \"%\"", standard_value, project_obj_file_path, build_file.path);
+      builder += format_string(local, R"(/nologo /std:% /DCBUILD_PROJECT_CONFIGURATION /EHsc /Od /Z7 /Fo:"%" /c "%")", standard_value, project_obj_file_path, build_file.path);
     }
     else {
       builder += format_string(local, "-std=% -DCBUILD_PROJECT_CONFIGURATION -O0 -g -gcodeview -c % -o %", standard_value, build_file.path, project_obj_file_path);
@@ -165,13 +205,16 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
 
 #ifdef PLATFORM_WIN32
     {
-      auto cbuild_export_module_path = make_file_path(local, project.project_output_location, "cbuild.def");
-      auto cbuild_import_path        = make_file_path(local, project.project_output_location, "cbuild.lib");
+      auto cbuild_export_module_path = make_file_path(local, project.project_config_build_location, "cbuild.def");
+      auto cbuild_import_path        = make_file_path(local, project.project_config_build_location, "cbuild.lib");
 
       auto [open_error, export_module] = open_file(cbuild_export_module_path, Write_Access | Always_New);
       if (open_error) panic("Couldn't create export file to write data to due to an error: %.\n", open_error.value);
 
       auto program_name = get_program_name();
+      if (!ends_with(program_name, ".exe")) {
+        program_name = concat_string(local, program_name, ".exe");
+      }
       
       ensure(write_bytes_to_file(export_module, concat_string(local, "LIBRARY \"", program_name, "\"\n")));
       ensure(write_bytes_to_file(export_module, cbuild_def_content), "Failed to write win32 export data into a file");
@@ -208,11 +251,20 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
   }
 }
 
-static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &workspace_directory_path) {
-  const String files [] { "project/build.cpp", "project/build.c",  };
+static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &working_directory) {
+  auto project_directory_path = resolve_project_folder(arena, working_directory);
+  auto build_file_name        = resolve_build_file();
 
-  for (auto build_file_name: files) {
-    auto build_file_path = make_file_path(arena, workspace_directory_path, build_file_name);
+  const String files [] {
+    make_file_path(arena, project_directory_path, build_file_name),
+    make_file_path(arena, project_directory_path, "build.cpp"),
+    make_file_path(arena, project_directory_path, "build.c"),
+
+    make_file_path(arena, working_directory, "project", "build.cpp"),
+    make_file_path(arena, working_directory, "project", "build.c")
+  };
+
+  for (auto build_file_path: files) {
     auto [error, exists] = check_file_exists(build_file_path);
     if (!error && exists) return move(build_file_path);
   }
@@ -241,6 +293,8 @@ struct Project_Registry {
 };
 
 void update_cbuild_api_file (Memory_Arena &arena, File_Path working_directory) {
+  auto project_directory_path = resolve_project_folder(arena, working_directory);
+
   struct { String file_name; String data; } input [] {
     { "cbuild.h",              cbuild_api_content },
     { "cbuild_experimental.h", cbuild_experimental_api_content }
@@ -249,10 +303,10 @@ void update_cbuild_api_file (Memory_Arena &arena, File_Path working_directory) {
   for (auto &[file_name, data]: input) {
     using enum File_System_Flags;
 
-    auto file_path      = make_file_path(arena, working_directory, "project", file_name);
+    auto file_path      = make_file_path(arena, project_directory_path, file_name);
     auto file_path_view = String(file_path);
 
-    auto [open_error, file] = open_file(move(file_path), Write_Access | Create_Missing);
+    auto [open_error, file] = open_file(move(file_path), Write_Access | Always_New);
     if (open_error) panic("Couldn't open file % due to an error: %.\n", file_path_view, open_error.value);
 
     ensure(write_bytes_to_file(file, data), "Failed to write data to the generated header file");
@@ -264,7 +318,7 @@ void load_project (Memory_Arena &arena, Project &project, Slice<Startup_Argument
   using enum File_System_Flags;
 
   create_directory(project.cache_root);
-  create_directory(project.project_output_location);
+  create_directory(project.project_config_build_location, Force);
 
   auto previous_env = setup_system_sdk(arena, Target_Arch_x64);
   defer {
@@ -302,7 +356,7 @@ void load_project (Memory_Arena &arena, Project &project, Slice<Startup_Argument
   auto build_file = unwrap(open_file(build_file_path));
   defer { close_file(build_file); };
 
-  auto tag_file_path = make_file_path(arena, project.project_output_location, "tag");
+  auto tag_file_path = make_file_path(arena, project.project_config_build_location, "tag");
   auto tag_file = unwrap(open_file(tag_file_path, Write_Access | Create_Missing));
   defer { close_file(tag_file); };
 

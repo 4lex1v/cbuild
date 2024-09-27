@@ -41,17 +41,11 @@ CBUILD_EXPERIMENTAL_API void add_target_hook (Target *target, Hook_Type type, Ho
 
 CBUILD_EXPERIMENTAL_API const char * get_generated_binary_file_path (const Target *target) CBUILD_NO_EXCEPT;
 
-CBUILD_EXPERIMENTAL_API Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void set_install_location (Project *project, const char *binary_folder, const char *library_folder) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void install_target (Target *target, const char *install_target_overwrite) CBUILD_NO_EXCEPT;
 
-CBUILD_EXPERIMENTAL_API Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) CBUILD_NO_EXCEPT;
-
-/*
-  Install API
- */
-
-CBUILD_EXPERIMENTAL_API void set_install_location (Project *project, const char *path) CBUILD_NO_EXCEPT;
-
-CBUILD_EXPERIMENTAL_API void install_target (Target *target) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void add_global_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void add_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
 
 #ifdef __cplusplus
 }

@@ -92,27 +92,36 @@ void set_output_location (Project *project, const char *folder_path) CBUILD_NO_E
   require_non_null(folder_path);
   require_non_empty(folder_path);
 
-  project->build_location_path = make_file_path(project->arena, project->project_root, ".cbuild", "build", String(folder_path));
+  project->build_location_path = make_file_path(project->arena, project->base_build_location_path, String(folder_path));
 }
 
-void set_install_location (Project *project, const char *folder_path) CBUILD_NO_EXCEPT {
+static void set_absolute_path (Memory_Arena &arena, File_Path &variable, const char *path) {
+  if (is_absolute_path(path)) {
+    variable = copy_string(arena, path);
+  }
+  else {
+    auto [error, result] = get_absolute_path(arena, path);
+    if (error) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", path, error.value);
+
+    variable = move(path);
+  }
+}
+
+void set_install_location (Project *project, const char *binary_folder, const char *library_folder) CBUILD_NO_EXCEPT {
   require_non_null(project);
-  require_non_null(folder_path);
-  require_non_empty(folder_path);
+  require_non_null(binary_folder);
+  require_non_empty(binary_folder);
 
   auto &arena = project->arena;
 
-  File_Path install_path;
-  if (is_absolute_path(folder_path))
-    install_path = copy_string(arena, folder_path);
-  else {
-    auto [error, path] = get_absolute_path(arena, folder_path);
-    if (error) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", folder_path, error.value);
+  set_absolute_path(arena, project->binary_install_location_path, binary_folder);
 
-    install_path = move(path);
+  if (library_folder == nullptr) {
+    project->library_install_location_path = project->binary_install_location_path;
+    return;
   }
 
-  project->install_location_path = move(install_path);
+  set_absolute_path(arena, project->library_install_location_path, library_folder);
 }
 
 void add_global_compiler_option (Project *project, const char *option) CBUILD_NO_EXCEPT {
@@ -151,7 +160,22 @@ void add_global_include_search_path (Project *project, const char *path) CBUILD_
   auto [error, absolute_path] = get_absolute_path(project->arena, file_path);
   if (error) panic("Couldn't resolve the provided path '%', error: %\n", file_path, error.value);
 
-  list_push(project->include_paths, move(absolute_path));
+  list_push(project->include_paths, Include_Path::local(move(absolute_path)));
+}
+
+void add_global_system_include_search_path (Project *project, const char *path) CBUILD_NO_EXCEPT {
+  require_non_null(project);
+  require_non_null(path);
+  require_non_empty(path);
+
+  const auto path_view = String(path);
+
+  const auto file_path = make_file_path(project->arena, path_view);
+
+  auto [error, absolute_path] = get_absolute_path(project->arena, file_path);
+  if (error) panic("Couldn't resolve the provided path '%', error: %\n", file_path, error.value);
+
+  list_push(project->include_paths, Include_Path::system(move(absolute_path)));
 }
 
 static Target * create_target (Project *project, Target::Type type, const char *_name) {
@@ -245,7 +269,21 @@ void add_include_search_path (Target *target, const char *path) CBUILD_NO_EXCEPT
   auto [error, include_path] = get_absolute_path(target->project.arena, file_path);
   if (error) panic("Couldn't resolve the path '%', error details: %", path_view, error.value);
   
-  list_push(target->include_paths, move(include_path));
+  list_push(target->include_paths, Include_Path::local(include_path));
+}
+
+void add_system_include_search_path (Target *target, const char *path) CBUILD_NO_EXCEPT {
+  require_non_null(target);
+  require_non_null(path);
+  require_non_empty(path);
+
+  const auto path_view = String(path);
+  const auto file_path = make_file_path(target->project.arena, path_view);
+
+  auto [error, include_path] = get_absolute_path(target->project.arena, file_path);
+  if (error) panic("Couldn't resolve the path '%', error details: %", path_view, error.value);
+  
+  list_push(target->include_paths, Include_Path::system(include_path));
 }
 
 void add_all_sources_from_directory (Target *target, const char *_directory, const char *extension, bool recurse) CBUILD_NO_EXCEPT {
@@ -457,22 +495,28 @@ Project_Ref * register_external_project (Project *project, const Arguments *args
 //   add(&project->arena, &project->targets, target);
 // }
 
-Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) CBUILD_NO_EXCEPT {
-  auto external = reinterpret_cast<const Project *>(external_project);
+// Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) CBUILD_NO_EXCEPT {
+//   auto external = reinterpret_cast<const Project *>(external_project);
 
-  // auto external_target = external->targets.find([&] (auto target) {
-  //   return compare_strings(target->name, target_name);
-  // });
+//   // auto external_target = external->targets.find([&] (auto target) {
+//   //   return compare_strings(target->name, target_name);
+//   // });
   
-  // if (!external_target) panic("ERROR: Target '%' not found in the external project %\n", target_name, external->project_root);
+//   // if (!external_target) panic("ERROR: Target '%' not found in the external project %\n", target_name, external->project_root);
 
-  // auto value = *external_target;
-  // add_external_target_chain(project, *external_target);
+//   // auto value = *external_target;
+//   // add_external_target_chain(project, *external_target);
 
-  //return *external_target;
-  return nullptr;
-}
+//   //return *external_target;
+//   return nullptr;
+// }
 
-void install_target (Target *target) CBUILD_NO_EXCEPT {
+void install_target (Target *target, const char *install_target_overwrite) CBUILD_NO_EXCEPT {
+  auto &project = target->project;
+
   target->flags.install = true;
+
+  if (!install_target_overwrite) return;
+
+  set_absolute_path(project.arena, target->install_location_overwrite, install_target_overwrite);
 }

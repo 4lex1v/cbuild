@@ -28,5 +28,7 @@ EXPORTS
     ; Experimental API declarations
     add_target_hook
     get_generated_binary_file_path
-    register_external_project
-    get_external_target
+    set_install_location
+    install_target
+    add_global_system_include_search_path
+    add_system_include_search_path

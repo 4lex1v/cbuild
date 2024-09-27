@@ -18,7 +18,7 @@ void init_workspace (Memory_Arena &arena, File_Path working_directory, Configura
 /*
   Cleanup current workspace build files.
  */
-void cleanup_workspace (Memory_Arena &arena, bool full_cleanup);
+void cleanup_workspace (const Project &project, bool full_cleanup);
 
 /*
   Load main project configuration.

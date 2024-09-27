@@ -4,41 +4,46 @@
 #include "test_suite.hpp"
 
 extern File_Path working_directory; // Path to the root directory where the 'verify' program has been called
-extern File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
+extern File_Path testspace_directory;         // Path to the workspace folder where all intermediary files and folders are created
 extern File_Path binary_path;       // Executable under test
 
 constexpr bool disable_piping = false;
 
-static void setup_workspace (Memory_Arena &arena) {
-  auto [error, exists] = check_directory_exists(workspace);
-  if (!error && exists) delete_directory(workspace);
+static void setup_workspace (Memory_Arena &) {
+  if (check_directory_exists(testspace_directory).or_default(true))
+    delete_directory(testspace_directory);
 
-  create_directory(workspace);
-  set_working_directory(workspace);
+  create_directory(testspace_directory);
+  set_working_directory(testspace_directory);
 }
 
 static void setup_testsite (Memory_Arena &arena) {
-  auto [error, exists] = check_directory_exists(workspace);
-  if (!error && exists) delete_directory(workspace);
+  if (check_directory_exists(testspace_directory).or_default(true))
+    delete_directory(testspace_directory);
 
-  create_directory(workspace);
+  create_directory(testspace_directory);
 
   auto testsite_path = make_file_path(arena, working_directory, "tests", "testsite");
-  copy_directory(testsite_path, workspace);
+  copy_directory(testsite_path, testspace_directory);
 
-  set_working_directory(workspace);
+  set_working_directory(testspace_directory);
 }
 
-static void cleanup_workspace (Memory_Arena &arena) {
+static void cleanup_workspace (Memory_Arena &) {
   set_working_directory(working_directory);
-  delete_directory(workspace);
+  delete_directory(testspace_directory);
 }
 
-static void require_path_exists (File_Path path) {
-  auto output_folder = String(".cbuild");
-  auto check = check_directory_exists(output_folder);
-  require(check);
-  require(check.value);
+static void require_path_not_exists (File_Path path, Callsite callsite = {}) {
+  auto check = check_resource_exists(path);
+  crequire(check, callsite);
+  crequire(check.value == false, callsite);
+}
+
+static void require_path_exists (File_Path path, Callsite callsite = {}) {
+  auto check = check_resource_exists(path);
+  crequire(check, callsite);
+  crequire(check.value, callsite);
 }
 
 static String run_command (Memory_Arena &arena, String binary_path, String extra_arguments = {}) {
@@ -58,9 +63,27 @@ static String build_testsite (Memory_Arena &arena, String extra_arguments = {}) 
   return build_cmd_result.value.output;
 }
 
-static void validate_binary (Memory_Arena &arena, String binary_name, String expected_result) {
+static String build_project_testsite (Memory_Arena &arena, String project_dir = {}) {
+  auto project_override = "";
+  if (project_dir.length) {
+    project_override = concat_string(arena, " -p=", project_dir);
+  }
+
+  auto build_command    = concat_string(arena, binary_path, project_override, " build");
+  auto build_cmd_result = run_system_command(arena, build_command);
+  require(build_cmd_result);
+
+  return build_cmd_result.value.output;
+}
+
+static void validate_binary (Memory_Arena &arena, String binary_name, String expected_result, String project_name = "") {
+  String project_dir = "project";
+  if (project_name.length) {
+    project_dir = concat_string(arena, "project_", project_name);
+  }
+
   auto name = concat_string(arena, binary_name, ".exe");
-  auto path = make_file_path(arena, ".cbuild", "build", "out", name);
+  auto path = make_file_path(arena, ".cbuild", project_dir, "build", "out", name);
 
   auto output = run_command(arena, path);
 
@@ -125,7 +148,7 @@ static void build_testsite_tests (Memory_Arena &arena) {
 }
 
 static void build_registry_tests (Memory_Arena &arena) {
-  auto executable_path = make_file_path(arena, ".cbuild", "build", "out", "main.exe");
+  auto executable_path = make_file_path(arena, ".cbuild", "project", "build", "out", "main.exe");
 
   auto output = build_testsite(arena);
   require_lines_count(output, "Building file", 10);
@@ -361,12 +384,14 @@ static void build_project_tests (Memory_Arena &arena) {
 }
 
 static void build_cache_tests (Memory_Arena &arena) {
+  auto registry_file = make_file_path(arena, testspace_directory, ".cbuild", "project", "build", "__registry");
+  require_path_not_exists(registry_file);
+
   build_testsite(arena, "cache=off");
   validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
   validate_binary(arena, "binary2", "lib3,dyn3,bin2");
 
-  auto registry_file = make_file_path(arena, ".cbuild", "build", "__registry");
-  require_path_exists(registry_file);
+  require_path_not_exists(registry_file);
 
   auto output = build_testsite(arena);
   require_lines_count(output, "Building file",  10); 
@@ -433,6 +458,27 @@ static void build_targets_tests (Memory_Arena &arena) {
   }
 }
 
+static void build_with_project_overwrite_tests (Memory_Arena &arena) {
+  auto output1 = build_project_testsite(arena);
+  require_lines_count(output1, "Building file", 10);
+  validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1");
+  validate_binary(arena, "binary2", "lib3,dyn3,bin2");
+
+  auto output2 = build_project_testsite(arena);
+  require_lines_count(output2, "Building file", 0);
+
+  auto output3 = build_project_testsite(arena, "projectv2");
+  require_lines_count(output3, "Building file", 2);
+  validate_binary(arena, "binary4", "lib1,bin4", "projectv2");
+
+  require_crash(validate_binary(arena, "binary1", "lib1,lib2,dyn1,dyn2,bin1", "projectv2"));
+  require_crash(validate_binary(arena, "binary2", "lib3,dyn3,bin2",           "projectv2"));
+  require_crash(validate_binary(arena, "binary4", "lib1,bin4"));
+
+  auto output4 = build_project_testsite(arena, "projectv2");
+  require_lines_count(output4, "Building file", 0);
+}
+
 static Test_Case build_command_tests [] {
   /*
     Unlike other tests these just build the project generated with init to ensure that the basic
@@ -450,6 +496,8 @@ static Test_Case build_command_tests [] {
   define_test_case_ex(build_project_tests,         setup_testsite, cleanup_workspace),
   define_test_case_ex(build_cache_tests,           setup_testsite, cleanup_workspace),
   define_test_case_ex(build_targets_tests,         setup_testsite, cleanup_workspace),
+
+  define_test_case_ex(build_with_project_overwrite_tests, setup_testsite, cleanup_workspace),
 };
 
 define_test_suite(build_command, build_command_tests)

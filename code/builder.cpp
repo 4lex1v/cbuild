@@ -159,7 +159,7 @@ struct Build_System {
 
     atomic_store<Release>(node->sequence_number, index + tasks_count);
 
-    return Option(move(task));
+    return move(task);
   }
 
   void submit_task (this Build_System &self, Build_Task &&task) {
@@ -273,6 +273,8 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
     return;
   }
 
+  auto output_file_path = get_output_file_path_for_target(arena, target);
+
   enum struct Link_Result { Ignore, Success, Failed };
   auto link_result = Link_Result::Ignore;
 
@@ -285,8 +287,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
 
     auto output_file_name     = concat_string(arena, target.name, ".", get_target_extension(target));
     auto target_object_folder = make_file_path(arena, object_folder_path, target.name);
-    auto output_file_path     = make_file_path(arena, out_folder_path, output_file_name);
-
+  
     String_Builder builder { arena };
 
     /*
@@ -431,13 +432,21 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
     builder += project.compiler;
     builder += target.compiler;
 
-    project.include_paths.for_each([&] (auto &path) {
-      builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
-    });
-
-    target.include_paths.for_each([&] (auto &path) {
-      builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path, "\"");
-    });
+    const List<Include_Path>* include_paths[] { &project.include_paths, &target.include_paths };
+    for (auto paths: include_paths) {
+      paths->for_each([&] (auto &path) {
+        switch (path.kind) {
+          case Include_Path::System: {
+            builder += concat_string(arena, _msvc ? "/external:I" : "-isystem ", "\"", path.value, "\"");
+            break;
+          }
+          case Include_Path::Local: {
+            builder += concat_string(arena, _msvc ? "/I" : "-i ", "\"", path.value, "\"");
+            break;
+          }
+        }
+      });
+    }
 
     builder += concat_string(arena, _msvc ? "/c " : "-c ", "\"", file.path, "\"");
     builder += concat_string(arena, _msvc ? "/Fo" : "-o ", "\"", object_file_path, "\"");
@@ -629,6 +638,38 @@ static void validate_toolchain (const Project &project) {
   if (!check_file_exists(tc.archiver_path).or_default(false))     panic("No archive tool found at %\n", tc.archiver_path);
 }
 
+static void install_targets (Memory_Arena &arena, const List<Target_Tracker> &trackers) {
+  bool check = false;
+  for (auto &t: trackers) check = check || t.target.flags.install;
+
+  if (check == false) return; // No targets marked for installation
+
+  log("Installing targets:\n");
+
+  for (auto tracker: trackers) {
+    auto &target  = tracker.target;
+    auto &project = target.project;
+    
+    if (target.flags.install) {
+      auto output_file_path = get_output_file_path_for_target(arena, target);
+
+      auto install_path = target.install_location_overwrite;
+      if (!install_path) {
+        if (target.type == Target::Static_Library)
+          install_path = project.library_install_location_path;
+        else 
+          install_path = project.binary_install_location_path;
+      }
+
+      fin_ensure(install_path);
+    
+      log("  Target '%': % -> %\n", target.name, output_file_path, install_path);
+
+      copy_file(output_file_path, install_path);
+    }
+  }
+}
+
 u32 build_project (Memory_Arena &arena, const Project &project, const List<String> &selected_targets, Cache_Behavior cache, u32 builders_count) {
   using enum File_System_Flags;
 
@@ -661,7 +702,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
 
   Chain_Scanner scanner(arena, registry, update_set);
 
-  List<File_Path> project_include_paths { arena };
+  List<Include_Path> project_include_paths { arena };
   for (auto &path: project.include_paths) list_push_copy(project_include_paths, path);
 
   for (auto &tracker: build_plan.selected_targets) {
@@ -691,7 +732,7 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
       if (registry_enabled) {
         auto local = arena;
 
-        List<File_Path> include_paths(local, project_include_paths);
+        List<Include_Path> include_paths(local, project_include_paths);
         for (auto &path: target.include_paths) list_push_front_copy(include_paths, path);
 
         task.dependencies_updated = scan_dependency_chain(local, scanner, include_paths, task.file);
@@ -733,6 +774,8 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
       exit_code = 1;
     }
   }
+
+  install_targets(arena, build_plan.selected_targets);
 
   return exit_code;
 }

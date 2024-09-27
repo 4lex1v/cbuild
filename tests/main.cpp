@@ -3,9 +3,9 @@
 #include "code/cbuild.hpp"
 #include "test_suite.hpp"
 
-File_Path working_directory; // Path to the root directory where the 'verify' program has been called
-File_Path workspace;         // Path to the workspace folder where all intermediary files and folders are created
-File_Path binary_path;       // Executable under test
+File_Path working_directory;    // Path to the root directory where the 'verify' program has been called
+File_Path testspace_directory;  // Path to the workspace folder where all intermediary files and folders are created
+File_Path binary_path;          // Executable under test
 
 /*
   These variables are set by the project loader and used used by the cbuild api implementation "code/cbuild_api.cpp".
@@ -51,9 +51,9 @@ int main (int argc, char **argv) {
     return 1;
   }
 
-  working_directory = get_working_directory(suite_runner.arena).value;
-  binary_path       = get_absolute_path(suite_runner.arena, make_file_path(suite_runner.arena, bin_path_arg)).value;
-  workspace         = make_file_path(suite_runner.arena, working_directory, "tests", "verification");
+  working_directory   = get_working_directory(suite_runner.arena).value;
+  binary_path         = get_absolute_path(suite_runner.arena, make_file_path(suite_runner.arena, bin_path_arg)).value;
+  testspace_directory = make_file_path(suite_runner.arena, working_directory, "tests", "verification");
 
   write_to_stdout(format_string(arena, "Verifying: %\n", binary_path));
 

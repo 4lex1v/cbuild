@@ -34,6 +34,28 @@ struct User_Defined_Command {
   Action_Type proc;
 };
 
+struct Include_Path {
+  enum Kind {
+    System,
+    Local
+  };
+
+  File_Path value;
+  Kind      kind;
+
+  static Include_Path system (File_Path path) {
+    return Include_Path { move(path), System };
+  }
+
+  static Include_Path local (File_Path path) {
+    return Include_Path { move(path), Local };
+  }
+
+  bool operator == (const Include_Path &other) const {
+    return false;
+  }
+};
+
 struct Project {
   /*
     Perhaps it's not the cleanest approach it's worth to revisit it at a later point. This arena shouldn't used by any project
@@ -79,18 +101,22 @@ struct Project {
    */
   File_Path cache_root;
 
+  File_Path binary_install_location_path  { make_file_path(arena, cache_root, "bin") };
+  File_Path library_install_location_path { make_file_path(arena, cache_root, "lib") };
+
+  const File_Path project_build_location;
+
+  const File_Path project_config_build_location { make_file_path(arena, project_build_location, "config") };
+  const File_Path project_library_path          { make_file_path(arena, project_config_build_location, concat_string(arena, name, ".", get_shared_library_extension())) };
+
   /*
     Path to the folder where all residual and final artifacts will be created (under corresponding nested folders).
-    By default it's under '<root>/.cbuild/build', but the user is allowed to add more folders below that path. This
+    By default it's under '<root>/.cbuild/project/build', but the user is allowed to add more folders below that path. This
     could be helpful when multiple build configurations are introduced, e.g debug vs release build, etc... All other
     required folders, for object files and binaries, will be created in this folder.
    */
-  File_Path build_location_path { make_file_path(arena, cache_root, "build") };
-
-  File_Path install_location_path { make_file_path(arena, cache_root, "bin") };
-
-  const File_Path project_output_location { make_file_path(arena, cache_root, "project") };
-  const File_Path project_library_path    { make_file_path(arena, project_output_location, concat_string(arena, name, ".", get_shared_library_extension())) };
+  const File_Path base_build_location_path { make_file_path(arena, project_build_location, "build") };
+  File_Path build_location_path            { base_build_location_path };
 
   List<Project *> sub_projects { arena };
 
@@ -102,7 +128,7 @@ struct Project {
   List<Target> targets { arena };
   u32          total_files_count = 0;
 
-  List<File_Path> include_paths { arena };
+  List<Include_Path> include_paths { arena };
 
   List<String> compiler { arena };
   List<String> archiver { arena };
@@ -113,14 +139,18 @@ struct Project {
   struct {
   } hooks;
 
-  Project (Memory_Arena &global, String _name,
-           File_Path _project_root, File_Path _cache_directory,
+  Project (Memory_Arena &global,
+           String _name,
+           File_Path _project_root,
+           File_Path _cache_directory,
+           File_Path _project_output_name = "project",
            const bool _is_external = false)
-    : global_arena { global },
-      name         { copy_string(arena, _name) },
-      is_external  { _is_external },
-      project_root { copy_string(arena, _project_root) },
-      cache_root   { make_file_path(arena, _cache_directory) }
+    : global_arena           { global },
+      name                   { copy_string(arena, _name) },
+      is_external            { _is_external },
+      project_root           { copy_string(arena, _project_root) },
+      cache_root             { make_file_path(arena, _cache_directory) },
+      project_build_location { make_file_path(arena, cache_root, _project_output_name) }
   {}
 };
 
@@ -155,9 +185,11 @@ struct Target {
     bool install  = false;
   } flags;
 
-  List<File_Path> files          { project.arena };
-  List<File_Path> include_paths  { project.arena };
-  List<String>    link_libraries { project.arena };
+  File_Path install_location_overwrite {};
+
+  List<File_Path>    files          { project.arena };
+  List<Include_Path> include_paths  { project.arena };
+  List<String>       link_libraries { project.arena };
 
   List<Target *> depends_on  { project.arena };
   List<Target *> required_by { project.arena };
