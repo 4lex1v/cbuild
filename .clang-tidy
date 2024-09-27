@@ -1,0 +1,13 @@
+WarningsAsErrors: 'performance-*,clang-analyzer-*,concurrency-*'
+HeaderFilterRegex: '.*'
+Checks:
+  - 'clang-analyzer-*'
+  - 'concurrency-*'
+  - 'misc-*'
+  - 'modernize-*'
+  - 'performance-*'
+  - '-modernize-use-trailing-return-type'
+  - '-modernize-avoid-c-arrays'
+  - '-modernize-return-braced-init-list'
+  - '-misc-non-private-member-variables-in-classes'
+  - '-misc-no-recursion'
