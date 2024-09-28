@@ -141,11 +141,11 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     link_with(rdump, "kernel32.lib", "advapi32.lib");
   }
 
-  // if (config == "release") {
-  //   char release_folder[128];
-  //   snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
-  //   set_output_location(project, release_folder);
-  // }
+  if (config == "release") {
+    char release_folder[128];
+    snprintf(release_folder, 128, "releases/r%u/%s", tool_version, platform.data());
+    set_output_location(project, release_folder);
+  }
 
   //add_target_hook(cbuild, Hook_Type_After_Target_Linked, print_hashes);
   

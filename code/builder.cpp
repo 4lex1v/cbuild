@@ -441,7 +441,7 @@ static void compile_file (Memory_Arena &arena, Target_Tracker &tracker, const Fi
             break;
           }
           case Include_Path::Local: {
-            builder += concat_string(arena, _msvc ? "/I" : "-i ", "\"", path.value, "\"");
+            builder += concat_string(arena, _msvc ? "/I" : "-I ", "\"", path.value, "\"");
             break;
           }
         }
