@@ -18,10 +18,18 @@ static void setup_toolchain (Project *project, const std::string_view toolchain)
   }
 }
 
+static int test_command (const Arguments *) noexcept {
+  printf("Calling registered command\n");
+  fflush(stdout); // This is needed for tests to properly capture the stdout output
+  return 0;
+}
+
 extern "C" bool setup_project (const Arguments *args, Project *project) {
   auto toolchain = get_argument_or_default(args, "toolchain", "msvc_x64");
   auto config    = get_argument_or_default(args, "config",    "debug");
   auto cache     = get_argument_or_default(args, "cache",     "on");
+
+  register_action(project, "test_cmd", test_command);
 
   // NOTE: Test checks these printf to ensure that values are passed correctly. DON'T REMOVE
   fprintf(stdout, "Selected toolchain - %s\n", toolchain);
