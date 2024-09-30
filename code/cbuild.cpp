@@ -398,6 +398,8 @@ static File_Path resolve_project_output_dir_name (Memory_Arena &arena, const Fil
 u32 run_cbuild () { 
   // TODO: #perf check what's the impact from page faults is. How would large pages affect?
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
+
+  find_executable(arena, "cbuild");
     
   auto args        = get_startup_args(arena);
   auto args_cursor = slice(args);

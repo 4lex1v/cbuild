@@ -47,6 +47,8 @@ CBUILD_EXPERIMENTAL_API void install_target (Target *target, const char *install
 CBUILD_EXPERIMENTAL_API void add_global_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
 CBUILD_EXPERIMENTAL_API void add_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
 
+CBUILD_EXPERIMENTAL_API const char * find_executable (Project *project, const char *name) CBUILD_NO_EXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

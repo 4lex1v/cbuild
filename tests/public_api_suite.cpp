@@ -468,6 +468,19 @@ static void add_global_include_search_path_test (Memory_Arena &arena) {
   require(project.include_paths.contains(Include_Path::local(get_absolute_path(arena, "./libs").value)));
 }
 
+static void find_executable_test (Memory_Arena &arena) {
+  auto project = create_project(arena);
+
+  auto result = find_executable(&project, "git");
+  require(result != nullptr);
+
+  auto result2 = find_executable(&project, "thisisanabsoluteguargbageofaname");
+  require(result2 == nullptr);
+
+  auto result3 = find_executable(&project, "!invalid name _* dont' use");
+  require(result3 == nullptr);
+}
+
 static Test_Case public_api_tests [] {
   define_test_case(set_toolchain_test),
   define_test_case(disable_registry_test),
@@ -494,7 +507,8 @@ static Test_Case public_api_tests [] {
   define_test_case(add_global_compiler_option_test),
   define_test_case(add_global_archiver_option_test),
   define_test_case(add_global_linker_option_test),
-  define_test_case(add_global_include_search_path_test)
+  define_test_case(add_global_include_search_path_test),
+  define_test_case(find_executable_test)
 };
 
 define_test_suite(public_api, public_api_tests)

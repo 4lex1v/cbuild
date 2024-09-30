@@ -32,3 +32,4 @@ EXPORTS
     install_target
     add_global_system_include_search_path
     add_system_include_search_path
+    find_executable

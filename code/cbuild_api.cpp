@@ -2,6 +2,7 @@
 #include "anyfin/base.hpp"
 #include "anyfin/startup.hpp"
 #include "anyfin/console.hpp"
+#include "anyfin/platform.hpp"
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
@@ -519,4 +520,9 @@ void install_target (Target *target, const char *install_target_overwrite) CBUIL
   if (!install_target_overwrite) return;
 
   set_absolute_path(project.arena, target->install_location_overwrite, install_target_overwrite);
+}
+
+CBUILD_EXPERIMENTAL_API const char * find_executable (Project *project, const char *name) CBUILD_NO_EXCEPT {
+  auto [system_error, path] = find_executable(project->arena, String(name, get_string_length(name)));
+  return (system_error || path.is_none()) ? nullptr : path.value.value;
 }
