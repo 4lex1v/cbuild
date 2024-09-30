@@ -113,7 +113,6 @@ void cleanup_workspace (const Project &project, bool full_cleanup) {
 static inline void load_project_from_library (Project &project, Slice<Startup_Argument> arguments) {
   auto [load_error, library] = load_shared_library(project.project_library_path);
   if (load_error) panic("ERROR: Project % configuration file load failed due to an error - %\n", project.name, load_error.value);
-  defer { unload_library(*library); };
 
   /*
     If there's something wrong with the library that we load, like some expected symbols are missing, it's fine to ignore
