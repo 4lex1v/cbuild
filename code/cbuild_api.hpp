@@ -52,7 +52,7 @@ struct Include_Path {
   }
 
   bool operator == (const Include_Path &other) const {
-    return false;
+    return (this->kind == other.kind) && (this->value == other.value);
   }
 };
 

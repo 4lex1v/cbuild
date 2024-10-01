@@ -6,7 +6,7 @@
 -DTOOL_VERSION=0
 -DAPI_VERSION=0
 -I.
--I./libs/anyfin
+-I./libs
 -Wno-alloca
 -Wno-unused-function
 -Wno-unused-parameter

@@ -92,7 +92,7 @@ static void disable_registry_test (Memory_Arena &arena) {
   require(project.registry_disabled);
 }
 
-static int test_action (const Arguments *args) {
+static int test_action (const Arguments *) noexcept {
   return 0;
 }
 
@@ -114,12 +114,12 @@ static void output_location_test (Memory_Arena &arena) {
   auto project = create_project(arena);
 
   // For now to simplify setup, .cbuild/build is the default 
-  require(ends_with(project.build_location_path, "build"));
+  require(project.build_location_path == make_file_path(arena, testspace_directory, ".cbuild", "project", "build"));
 
   String path = "somewhere/somehow/something";
   set_output_location(&project, path);
 
-  require(project.build_location_path == make_file_path(arena, testspace_directory, ".cbuild", "build", path));
+  require(project.build_location_path == make_file_path(arena, testspace_directory, ".cbuild", "project", "build", path));
 }
 
 static void add_static_library_test (Memory_Arena &arena) {
@@ -287,12 +287,12 @@ static void add_all_sources_from_directory_test (Memory_Arena &arena) {
   add_source_file(target, "code/library1/library1.cpp");
   add_all_sources_from_directory(target, "code", "cpp", true);
 
-  require(target->files.count == 9); // should dedup files
-  require(project.total_files_count == 9);
+  require(target->files.count == 10); // should dedup files
+  require(project.total_files_count == 10);
 
   add_all_sources_from_directory(target, "code", "c", true);
-  require(target->files.count == 10); 
-  require(project.total_files_count == 10);
+  require(target->files.count == 11); 
+  require(project.total_files_count == 11);
 
   require_crash(add_all_sources_from_directory(target, "non_existing_dir", "c", false));
   require_crash(add_all_sources_from_directory(target, "dir/file.cpp", "cpp", false));
