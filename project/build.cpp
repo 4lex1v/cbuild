@@ -89,7 +89,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   char versions[256];
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
-  add_global_include_search_paths(project, ".", "libs/anyfin");
+  add_global_include_search_paths(project, ".", "libs");
   add_global_compiler_options(project, "-std=c++2b",
                               versions,
                               "-DCPU_ARCH_X64 -DPLATFORM_WIN32 -DPLATFORM_WIN32",
