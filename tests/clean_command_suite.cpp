@@ -34,7 +34,7 @@ static void cleanup_workspace (Memory_Arena &) {
   delete_directory(testspace_directory);
 }
 
-static void basic_clean_command_usage (Memory_Arena &arena) {
+static void cleanup_build_command_tests (Memory_Arena &arena) {
   auto cbuild_output_folder  = make_file_path(arena, ".cbuild", "project");
   auto output_build_folder   = make_file_path(arena, cbuild_output_folder, "build");
   auto output_project_folder = make_file_path(arena, cbuild_output_folder, "config");
@@ -50,7 +50,7 @@ static void basic_clean_command_usage (Memory_Arena &arena) {
   require(check_directory_exists(output_project_folder).value);
 }
 
-static void complete_clean_command_usage (Memory_Arena &arena) {
+static void cleanup_project_command_tests (Memory_Arena &arena) {
   auto cbuild_output_folder  = make_file_path(arena, ".cbuild", "project");
   auto output_build_folder   = make_file_path(arena, cbuild_output_folder, "build");
   auto output_project_folder = make_file_path(arena, cbuild_output_folder, "config");
@@ -58,52 +58,51 @@ static void complete_clean_command_usage (Memory_Arena &arena) {
   require(check_directory_exists(output_build_folder));
   require(check_directory_exists(output_project_folder));
 
-  auto clean_command = format_string(arena, "% clean all", binary_path);
+  auto clean_command = format_string(arena, "% clean project", binary_path);
   auto clean_cmd_result = run_system_command(arena, clean_command);
   require(clean_cmd_result);
 
   require(check_directory_exists(output_build_folder).value == false);
   require(check_directory_exists(output_project_folder).value == false);
+
+  require(check_directory_exists(make_file_path(arena, ".cbuild", "project_project")).value == true);
 }
 
-static void cleanup_with_project_override_tests (Memory_Arena &arena) {
-  {
-    auto cbuild_output_folder  = make_file_path(arena, ".cbuild", "project");
-    auto output_build_folder   = make_file_path(arena, cbuild_output_folder, "build");
-    auto output_project_folder = make_file_path(arena, cbuild_output_folder, "config");
+static void cleanup_project_override_command_tests (Memory_Arena &arena) {
+  auto cbuild_output_folder  = make_file_path(arena, ".cbuild", "project_project");
+  auto output_build_folder   = make_file_path(arena, cbuild_output_folder, "build");
+  auto output_project_folder = make_file_path(arena, cbuild_output_folder, "config");
 
-    require(check_directory_exists(output_build_folder));
-    require(check_directory_exists(output_project_folder));
+  require(check_directory_exists(output_build_folder));
+  require(check_directory_exists(output_project_folder));
 
-    auto clean_command = format_string(arena, "% clean all", binary_path);
-    auto clean_cmd_result = run_system_command(arena, clean_command);
-    require(clean_cmd_result);
+  auto clean_command = format_string(arena, "% -p=project/config.cpp clean project", binary_path);
+  auto clean_cmd_result = run_system_command(arena, clean_command);
+  require(clean_cmd_result);
 
-    require(check_directory_exists(output_build_folder).value == false);
-    require(check_directory_exists(output_project_folder).value == false);
-  }
+  require(check_directory_exists(output_build_folder).value == false);
+  require(check_directory_exists(output_project_folder).value == false);
 
-  {
-    auto cbuild_output_folder  = make_file_path(arena, ".cbuild", "project_project");
-    auto output_build_folder   = make_file_path(arena, cbuild_output_folder, "build");
-    auto output_project_folder = make_file_path(arena, cbuild_output_folder, "config");
+  require(check_directory_exists(make_file_path(arena, ".cbuild", "project")).value == true);
+}
 
-    require(check_directory_exists(output_build_folder));
-    require(check_directory_exists(output_project_folder));
+static void cleanup_all_command_tests (Memory_Arena &arena) {
+  auto cbuild_output_folder  = make_file_path(arena, ".cbuild");
 
-    auto clean_command = format_string(arena, "% -p=project/config.cpp clean all", binary_path);
-    auto clean_cmd_result = run_system_command(arena, clean_command);
-    require(clean_cmd_result);
+  require(check_directory_exists(cbuild_output_folder));
 
-    require(check_directory_exists(output_build_folder).value == false);
-    require(check_directory_exists(output_project_folder).value == false);
-  }
+  auto clean_command = format_string(arena, "% clean all", binary_path);
+  auto clean_cmd_result = run_system_command(arena, clean_command);
+  require(clean_cmd_result);
+
+  require(check_directory_exists(cbuild_output_folder).value == false);
 }
 
 static Test_Case clean_command_tests [] {
-  define_test_case_ex(basic_clean_command_usage,           setup_workspace, cleanup_workspace),
-  define_test_case_ex(complete_clean_command_usage,        setup_workspace, cleanup_workspace),
-  define_test_case_ex(cleanup_with_project_override_tests, setup_workspace, cleanup_workspace),
+  define_test_case_ex(cleanup_build_command_tests,            setup_workspace, cleanup_workspace),
+  define_test_case_ex(cleanup_project_command_tests,          setup_workspace, cleanup_workspace),
+  define_test_case_ex(cleanup_project_override_command_tests, setup_workspace, cleanup_workspace),
+  define_test_case_ex(cleanup_all_command_tests,              setup_workspace, cleanup_workspace),
 };
 
 define_test_suite(clean_command, clean_command_tests)

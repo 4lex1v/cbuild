@@ -120,12 +120,14 @@ struct Init_Command {
 };
 
 struct Clean_Command {
-  bool all;
+  Cleanup_Type type;
 
   static Clean_Command parse (const Iterable<Startup_Argument> auto &command_arguments) {
-    return Clean_Command {
-      .all = find_option_flag(command_arguments, "all"),
-    };
+    Cleanup_Type type = Cleanup_Type::Build;
+    if      (find_option_flag(command_arguments, "project")) type = Cleanup_Type::Project;
+    else if (find_option_flag(command_arguments, "all"))     type = Cleanup_Type::Full;
+
+    return Clean_Command { .type = type };
   }
 };
 
@@ -175,8 +177,11 @@ Commands:
     Removes all build artifacts (compiled objects, binary files, etc.) created by the 'build' command, restoring workspace to
     its pre-build state.
 
-    all            Additionally remove artifacts associated with the project's configuration build, which are not removed by
-                   default.
+    project        In addition to the default build cleanup, would also remove all files associated with user's configuration.
+                   This command depends on the --project=<path> option, as it would cleanup only the current project (default or
+                   overwrite, if the value was provided).
+
+    all            Removes everything under .cbuild folder.
 
   update
     Updates the tool's API header files within your current project configuration folder (i.e ./project) to match the latest
@@ -327,74 +332,6 @@ static bool is_subdirectory (Memory_Arena &arena, const File_Path &work_dir, con
   return has_substring(abs_path, work_dir);
 }
 
-static File_Path resolve_project_output_dir_name (Memory_Arena &arena, const File_Path &work_dir) {
-  if (project_overwrite == "project") return "project";
-
-  auto normalize_path = [&arena] (File_Path path) -> File_Path {
-    if (ends_with(path, "\\") || ends_with(path, "/") || ends_with(path, "_")) {
-      path = File_Path(path.value, path.length - 1);
-    }
-
-    if (!contains(path, ".")) return concat_string(arena, "project_", path);
-    return concat_string(arena, "project_", string_replace(arena, path, ".", "_"));
-  };
-
-  auto file_config_overwrite = has_file_extension(project_overwrite);
-  bool only_file_name = false;
-  if (file_config_overwrite) {
-    only_file_name = true;
-    for (auto i: project_overwrite) {
-      if (i == '\\' || i == '/') {
-        only_file_name = false;
-        break;
-      }
-    }
-  }
-
-  if (only_file_name) return normalize_path(get_resource_name(work_dir).value);
-
-  auto directory_path = copy_string(arena, project_overwrite);
-
-  if (!ensure_relative_path(directory_path) || !is_subdirectory(arena, work_dir, directory_path))
-    panic("Specified --project value must be a path relative to the project's root folder.\n  Root:     %\n  Resolved: %\n",
-          work_dir, get_absolute_path(arena, directory_path).value);
-
-  char *buffer = nullptr;
-  usize length = 0;
-  if (file_config_overwrite) {
-    /*
-      Extract the folder portion of the path, dropping the configuration's file name and extension.
-     */
-
-    length = directory_path.length - 1;
-    while (length >= 0) {
-      auto value = directory_path[length];
-      if (value == '\\' || value == '/') break;
-      length -= 1;
-    }
-
-    buffer = reserve<char>(arena, length + 1);
-    for (int i = 0; i < length; i++) {
-      auto value = directory_path[i];
-      buffer[i] = (value == '\\' || value == '/') ? '_' : value;
-    }
-
-    buffer[length] = '\0';
-  }
-  else {
-    length = directory_path.length;
-    
-    buffer = reserve<char>(arena, length + 1);
-    for (int idx = 0; auto value: directory_path) {
-      buffer[idx++] = (value == '\\' || value == '/') ? '_' : value;
-    }
-
-    buffer[directory_path.length] = '\0';
-  }
-
-  return normalize_path(String(buffer, length));
-}
-
 u32 run_cbuild () { 
   // TODO: #perf check what's the impact from page faults is. How would large pages affect?
   Memory_Arena arena { reserve_virtual_memory(megabytes(64)) };
@@ -434,6 +371,10 @@ u32 run_cbuild () {
   auto working_directory_path = unwrap(get_working_directory(arena));
   if (!silence_logs_opt) log("Working directory: %\n", working_directory_path);
 
+  if (!ensure_relative_path(project_overwrite) || !is_subdirectory(arena, working_directory_path, project_overwrite))
+    panic("Specified --project value must be a path relative to the project's root folder.\n  Root:     %\n  Resolved: %\n",
+          working_directory_path, get_absolute_path(arena, project_overwrite).value);
+
   if (command_type == CLI_Command::Init) {
     auto command = Init_Command::parse(args_cursor);
     init_workspace(arena, working_directory_path, command.type);
@@ -451,6 +392,12 @@ u32 run_cbuild () {
     return 0;
   }
 
+  if (command_type == CLI_Command::Clean) {
+    auto command = Clean_Command::parse(args_cursor);
+    cleanup_workspace(arena, working_directory_path, command.type);
+    return 0;
+  }
+
   auto cache_dir = make_file_path(arena, working_directory_path, ".cbuild");
 
   /*
@@ -463,12 +410,6 @@ u32 run_cbuild () {
 
   Project project { arena, "project", working_directory_path, cache_dir, project_output_dir };
   load_project(arena, project, args_cursor);
-
-  if (command_type == CLI_Command::Clean) {
-    auto command = Clean_Command::parse(args_cursor);
-    cleanup_workspace(project, command.all);
-    return 0;
-  }
 
   if (command_type == CLI_Command::Build) {
     auto [targets, cache, builders_count] = Build_Command::parse(arena, args_cursor);

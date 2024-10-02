@@ -99,17 +99,6 @@ void init_workspace (Memory_Arena &arena, File_Path working_directory, Configura
   log("Project initialized\n");
 }
 
-void cleanup_workspace (const Project &project, bool full_cleanup) {
-  if (full_cleanup) {
-    ensure(delete_directory(project.project_build_location));
-    log("All produced files under '%' were removed\n", project.project_build_location);
-    return;
-  }
-
-  ensure(delete_directory(project.build_location_path));
-  log("All produced files under '%' were removed\n", project.build_location_path);
-}
-
 static inline void load_project_from_library (Project &project, Slice<Startup_Argument> arguments) {
   auto [load_error, library] = load_shared_library(project.project_library_path);
   if (load_error) panic("ERROR: Project % configuration file load failed due to an error - %\n", project.name, load_error.value);
@@ -250,6 +239,70 @@ static void build_project_configuration (Memory_Arena &arena, Project &project, 
   }
 }
 
+String resolve_project_output_dir_name (Memory_Arena &arena, const File_Path &work_dir) {
+  if (project_overwrite == "project") return "project";
+
+  auto normalize_path = [&arena] (File_Path path) -> File_Path {
+    if (ends_with(path, "\\") || ends_with(path, "/") || ends_with(path, "_")) {
+      path = File_Path(path.value, path.length - 1);
+    }
+
+    if (!contains(path, ".")) return concat_string(arena, "project_", path);
+    return concat_string(arena, "project_", string_replace(arena, path, ".", "_"));
+  };
+
+  auto file_config_overwrite = has_file_extension(project_overwrite);
+  bool only_file_name = false;
+  if (file_config_overwrite) {
+    only_file_name = true;
+    for (auto i: project_overwrite) {
+      if (i == '\\' || i == '/') {
+        only_file_name = false;
+        break;
+      }
+    }
+  }
+
+  if (only_file_name) return normalize_path(get_resource_name(work_dir).value);
+
+  auto directory_path = copy_string(arena, project_overwrite);
+
+  char *buffer = nullptr;
+  usize length = 0;
+  if (file_config_overwrite) {
+    /*
+      Extract the folder portion of the path, dropping the configuration's file name and extension.
+     */
+
+    length = directory_path.length - 1;
+    while (length >= 0) {
+      auto value = directory_path[length];
+      if (value == '\\' || value == '/') break;
+      length -= 1;
+    }
+
+    buffer = reserve<char>(arena, length + 1);
+    for (int i = 0; i < length; i++) {
+      auto value = directory_path[i];
+      buffer[i] = (value == '\\' || value == '/') ? '_' : value;
+    }
+
+    buffer[length] = '\0';
+  }
+  else {
+    length = directory_path.length;
+    
+    buffer = reserve<char>(arena, length + 1);
+    for (int idx = 0; auto value: directory_path) {
+      buffer[idx++] = (value == '\\' || value == '/') ? '_' : value;
+    }
+
+    buffer[directory_path.length] = '\0';
+  }
+
+  return normalize_path(String(buffer, length));
+}
+
 static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Path &working_directory) {
   auto project_directory_path = resolve_project_folder(arena, working_directory);
   auto build_file_name        = resolve_build_file();
@@ -269,6 +322,30 @@ static Option<File_Path> discover_build_file (Memory_Arena &arena, const File_Pa
   }
 
   return opt_none;
+}
+
+void cleanup_workspace (Memory_Arena &arena, const File_Path &working_directory, Cleanup_Type type) {
+  if (type == Cleanup_Type::Full) {
+    ensure(delete_directory(".cbuild"));
+    log("Cleanup complete\n");
+    return;
+  }
+
+  auto path = resolve_project_output_dir_name(arena, working_directory);
+
+  auto project_root_folder = make_file_path(arena, working_directory, ".cbuild", path);
+  auto build_folder        = make_file_path(arena, project_root_folder, "build");
+  auto config_folder       = make_file_path(arena, project_root_folder, "config");
+
+  if (type == Cleanup_Type::Build || type == Cleanup_Type::Project) {
+    ensure(delete_directory(build_folder));
+    log("All produced files under '%' were removed\n", build_folder);
+  }
+
+  if (type == Cleanup_Type::Project) {
+    ensure(delete_directory(config_folder));
+    log("All produced files under '%' were removed\n", config_folder);
+  }
 }
 
 struct Project_Registry {
