@@ -49,6 +49,8 @@ CBUILD_EXPERIMENTAL_API void add_system_include_search_path (Target *target, con
 
 CBUILD_EXPERIMENTAL_API const char * find_executable (Project *project, const char *name) CBUILD_NO_EXCEPT;
 
+CBUILD_EXPERIMENTAL_API int run_system_command (Project *project, const char *command_name, char *buffer, unsigned int buffer_size, unsigned int *written_size) CBUILD_NO_EXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

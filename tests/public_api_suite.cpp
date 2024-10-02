@@ -481,6 +481,49 @@ static void find_executable_test (Memory_Arena &arena) {
   require(result3 == nullptr);
 }
 
+static void run_system_command_test (Memory_Arena &arena) {
+  auto project = create_project(arena);
+
+  u32 bytes_written = 0;
+
+  {
+    auto result = run_system_command(&project, "cbuild help", nullptr, 0, &bytes_written);  
+    require(result == 0);
+  }
+
+  {
+    require_crash(run_system_command(&project, "absolute_and_utter guarbage", nullptr, 0, &bytes_written));
+  }
+
+  {
+    char buffer[10] {};
+    
+    auto result = run_system_command(&project, "cbuild help", buffer, array_count_elements(buffer), &bytes_written);  
+    require(result == 0);
+    require(bytes_written == 10);
+    require(contains(String(buffer, bytes_written), "CBuild"));
+  }
+  
+  {
+    char buffer[10] {};
+    
+    auto result = run_system_command(&project, "cbuild help", buffer, 0, &bytes_written);  
+    require(result == 0);
+    require(bytes_written == 0);
+    require(!contains(String(buffer, bytes_written), "CBuild"));
+  }
+
+  {
+    char buffer[4 * 1024] {};
+    
+    auto result = run_system_command(&project, "cbuild help", buffer, array_count_elements(buffer), &bytes_written);  
+    require(result == 0);
+    require(bytes_written != array_count_elements(buffer)); // hopefully the output is smaller
+    require(contains(String(buffer, bytes_written), "CBuild"));
+    require(contains(String(buffer, bytes_written), "--project"));
+  }
+}
+
 static Test_Case public_api_tests [] {
   define_test_case(set_toolchain_test),
   define_test_case(disable_registry_test),
@@ -508,7 +551,8 @@ static Test_Case public_api_tests [] {
   define_test_case(add_global_archiver_option_test),
   define_test_case(add_global_linker_option_test),
   define_test_case(add_global_include_search_path_test),
-  define_test_case(find_executable_test)
+  define_test_case(find_executable_test),
+  define_test_case(run_system_command_test)
 };
 
 define_test_suite(public_api, public_api_tests)

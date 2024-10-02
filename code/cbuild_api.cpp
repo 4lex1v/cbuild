@@ -3,6 +3,7 @@
 #include "anyfin/startup.hpp"
 #include "anyfin/console.hpp"
 #include "anyfin/platform.hpp"
+#include "anyfin/commands.hpp"
 
 #include "cbuild.hpp"
 #include "cbuild_api.hpp"
@@ -525,4 +526,23 @@ void install_target (Target *target, const char *install_target_overwrite) CBUIL
 CBUILD_EXPERIMENTAL_API const char * find_executable (Project *project, const char *name) CBUILD_NO_EXCEPT {
   auto [system_error, path] = find_executable(project->arena, String(name, get_string_length(name)));
   return (system_error || path.is_none()) ? nullptr : path.value.value;
+}
+
+CBUILD_EXPERIMENTAL_API int run_system_command (Project *project, const char *command_str, char *buffer, unsigned int buffer_size, unsigned int *written_size) CBUILD_NO_EXCEPT {
+  auto command = String(command_str, get_string_length(command_str));
+
+  auto [system_error, status] = run_system_command(project->arena, command);
+  if (system_error) panic("Command '%' execution failed due to a system error: %\n", command, system_error.value);
+
+  if (status.output.length == 0 || !buffer || !buffer_size) {
+    if (written_size) *written_size = 0;
+    return status.status_code;
+  }
+
+  auto bytes_to_copy = (status.output.length < buffer_size) ? status.output.length : buffer_size;
+  copy_memory(buffer, status.output.value, bytes_to_copy);
+
+  if (written_size) *written_size = bytes_to_copy;
+
+  return status.status_code;
 }
