@@ -639,12 +639,14 @@ static void validate_toolchain (const Project &project) {
 }
 
 static void install_target (Memory_Arena &arena, const Target_Tracker &tracker) {
+  Memory_Arena local = arena;
+
   auto &target  = tracker.target;
   auto &project = target.project;
     
   if (!target.flags.install) return;
 
-  auto output_file_path = get_output_file_path_for_target(arena, target);
+  auto output_file_path = get_output_file_path_for_target(local, target);
 
   auto install_path = target.install_location_overwrite;
   auto extension = get_executable_extension();
@@ -665,7 +667,7 @@ static void install_target (Memory_Arena &arena, const Target_Tracker &tracker) 
 
   if (auto result = is_file(install_path); result.is_ok() && result.value) {
     log("[ERROR] Target installation path '%' is not a directory.\n", install_path);
-    return;;
+    return;
   }
 
   if (auto result = check_directory_exists(install_path); result.is_error()) {
@@ -680,7 +682,7 @@ static void install_target (Memory_Arena &arena, const Target_Tracker &tracker) 
     }
   }
 
-  String_Builder path_builder { arena };
+  String_Builder path_builder { local };
   path_builder += install_path;
   path_builder += "\\";
   path_builder += target.name;
@@ -689,7 +691,7 @@ static void install_target (Memory_Arena &arena, const Target_Tracker &tracker) 
     path_builder += extension;
   }
 
-  auto resolved_path = build_string(arena, path_builder);
+  auto resolved_path = build_string(local, path_builder);
 
   if (check_file_exists(resolved_path).is_ok()) delete_file(resolved_path);
 
