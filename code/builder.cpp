@@ -241,7 +241,7 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
   const auto &target  = tracker.target;
   const auto &project = target.project;
 
-  auto target_compilation_status = atomic_load(tracker.compile_status);
+  auto target_compilation_status = atomic_load<Memory_Order::Acquire>(tracker.compile_status);
   if (target_compilation_status == Target_Compile_Status::Compiling) {
     if (tracing_enabled_opt) log("TRACE(#%): target % is still compiling and couldn't be linked\n", thread_id, target.name);
     return;
@@ -358,14 +358,18 @@ static void link_target (Memory_Arena &arena, Build_System &build_system, Target
   atomic_store(tracker.link_status, target_link_status);
 
   schedule_downstream_linkage(build_system, target, [link_result] (Target_Tracker &tracker) {
-    if (link_result != Link_Result::Ignore) {
-      auto new_status = Upstream_Targets_Status::Updated;
-      if (link_result == Link_Result::Failed) {
-        new_status = Upstream_Targets_Status::Failed;
-      }
-      
-      // In case another thread set this to Failed, which we don't want to overwrite
-      atomic_compare_and_set(tracker.upstream_status, Upstream_Targets_Status::Ignore, new_status);  
+    if (link_result == Link_Result::Ignore) return;
+
+    if (link_result == Link_Result::Failed) {
+      // Failed always wins -- unconditional store is safe because
+      // downstream won't read this until waiting_on_counter reaches 0
+      atomic_store(tracker.upstream_status, Upstream_Targets_Status::Failed);
+    } 
+    else {
+      // Updated only wins over Ignore, never overwrites Failed
+      atomic_compare_and_set(tracker.upstream_status,
+                             Upstream_Targets_Status::Ignore,
+                             Upstream_Targets_Status::Updated);
     }
   });
 
