@@ -37,9 +37,21 @@ void load_registry (Memory_Arena &arena, Registry &registry) {
     buffer_cursor += sizeof(remove_ptr<T>) * count; // T type are pointer fields in the records struct
   };
 
+  if (mapping.size < sizeof(Registry::Header)) {
+    log("WARNING: Registry file is too small to contain a valid header. Cache will be rebuilt.\n");
+    return;
+  }
+
   auto &records = registry.records;
 
   records.header = *reinterpret_cast<Registry::Header *>(buffer_cursor);
+
+  if (records.header.version != Registry::Version) {
+    log("WARNING: Registry version mismatch (found: %, expected: %). Cache will be rebuilt.\n",
+        records.header.version, Registry::Version);
+    records.header = {};
+    return;
+  }
 
   buffer_cursor += sizeof(Registry::Header);
 
@@ -48,6 +60,13 @@ void load_registry (Memory_Arena &arena, Registry &registry) {
   set_field(records.file_records,       records.header.aligned_total_files_count);
   set_field(records.dependencies,       records.header.dependencies_count, 32);
   set_field(records.dependency_records, records.header.dependencies_count);
+
+  auto consumed = static_cast<usize>(buffer_cursor - buffer);
+  if (consumed > mapping.size) {
+    log("WARNING: Registry file appears corrupted (data exceeds file size). Cache will be rebuilt.\n");
+    records.header = {};
+    return;
+  }
 }
 
 Update_Set init_update_set (Memory_Arena &arena, const Project &project, const Registry &registry, bool targeted_build) {
