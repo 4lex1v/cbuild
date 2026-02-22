@@ -789,10 +789,12 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
 
     auto info = reinterpret_cast<Registry::Target_Info *>(target->build_context.info);
 
-    copy_memory(update_set.files        + last_info->files_offset, registry.records.files        + last_info->files_offset, last_info->files_count.value);
-    copy_memory(update_set.file_records + last_info->files_offset, registry.records.file_records + last_info->files_offset, last_info->files_count.value);
+    auto copy_count = last_info->files_count.value;
 
-    *info = *last_info;
+    copy_memory(update_set.files        + info->files_offset, registry.records.files        + last_info->files_offset, copy_count);
+    copy_memory(update_set.file_records + info->files_offset, registry.records.file_records + last_info->files_offset, copy_count);
+
+    info->files_count.value = copy_count;
   }
 
   auto main_thread_local_context = make_sub_arena(arena, Build_System::RESERVATION_SIZE);
