@@ -638,35 +638,66 @@ static void validate_toolchain (const Project &project) {
   if (!check_file_exists(tc.archiver_path).or_default(false))     panic("No archive tool found at %\n", tc.archiver_path);
 }
 
-static void install_targets (Memory_Arena &arena, const List<Target_Tracker> &trackers) {
-  bool check = false;
-  for (auto &t: trackers) check = check || t.target.flags.install;
-
-  if (check == false) return; // No targets marked for installation
-
-  log("Installing targets:\n");
-
-  for (auto tracker: trackers) {
-    auto &target  = tracker.target;
-    auto &project = target.project;
+static void install_target (Memory_Arena &arena, const Target_Tracker &tracker) {
+  auto &target  = tracker.target;
+  auto &project = target.project;
     
-    if (target.flags.install) {
-      auto output_file_path = get_output_file_path_for_target(arena, target);
+  if (!target.flags.install) return;
 
-      auto install_path = target.install_location_overwrite;
-      if (!install_path) {
-        if (target.type == Target::Static_Library)
-          install_path = project.library_install_location_path;
-        else 
-          install_path = project.binary_install_location_path;
-      }
+  auto output_file_path = get_output_file_path_for_target(arena, target);
 
-      fin_ensure(install_path);
-    
-      log("  Target '%': % -> %\n", target.name, output_file_path, install_path);
-
-      copy_file(output_file_path, install_path);
+  auto install_path = target.install_location_overwrite;
+  auto extension = get_executable_extension();
+  if (!install_path) {
+    if (target.type == Target::Static_Library) {
+      install_path = project.library_install_location_path;
+      extension    = get_static_library_extension();
     }
+    else {
+      install_path = project.binary_install_location_path;
+    }
+  }
+
+  if (!install_path) {
+    log("[ERROR] Failed to install target '%', couldn't resolve the installation path. Please check the configuration\n", target.name);
+    return;
+  }
+
+  if (auto result = is_file(install_path); result.is_ok() && result.value) {
+    log("[ERROR] Target installation path '%' is not a directory.\n", install_path);
+    return;;
+  }
+
+  if (auto result = check_directory_exists(install_path); result.is_error()) {
+    log("[ERROR] Internal error, couldn't verify installation path: %\n. Error: %\n", install_path, result.error);
+    return;
+  }
+  else if (!result.value) {
+    using enum File_System_Flags;
+    if (auto result = create_directory(install_path, Force); result.is_error()) {
+      log("[ERROR] Couldn't create install directory: %.\n Error: %\n", install_path, result.error);
+      return;
+    }
+  }
+
+  String_Builder path_builder { arena };
+  path_builder += install_path;
+  path_builder += "\\";
+  path_builder += target.name;
+  if (!is_empty(extension)) {
+    path_builder += ".";
+    path_builder += extension;
+  }
+
+  auto resolved_path = build_string(arena, path_builder);
+
+  if (check_file_exists(resolved_path).is_ok()) delete_file(resolved_path);
+
+  if (auto result = copy_file(output_file_path, resolved_path); result.is_error()) {
+    log("[ERROR] Failed to copy the artifact % -> %.\n Error: %\n", output_file_path, resolved_path);
+  }
+  else {
+    log("  Target '%': % -> %\n", target.name, output_file_path, resolved_path);
   }
 }
 
@@ -773,9 +804,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
       log("Building target '%' finished with errors\n", tracker.target.name);
       exit_code = 1;
     }
+    else {
+      install_target(arena, tracker);
+    }
   }
-
-  install_targets(arena, build_plan.selected_targets);
 
   return exit_code;
 }

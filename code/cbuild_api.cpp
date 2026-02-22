@@ -519,6 +519,7 @@ void install_target (Target *target, const char *install_target_overwrite) CBUIL
   target->flags.install = true;
 
   if (!install_target_overwrite) return;
+  if (install_target_overwrite[0] == '\0') return;
 
   set_absolute_path(project.arena, target->install_location_overwrite, install_target_overwrite);
 }
