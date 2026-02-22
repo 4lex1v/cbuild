@@ -105,7 +105,7 @@ static void set_absolute_path (Memory_Arena &arena, File_Path &variable, const c
     auto [error, result] = get_absolute_path(arena, path);
     if (error) panic("Couldn't resolve absolute path for the specified folder % due to a system error: %\n", path, error.value);
 
-    variable = move(path);
+    variable = move(result);
   }
 }
 

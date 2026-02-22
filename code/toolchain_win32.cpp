@@ -90,6 +90,7 @@ static String get_msvc_installation_path (Memory_Arena &arena) {
       }
     }
   } while (FindNextFileA(search_handle, &data) != 0);
+  FindClose(search_handle);
 
   msvc_path = concat_string(arena, vs_path, "\\VC\\Tools\\MSVC\\", max_major, ".", max_minor, ".", max_patch);
 
@@ -251,6 +252,7 @@ static Windows_SDK find_windows_sdk (Memory_Arena &arena) {
       }
     }
   } while (FindNextFile(search_handle, &data));
+  FindClose(search_handle);
 
   return Windows_SDK {
     .base_path = move(windows_kits),

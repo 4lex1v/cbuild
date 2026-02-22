@@ -30,7 +30,7 @@ static void log (Format_String &&str_format, Args&&... args) {
   log(format_string(arena, move(str_format), forward<Args>(args)...));
 }
 
-template <usize MEMORY_SIZE = 2024, String_Convertible... Args>
+template <usize MEMORY_SIZE = 2048, String_Convertible... Args>
 [[noreturn]] static void panic (Format_String &&format, Args&&... args) {
   log(move(format), forward<Args>(args)...);
 

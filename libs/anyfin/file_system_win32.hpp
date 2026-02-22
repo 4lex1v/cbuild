@@ -284,13 +284,13 @@ static Sys_Result<List<File_Path>> list_files (Memory_Arena &arena, File_Path di
       if (file_name == "." || file_name == "..") continue;
 
       if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-        if (recursive) fin_check(self(local, concat_string(local, directory, "\\", file_name)));
+        if (recursive) fin_check(self(concat_string(local, directory, "\\", file_name)));
       }
       else {
         if (!ends_with(file_name, extension)) continue;
           
         auto file_path = concat_string(local, directory, "\\", file_name);
-        if (!file_list.contains(file_path)) list_push(file_list, file_path);
+        if (!file_list.contains(file_path)) list_push(file_list, move(file_path));
       }
     } while (FindNextFileA(search_handle, &data) != 0);
 
