@@ -82,7 +82,7 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   char output_location[256];
   snprintf(output_location, 256, "%s/%s", config.data(), platform.data());
   set_output_location(project, output_location);
-
+  set_install_location(project, debug_build ? "bin/debug" : "bin/release", 0);
 
   u32 tool_version = 0, api_version = 0;
   if (!read_versions(&tool_version, &api_version)) return false;
@@ -90,11 +90,12 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
   sprintf(versions, "-DTOOL_VERSION=%u -DAPI_VERSION=%u", tool_version, api_version);
 
   add_global_include_search_paths(project, ".", "libs");
-  add_global_compiler_options(project, "-std=c++2b",
+  add_global_compiler_options(project, "-std=c++23",
                               versions,
                               "-DCPU_ARCH_X64 -DPLATFORM_WIN32 -DPLATFORM_WIN32",
                               "-march=x86-64 -mavx2 -masm=intel -fdiagnostics-absolute-paths",
-                              "-nostdlib -nostdlib++ -nostdinc++");
+                              "-nostdlib -nostdlib++ -nostdinc++",
+                              "-fno-builtin-strlen");
 
   add_global_compiler_option(project, debug_build ? "-O0 -DDEV_BUILD -g -gcodeview" : "-O3");
 
@@ -121,6 +122,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     }
 
     link_with(cbuild, "kernel32.lib", "advapi32.lib", "shell32.lib", "winmm.lib");
+
+    install_target(cbuild, 0);
   }
 
   auto tests = add_executable(project, "tests");
@@ -131,6 +134,8 @@ extern "C" bool setup_project (const Arguments *args, Project *project) {
     add_compiler_option(tests, "-DCBUILD_ENABLE_EXCEPTIONS");
 
     link_with(tests, "kernel32.lib", "advapi32.lib", "shell32.lib", "libcmt.lib");
+
+    install_target(tests, 0);
   }
 
   auto rdump = add_executable(project, "rdump");
