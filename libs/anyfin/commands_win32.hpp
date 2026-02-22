@@ -1,8 +1,10 @@
 
+#include "anyfin/console.hpp"
 #define FIN_COMMANDS_HPP_IMPL
 
 #include "anyfin/commands.hpp"
 #include "anyfin/defer.hpp"
+#include "anyfin/process.hpp"
 
 namespace Fin {
 
@@ -37,38 +39,45 @@ static Sys_Result<System_Command_Status> run_system_command (Memory_Arena &arena
   usize output_size  = 0;
 
   {
+    auto read_available_pipe_data = [&] () -> Sys_Result<void> {
+      while (true) {
+        DWORD bytes_available = 0;
+        if (!PeekNamedPipe(child_stdout_read, NULL, 0, NULL, &bytes_available, NULL)) {
+          if (get_system_error_code() == ERROR_BROKEN_PIPE) break;
+          return get_system_error();
+        }
+
+        if (bytes_available == 0) break;
+
+        auto region = reserve<char>(arena, bytes_available);
+        if (!region) {
+          write_to_stdout("Couldn't allocate enough memory to read from the pipe");
+          terminate(1);
+        }
+
+        DWORD bytes_read;
+        if (!ReadFile(child_stdout_read, region, bytes_available, &bytes_read, NULL)) {
+          if (get_system_error_code() == ERROR_BROKEN_PIPE) break;
+          return get_system_error();
+        }
+
+        output_size += bytes_read;
+      }
+
+      return Ok();
+    };
+
     while (true) {
-      DWORD bytes_available = 0;
-      if (!PeekNamedPipe(child_stdout_read, NULL, 0, NULL, &bytes_available, NULL)) {
-        auto error_code = get_system_error_code();
-        if (error_code != ERROR_BROKEN_PIPE) return get_system_error();
+      fin_check(read_available_pipe_data());
+
+      if (!GetExitCodeProcess(process.hProcess, &exit_code)) return get_system_error();
+      if (exit_code != STILL_ACTIVE) {
+        // Drain any remaining pipe data after the process has exited
+        fin_check(read_available_pipe_data());
+        break;
       }
 
-      if (bytes_available == 0) {
-        if (!GetExitCodeProcess(process.hProcess, &exit_code)) return get_system_error();
-        if (exit_code != STILL_ACTIVE) break;
-        continue;
-      }
-
-      /*
-        Tiny hack to reserve space for the terminating 0
-       */
-      auto region = reserve<char>(arena, bytes_available);
-      fin_ensure(region);
-
-      DWORD bytes_read;
-      if (!ReadFile(child_stdout_read, region, bytes_available, &bytes_read, NULL)) {
-        auto error_code = get_system_error_code();
-        /*
-          According to ReadFile docs if the child process has closed its end of the pipe, indicated
-          by the BROKEN_PIPE status, we can treat that as EOF.
-         */
-        if (error_code != ERROR_BROKEN_PIPE) return get_system_error();
-      }
-
-      fin_ensure(bytes_read == bytes_available);
-
-      output_size += bytes_read;
+      Sleep(0);
     }
   }
 
@@ -81,6 +90,11 @@ static Sys_Result<System_Command_Status> run_system_command (Memory_Arena &arena
   WaitForSingleObject(process.hProcess, INFINITE);
 
   if (!output_size) return Ok(System_Command_Status { .status_code = static_cast<s32>(exit_code) });
+
+  /*
+    Reserve space for the null terminator that wasn't accounted for in the read loop.
+   */
+  reserve<char>(arena, 1);
 
   /*
     For some reason Windows includes CRLF at the end of the output, which is inc
