@@ -792,7 +792,10 @@ u32 build_project (Memory_Arena &arena, const Project &project, const List<Strin
   }
 
   auto main_thread_local_context = make_sub_arena(arena, Build_System::RESERVATION_SIZE);
-  while (task_system.has_unfinished_tasks()) task_system.execute_task(main_thread_local_context);
+  while (task_system.has_unfinished_tasks()) {
+    reset_arena(main_thread_local_context);
+    task_system.execute_task(main_thread_local_context);
+  }
 
   if (registry_enabled) flush_registry(registry, update_set);
 
