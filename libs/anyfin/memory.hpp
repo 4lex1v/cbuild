@@ -35,7 +35,7 @@ constexpr auto copy_memory (T *destination, const T *source, const usize count) 
 
 template <typename T>
 constexpr void zero_memory (T *memory, const usize count = 1) {
-  __builtin_memset(memory, 0, sizeof(T) * count);
+  __builtin_memset((void *)memory, 0, sizeof(T) * count);
 }
 
 template <typename T>
