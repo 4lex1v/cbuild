@@ -18,9 +18,9 @@ constexpr T align_forward (const T value, const usize by) {
 }
 
 constexpr auto align_forward_to_pow_2 (const auto value) {
-  if (value == 0) return 1;
+  if (value == 1) return 1;
 
-  const auto lead_zero_count = __builtin_clz(value);
+  const auto lead_zero_count = __builtin_clz(value - 1);
   return 1 << ((sizeof(decltype(value)) * 8) - lead_zero_count);
 }
 
@@ -64,10 +64,11 @@ static const char * get_character_offset (const char *memory, const char *end, c
   return get_character_offset(memory, end - memory, value);
 }
 
-static auto get_character_offset_reversed (Byte_Type auto *memory, const usize length, const char value) -> decltype(memory) {
+static auto get_character_offset_reversed (Byte_Type auto *memory, const s32 length, const char value) -> decltype(memory) {
   if (!memory || length == 0) [[unlikely]] return nullptr;
-  for (auto cursor = (memory + length - 1); cursor >= memory; cursor--) {
-    if (*cursor == value) return cursor;
+
+  for (s32 index = (s32) length - 1; index >= 0; index--) {
+    if (memory[index] == value) return (&memory[index]);
   }
 
   return nullptr;

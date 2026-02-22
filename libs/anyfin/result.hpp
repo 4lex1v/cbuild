@@ -65,7 +65,7 @@ struct Result {
   constexpr bool is_error () const { return error.is_some(); }
 
   constexpr T && or_default (this Result<E, T> &&self, T _default = {}) {
-    return move(self.is_ok() ? self.value : _default);
+    return self.is_ok() ? move(self.value) : move(_default);
   }
 
   constexpr void handle_value (const Invocable<void, const Value_Type &> auto &func) const {

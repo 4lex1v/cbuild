@@ -45,7 +45,7 @@ static T * reserve (Memory_Arena &arena, usize size = sizeof(T), usize alignment
   auto alignment_shift  = static_cast<usize>(aligned_base - base);
   auto reservation_size = alignment_shift + size;
   
-  fin_ensure((reservation_size + arena.offset) < arena.size);
+  fin_ensure((reservation_size + arena.offset) <= arena.size);
   if ((reservation_size + arena.offset) > arena.size) [[unlikely]] return nullptr;
 
   arena.offset += reservation_size;

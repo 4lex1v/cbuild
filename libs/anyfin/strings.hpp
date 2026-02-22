@@ -92,7 +92,9 @@ struct String {
 
 static_assert(sizeof(String) == 16);
 
-constexpr String copy_string (Memory_Arena &arena, String other) {
+constexpr String copy_string (Memory_Arena &arena, const String &other) {
+  if (other.length == 0) return {};
+
   auto memory = reserve<char>(arena, other.length + 1);
   fin_ensure(memory);
 

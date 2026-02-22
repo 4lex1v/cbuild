@@ -33,7 +33,7 @@ struct Option {
 
   fin_forceinline
   constexpr Option (const Option<T> &other)
-    : has_value { true },
+    : has_value { other.has_value },
       value     { other.value }
   {}
 
@@ -44,8 +44,9 @@ struct Option {
 
   fin_forceinline
   constexpr Option<T>& operator = (Option<T> &&other) {
-    this->has_value = true;
+    this->has_value = other.has_value;
     this->value     = move(other.value);
+    other.has_value = false;
 
     return *this;
   }
@@ -58,7 +59,7 @@ struct Option {
 
   fin_forceinline
   constexpr Value_Type && or_default (Value_Type default_value = {}) {
-    return move(is_some() ? this->value : default_value);
+    return is_some() ? move(this->value) : move(default_value);
   }
 
 };

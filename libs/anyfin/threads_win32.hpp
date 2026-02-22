@@ -15,7 +15,7 @@ static Sys_Result<Thread> spawn_thread (const Invocable<void, T *> auto &proc, T
 }
 
 static Sys_Result<Thread> spawn_thread (const Invocable<void> auto &proc) {
-  return spawn_thread(nullptr, proc);
+  return spawn_thread(proc, nullptr);
 }
 
 static Sys_Result<void> shutdown_thread (Thread &thread);

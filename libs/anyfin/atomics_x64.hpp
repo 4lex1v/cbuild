@@ -2,6 +2,7 @@
 #define FIN_ATOMICS_HPP_IMPL
 
 #include "anyfin/atomics.hpp"
+#include "anyfin/meta.hpp"
 
 namespace Fin {
 
@@ -51,8 +52,8 @@ static void atomic_store (Atomic<T> &atomic, Atomic_Value<T> value) {
   }
 }
 
-template <Memory_Order order = Memory_Order::Relaxed, typename T>
-static T atomic_fetch_add (Atomic<T> &atomic, s32 value) {
+template <Memory_Order order = Memory_Order::Relaxed, Numeric T>
+static T atomic_fetch_add (Atomic<T> &atomic, typename Atomic<T>::Value_Type value) {
   T last = value;
   asm volatile (
     "lock xadd %1, %0"
@@ -64,7 +65,7 @@ static T atomic_fetch_add (Atomic<T> &atomic, s32 value) {
 }
 
 template <Memory_Order order = Memory_Order::Relaxed, typename T>
-static T atomic_fetch_sub (Atomic<T> &atomic, s32 value) {
+static T atomic_fetch_sub (Atomic<T> &atomic, typename Atomic<T>::Value_Type value) {
   return atomic_fetch_add<order>(atomic, -value);
 }
 

@@ -6,20 +6,25 @@
 
 namespace Fin {
 
-template <typename T, typename... Args>
-constexpr const T & min (const T &first, const Args &... args) {
-  const T &smallest = (first < ... < args);
-  return smallest;
+template <Numeric T>
+constexpr const T & min (const T &a, const T &b) {
+  return a < b ? a : b;
 }
 
-template <typename T, typename... Args>
-constexpr const T & max (const T &first, const Args &... args) {
-  const T &biggest = (first > ... > args);
-  return biggest;
+template <Numeric T, Numeric... Args>
+constexpr const T & min (const T &first, const T &second, const Args &... rest) {
+  return min(first < second ? first : second, rest...);
 }
 
-constexpr decltype(auto) min (const auto &first, const auto &&... args) { return (first < ... < args); }
-constexpr decltype(auto) max (const auto &first, const auto &&... args) { return (first > ... > args); }
+template <Numeric T>
+constexpr const T & max (const T &a, const T &b) {
+  return a > b ? a : b;
+}
+
+template <Numeric T, Numeric... Args>
+constexpr const T & max (const T &first, const T &second, const Args &... rest) {
+  return max(first > second ? first : second, rest...);
+}
 
 consteval auto kilobytes (Integral auto value) { return value * 1024; }
 consteval auto megabytes (Integral auto value) { return kilobytes(value) * 1024; }

@@ -57,7 +57,7 @@ struct List {
     : arena { &_arena } {}
 
   fin_forceinline constexpr List (Memory_Arena &_arena, const List<T> &other)
-    : arena { &_arena }, first { other.first }, last { other.last } {}
+    : arena { &_arena }, first { other.first }, last { other.last }, count { other.count } {}
 
   /*
     Because of the arena's pointer we can't simply copy this list, otherwise we may
@@ -67,12 +67,13 @@ struct List {
    */
   constexpr List (const List<T> &other) = delete;
 
-  fin_forceinline constexpr List (List<T> &&other)
-    : arena { other.arena }, first { other.first }, last { other.last }
+  fin_forceinline constexpr List (List<T> &&other) noexcept
+    : arena { other.arena }, first { other.first }, last { other.last }, count { other.count }
   {
     other.arena = nullptr;
     other.first = nullptr;
     other.last  = nullptr;
+    other.count = 0;
   }
   
   fin_forceinline constexpr Iterator begin (this const auto &self) { return Iterator(self.first); } 

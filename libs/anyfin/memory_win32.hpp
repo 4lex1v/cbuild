@@ -19,7 +19,7 @@ static Memory_Region reserve_virtual_memory (usize size) {
 }
 
 static void free_virtual_memory (Memory_Region &memory) {
-  VirtualFree(memory.memory, memory.size, MEM_RELEASE);
+  VirtualFree(memory.memory, 0, MEM_RELEASE);
 }
 
 }

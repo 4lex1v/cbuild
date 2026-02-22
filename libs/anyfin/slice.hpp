@@ -21,7 +21,7 @@ struct Slice {
 
   fin_forceinline constexpr operator bool (this auto self) { return self.values && self.count; }
 
-  fin_forceinline constexpr decltype(auto) operator [] (this auto &&self, usize offset) { return self.value[offset]; }
+  fin_forceinline constexpr decltype(auto) operator [] (this auto &&self, usize offset) { return self.values[offset]; }
   fin_forceinline constexpr decltype(auto) operator *  (this auto &&self)               { return *self.values; }
 
   fin_forceinline

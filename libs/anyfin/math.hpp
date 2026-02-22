@@ -42,7 +42,7 @@ static inline u32 round_up_to_pow_2 (u32 value) {
   if (value == 0)           return value;
 
   value -= 1;
-  for (u32 index = 0; index < (sizeof(value) * 8); index *= 2) {
+  for (u32 index = 1; index < (sizeof(value) * 8); index *= 2) {
     value |= value >> index;
   }
 
