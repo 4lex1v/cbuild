@@ -14,10 +14,12 @@
 #define CBUILD_EXPERIMENTAL_API
 #endif
 
-#ifdef __cplusplus
+#ifndef CBUILD_NO_EXCEPT
+#if defined(__cplusplus) && !defined(CBUILD_ENABLE_EXCEPTIONS)
   #define CBUILD_NO_EXCEPT noexcept
 #else 
   #define CBUILD_NO_EXCEPT
+#endif
 #endif
 
 typedef struct Project Project;
@@ -39,17 +41,15 @@ CBUILD_EXPERIMENTAL_API void add_target_hook (Target *target, Hook_Type type, Ho
 
 CBUILD_EXPERIMENTAL_API const char * get_generated_binary_file_path (const Target *target) CBUILD_NO_EXCEPT;
 
-CBUILD_EXPERIMENTAL_API Project_Ref * register_external_project (Project *project, const Arguments *args, const char *name, const char *external_project_path) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void set_install_location (Project *project, const char *binary_folder, const char *library_folder) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void install_target (Target *target, const char *install_target_overwrite) CBUILD_NO_EXCEPT;
 
-CBUILD_EXPERIMENTAL_API Target * get_external_target (Project *project, const Project_Ref *external_project, const char *target_name) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void add_global_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API void add_system_include_search_path (Target *target, const char *include_path) CBUILD_NO_EXCEPT;
 
-/*
-  Install API
- */
+CBUILD_EXPERIMENTAL_API const char * find_executable (Project *project, const char *name) CBUILD_NO_EXCEPT;
 
-CBUILD_EXPERIMENTAL_API void set_install_location (Project *project, const char *path) CBUILD_NO_EXCEPT;
-
-CBUILD_EXPERIMENTAL_API void install_target (Target *target) CBUILD_NO_EXCEPT;
+CBUILD_EXPERIMENTAL_API int run_system_command (Project *project, const char *command_name, char *buffer, unsigned int buffer_size, unsigned int *written_size) CBUILD_NO_EXCEPT;
 
 #ifdef __cplusplus
 }
