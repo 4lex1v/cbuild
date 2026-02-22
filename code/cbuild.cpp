@@ -322,7 +322,7 @@ static CLI_Command parse_command (Slice<Startup_Argument> &args) {
 }
 
 static bool ensure_relative_path (const File_Path &path) {
-  return path[0] != '/' && (path.length >= 2 && path[1] != ':');
+  return path[0] != '/' && !(path.length >= 2 && path[1] == ':');
 }
 
 static bool is_subdirectory (Memory_Arena &arena, const File_Path &work_dir, const File_Path &path) {

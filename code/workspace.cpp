@@ -274,11 +274,11 @@ String resolve_project_output_dir_name (Memory_Arena &arena, const File_Path &wo
       Extract the folder portion of the path, dropping the configuration's file name and extension.
      */
 
-    length = directory_path.length - 1;
-    while (length >= 0) {
+    length = directory_path.length;
+    while (length > 0) {
+      length -= 1;
       auto value = directory_path[length];
       if (value == '\\' || value == '/') break;
-      length -= 1;
     }
 
     buffer = reserve<char>(arena, length + 1);
